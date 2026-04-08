@@ -31,6 +31,19 @@ pub fn capture_window(window_id: u32) -> OmniResult<Frame> {
     return linux::capture_window(window_id);
 }
 
+/// Capture a rectangular region of the screen.
+/// Faster than full screen capture — fewer pixels to composite.
+pub fn capture_region(x: f64, y: f64, width: f64, height: f64) -> OmniResult<Frame> {
+    #[cfg(target_os = "macos")]
+    return macos::capture_region(x, y, width, height);
+
+    #[cfg(target_os = "windows")]
+    return windows::capture_region(x, y, width, height);
+
+    #[cfg(target_os = "linux")]
+    return linux::capture_region(x, y, width, height);
+}
+
 /// List visible windows with their IDs and titles.
 pub fn list_windows() -> OmniResult<Vec<WindowInfo>> {
     #[cfg(target_os = "macos")]

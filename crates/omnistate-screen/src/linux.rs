@@ -15,6 +15,12 @@ pub fn capture_window(_window_id: u32) -> OmniResult<Frame> {
     ))
 }
 
+pub fn capture_region(_x: f64, _y: f64, _width: f64, _height: f64) -> OmniResult<Frame> {
+    Err(OmniError::UnsupportedPlatform(
+        "Linux region capture not yet implemented".into(),
+    ))
+}
+
 pub fn list_windows() -> OmniResult<Vec<WindowInfo>> {
     Err(OmniError::UnsupportedPlatform(
         "Linux window listing not yet implemented".into(),
