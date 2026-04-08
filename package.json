@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "build:native": "cargo build -p omnistate-napi --release && node scripts/copy-native.mjs",
     "dev": "pnpm -r --filter @omnistate/gateway dev",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",

@@ -1,40 +1,246 @@
 /**
- * Surface Layer — vision-based UI interaction.
+ * Surface Layer — vision-based UI interaction via Rust N-API bindings.
  *
- * Captures the screen, detects UI elements via vision model,
+ * Captures the screen using zero-copy GPU framebuffer access (IOSurface),
+ * detects UI elements via accessibility API + vision model,
  * and operates mouse/keyboard like a human.
  *
- * TODO: Integrate with omnistate-napi Rust bindings for:
- * - Screen capture (captureScreen, captureScreenBuffer)
- * - Mouse control (moveMouse, click, doubleClick, scroll)
- * - Keyboard control (keyTap, typeText)
- * - Accessibility (getUIElements, findElement)
+ * Data flow for capture:
+ *   GPU framebuffer -> IOSurface (zero-copy) -> Node.js Buffer -> base64 (for vision)
+ *
+ * Data flow for interaction:
+ *   TypeScript command -> N-API -> Rust -> CGEvent/AXUIElement -> macOS
  */
 
+import * as bridge from "../platform/bridge.js";
+
 export class SurfaceLayer {
-  /** Capture the current screen. */
-  async captureScreen(): Promise<ScreenCapture> {
-    // TODO: Call Rust N-API binding
-    throw new Error("Screen capture not yet connected — Rust N-API binding needed");
+  /** Check if the native bridge is available. */
+  get isAvailable(): boolean {
+    return bridge.isNativeAvailable();
   }
 
-  /** Find a UI element by description. */
+  /**
+   * Capture the current screen using zero-copy GPU framebuffer access.
+   *
+   * On Apple Silicon, this reads directly from GPU unified memory via IOSurface.
+   * Returns metadata and the raw pixel buffer.
+   */
+  async captureScreen(): Promise<ScreenCapture> {
+    // Use zero-copy capture (ScreenCaptureKit + IOSurface) as primary path
+    try {
+      const meta = bridge.captureFrameZeroCopy();
+      const buffer = bridge.captureFrameZeroCopyBuffer();
+      return {
+        width: meta.width,
+        height: meta.height,
+        data: buffer,
+        timestampMs: Date.now(),
+        captureMethod: "zero-copy-iosurface",
+        bytesPerRow: meta.bytesPerRow,
+        pixelFormat: meta.pixelFormat,
+      };
+    } catch {
+      // Fallback to traditional CGDisplay capture
+      const meta = bridge.captureScreen();
+      const buffer = bridge.captureScreenBuffer();
+      return {
+        width: meta.width,
+        height: meta.height,
+        data: buffer,
+        timestampMs: Date.now(),
+        captureMethod: "cgdisplay",
+      };
+    }
+  }
+
+  /** Capture a specific window by its platform window ID. */
+  async captureWindow(windowId: number): Promise<ScreenCapture> {
+    const meta = bridge.captureWindow(windowId);
+    return {
+      width: meta.width,
+      height: meta.height,
+      data: Buffer.alloc(0), // Metadata only — use captureScreenBuffer for data
+      timestampMs: Date.now(),
+      captureMethod: "window",
+    };
+  }
+
+  /** Capture a rectangular region of the screen. */
+  async captureRegion(
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): Promise<ScreenCapture> {
+    const meta = bridge.captureRegion(x, y, width, height);
+    return {
+      width: meta.width,
+      height: meta.height,
+      data: Buffer.alloc(0),
+      timestampMs: Date.now(),
+      captureMethod: "region",
+    };
+  }
+
+  /** List all visible windows on screen. */
+  async listWindows(): Promise<WindowInfo[]> {
+    const windows = bridge.listWindows();
+    return windows;
+  }
+
+  /**
+   * Find a UI element by description.
+   *
+   * Priority:
+   * 1. Accessibility API (fast, accurate, free)
+   * 2. Vision model (slower, costs API call, but understands semantics)
+   */
   async findElement(description: string): Promise<DetectedElement | null> {
-    // TODO: Combine accessibility API + vision model
-    throw new Error(`Element detection not yet implemented: ${description}`);
+    // Try accessibility API first
+    try {
+      const element = bridge.findElement(description) as Record<
+        string,
+        unknown
+      > | null;
+      if (element) {
+        return {
+          id: String(element.title ?? ""),
+          type: String(element.role ?? "unknown"),
+          bounds: element.bounds as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          },
+          text: element.title as string | undefined,
+          confidence: 0.95,
+          detectionMethod: "accessibility",
+        };
+      }
+    } catch {
+      // Accessibility not available — fall through to vision
+    }
+
+    // TODO: Vision model fallback (Sprint 3)
+    return null;
+  }
+
+  /** Get all UI elements from the accessibility tree. */
+  async getUIElements(): Promise<DetectedElement[]> {
+    try {
+      const elements = bridge.getUiElements() as Array<
+        Record<string, unknown>
+      >;
+      return elements.map((el) => ({
+        id: String(el.title ?? ""),
+        type: String(el.role ?? "unknown"),
+        bounds: el.bounds as {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        },
+        text: el.title as string | undefined,
+        confidence: 1.0,
+        detectionMethod: "accessibility",
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /** Click on a detected element. */
-  async clickElement(_element: DetectedElement): Promise<void> {
-    // TODO: Move mouse to element center, then click
-    throw new Error("Click not yet connected — Rust N-API binding needed");
+  async clickElement(element: DetectedElement): Promise<void> {
+    const centerX = element.bounds.x + element.bounds.width / 2;
+    const centerY = element.bounds.y + element.bounds.height / 2;
+
+    // Move mouse smoothly to element center (human-like Bezier curve)
+    bridge.moveMouseSmooth(
+      centerX - 50, // Start slightly off-target
+      centerY - 30,
+      centerX,
+      centerY,
+      15 // steps
+    );
+
+    // Small delay then click
+    await sleep(50);
+    bridge.click("left");
   }
 
-  /** Type text into the focused element. */
-  async typeText(text: string): Promise<void> {
-    // TODO: Call Rust N-API typeText binding
-    throw new Error(`Type not yet connected: ${text}`);
+  /** Double-click on a detected element. */
+  async doubleClickElement(element: DetectedElement): Promise<void> {
+    const centerX = element.bounds.x + element.bounds.width / 2;
+    const centerY = element.bounds.y + element.bounds.height / 2;
+
+    bridge.moveMouse(centerX, centerY);
+    await sleep(30);
+    bridge.doubleClick("left");
   }
+
+  /** Move mouse to absolute coordinates. */
+  async moveMouse(x: number, y: number): Promise<void> {
+    bridge.moveMouse(x, y);
+  }
+
+  /** Move mouse smoothly along a Bezier curve. */
+  async moveMouseSmooth(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    steps: number = 20
+  ): Promise<void> {
+    bridge.moveMouseSmooth(fromX, fromY, toX, toY, steps);
+  }
+
+  /** Click at current mouse position. */
+  async click(button: "left" | "right" | "middle" = "left"): Promise<void> {
+    bridge.click(button);
+  }
+
+  /** Scroll the mouse wheel. */
+  async scroll(dx: number, dy: number): Promise<void> {
+    bridge.scroll(dx, dy);
+  }
+
+  /** Drag from one point to another. */
+  async drag(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number
+  ): Promise<void> {
+    bridge.drag(fromX, fromY, toX, toY);
+  }
+
+  /** Press a key with optional modifiers. */
+  async keyTap(
+    key: string,
+    modifiers: {
+      shift?: boolean;
+      control?: boolean;
+      alt?: boolean;
+      meta?: boolean;
+    } = {}
+  ): Promise<void> {
+    bridge.keyTap(key, modifiers);
+  }
+
+  /** Type a string of text with human-like delays. */
+  async typeText(text: string): Promise<void> {
+    bridge.typeText(text);
+  }
+
+  /** Check if accessibility permissions are granted. */
+  isAccessibilityTrusted(): boolean {
+    return bridge.isAccessibilityTrusted();
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export interface ScreenCapture {
@@ -42,6 +248,17 @@ export interface ScreenCapture {
   height: number;
   data: Buffer;
   timestampMs: number;
+  captureMethod?: string;
+  bytesPerRow?: number;
+  pixelFormat?: string;
+}
+
+export interface WindowInfo {
+  id: number;
+  title: string;
+  owner: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  isOnScreen: boolean;
 }
 
 export interface DetectedElement {
@@ -50,4 +267,5 @@ export interface DetectedElement {
   bounds: { x: number; y: number; width: number; height: number };
   text?: string;
   confidence: number;
+  detectionMethod?: string;
 }

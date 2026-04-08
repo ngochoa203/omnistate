@@ -2,6 +2,7 @@
 members = [
     "crates/omnistate-core",
     "crates/omnistate-screen",
+    "crates/omnistate-capture",
     "crates/omnistate-input",
     "crates/omnistate-a11y",
     "crates/omnistate-napi",

@@ -738,7 +738,19 @@ dependencies = [
 name = "omnistate-a11y"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
+ "core-foundation-sys",
  "omnistate-core",
+]
+
+[[package]]
+name = "omnistate-capture"
+version = "0.1.0"
+dependencies = [
+ "core-foundation",
+ "core-foundation-sys",
+ "omnistate-core",
+ "screencapturekit",
 ]
 
 [[package]]
@@ -768,6 +780,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "omnistate-a11y",
+ "omnistate-capture",
  "omnistate-core",
  "omnistate-input",
  "omnistate-screen",
@@ -1027,6 +1040,12 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "screencapturekit"
+version = "1.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99b732b2db50b25cfbcb171e1b7abda06e77873aeef493e635eb209482fdd149"
 
 [[package]]
 name = "semver"

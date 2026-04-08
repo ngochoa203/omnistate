@@ -5,6 +5,7 @@ node_modules/
 # Rust build
 target/
 *.node
+packages/gateway/native/
 
 # TypeScript build
 dist/

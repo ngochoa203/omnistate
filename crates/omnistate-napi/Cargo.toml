@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 omnistate-core = { path = "../omnistate-core" }
 omnistate-screen = { path = "../omnistate-screen" }
+omnistate-capture = { path = "../omnistate-capture" }
 omnistate-input = { path = "../omnistate-input" }
 omnistate-a11y = { path = "../omnistate-a11y" }
 napi = { version = "2", features = ["napi9", "serde-json"] }

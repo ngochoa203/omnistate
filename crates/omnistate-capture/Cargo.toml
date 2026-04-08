@@ -1,0 +1,20 @@
+[package]
+name = "omnistate-capture"
+description = "Zero-copy GPU framebuffer capture — near-zero latency screen capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omnistate-core = { path = "../omnistate-core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "1.5", features = ["macos_14_0"] }
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# windows = { version = "0.58", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# pipewire = "0.8"
