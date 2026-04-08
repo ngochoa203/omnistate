@@ -1,0 +1,9 @@
+[package]
+name = "omnistate-a11y"
+description = "Cross-platform accessibility tree queries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omnistate-core = { path = "../omnistate-core" }

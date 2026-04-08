@@ -1,0 +1,12 @@
+[package]
+name = "omnistate-core"
+description = "Shared types and traits for OmniState"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+image.workspace = true
