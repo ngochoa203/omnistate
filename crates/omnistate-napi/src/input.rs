@@ -9,6 +9,23 @@ pub fn move_mouse(x: f64, y: f64) -> Result<()> {
         .map_err(|e| Error::from_reason(e.to_string()))
 }
 
+/// Move mouse smoothly along a Bezier curve (human-like).
+#[napi]
+pub fn move_mouse_smooth(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    steps: u32,
+) -> Result<()> {
+    omnistate_input::move_mouse_smooth(
+        Point { x: from_x, y: from_y },
+        Point { x: to_x, y: to_y },
+        steps,
+    )
+    .map_err(|e| Error::from_reason(e.to_string()))
+}
+
 /// Click a mouse button. button: "left" | "right" | "middle"
 #[napi]
 pub fn click(button: String) -> Result<()> {
@@ -25,11 +42,21 @@ pub fn double_click(button: String) -> Result<()> {
         .map_err(|e| Error::from_reason(e.to_string()))
 }
 
-/// Scroll the mouse wheel.
+/// Scroll the mouse wheel. dy > 0 scrolls up, dy < 0 scrolls down.
 #[napi]
 pub fn scroll(dx: i32, dy: i32) -> Result<()> {
     omnistate_input::scroll(dx, dy)
         .map_err(|e| Error::from_reason(e.to_string()))
+}
+
+/// Drag from one point to another with left mouse button held.
+#[napi]
+pub fn drag(from_x: f64, from_y: f64, to_x: f64, to_y: f64) -> Result<()> {
+    omnistate_input::drag(
+        Point { x: from_x, y: from_y },
+        Point { x: to_x, y: to_y },
+    )
+    .map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Press and release a key with optional modifiers.
@@ -41,7 +68,7 @@ pub fn key_tap(key: String, shift: bool, control: bool, alt: bool, meta: bool) -
         .map_err(|e| Error::from_reason(e.to_string()))
 }
 
-/// Type a string of text.
+/// Type a string of text with human-like delays.
 #[napi]
 pub fn type_text(text: String) -> Result<()> {
     omnistate_input::type_text(&text)
@@ -69,6 +96,14 @@ fn parse_key(s: &str) -> Result<Key> {
         "down" => Ok(Key::Down),
         "left" => Ok(Key::Left),
         "right" => Ok(Key::Right),
+        "home" => Ok(Key::Home),
+        "end" => Ok(Key::End),
+        "pageup" => Ok(Key::PageUp),
+        "pagedown" => Ok(Key::PageDown),
+        "shift" => Ok(Key::Shift),
+        "control" | "ctrl" => Ok(Key::Control),
+        "alt" | "option" => Ok(Key::Alt),
+        "meta" | "command" | "cmd" => Ok(Key::Meta),
         s if s.len() == 1 => Ok(Key::Char(s.chars().next().unwrap())),
         s if s.starts_with('f') || s.starts_with('F') => {
             let n: u8 = s[1..].parse()
