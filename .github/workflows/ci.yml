@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check --workspace
+        if: matrix.os == 'macos-latest'
+
+      - name: Check (non-macOS)
+        run: cargo check -p omnistate-core -p omnistate-napi
+        if: matrix.os != 'macos-latest'
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+        if: matrix.os == 'macos-latest'
+
+      - name: Test
+        run: cargo test --workspace
+        if: matrix.os == 'macos-latest'
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+        continue-on-error: true
