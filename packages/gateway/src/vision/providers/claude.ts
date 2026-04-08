@@ -32,11 +32,15 @@ export class ClaudeVisionProvider implements VisionProvider {
 
   constructor(config: ClaudeVisionConfig = {}) {
     const apiKey = config.apiKey ?? process.env.ANTHROPIC_API_KEY;
+    const baseURL = process.env.ANTHROPIC_BASE_URL;
     this.model = config.model ?? "claude-sonnet-4-20250514";
     this.maxTokens = config.maxTokens ?? 1024;
 
     if (apiKey) {
-      this.client = new Anthropic({ apiKey });
+      this.client = new Anthropic({
+        apiKey,
+        ...(baseURL ? { baseURL } : {}),
+      });
     }
   }
 

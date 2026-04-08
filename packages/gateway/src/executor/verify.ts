@@ -1,5 +1,9 @@
 import type { StateNode } from "../types/task.js";
 import type { StepResult } from "./orchestrator.js";
+import { SurfaceLayer } from "../layers/surface.js";
+import { createDefaultEngine } from "../vision/engine.js";
+import type { VisionEngine } from "../vision/engine.js";
+import { DeepLayer } from "../layers/deep.js";
 
 export interface VerifyResult {
   passed: boolean;
@@ -7,15 +11,42 @@ export interface VerifyResult {
   confidence?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Lazy-initialized singletons — created once on first use, then reused.
+// ---------------------------------------------------------------------------
+
+let _surface: SurfaceLayer | null = null;
+let _vision: VisionEngine | null = null;
+let _deep: DeepLayer | null = null;
+
+function getSurface(): SurfaceLayer {
+  if (!_surface) _surface = new SurfaceLayer();
+  return _surface;
+}
+
+function getVision(): VisionEngine {
+  if (!_vision) _vision = createDefaultEngine();
+  return _vision;
+}
+
+function getDeep(): DeepLayer {
+  if (!_deep) _deep = new DeepLayer();
+  return _deep;
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
 /**
  * Verify a step's result using the configured strategy.
  *
  * Strategies:
- * - screenshot: Capture screen, ask vision model (TODO)
- * - api: Check via OS API (file exists, process running, etc.)
- * - file: Verify file contents
- * - process: Check process state
- * - compound: Multiple methods combined
+ * - api:        Check HTTP/OS API response values
+ * - screenshot: Capture screen, ask vision model
+ * - file:       Verify file existence / contents
+ * - process:    Check process running state
+ * - compound:   api + screenshot in parallel, both must pass
  */
 export async function verifyStep(
   node: StateNode,
@@ -41,60 +72,239 @@ export async function verifyStep(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Strategy implementations
+// ---------------------------------------------------------------------------
+
 async function verifyApi(
-  _node: StateNode,
+  node: StateNode,
   result: StepResult
 ): Promise<VerifyResult> {
-  // Basic: if execution reported OK, pass
-  return {
-    passed: result.status === "ok",
-    confidence: 0.8,
-  };
+  try {
+    if (result.status !== "ok") {
+      return {
+        passed: false,
+        reason: `Step status was "${result.status}"`,
+        confidence: 0.9,
+      };
+    }
+
+    // Base confidence for a successful status
+    let confidence = 0.85;
+
+    // If the node declares an expected value, compare it against result.data
+    const expected = node.verify?.expected;
+    if (expected && result.data && Object.keys(result.data).length > 0) {
+      const dataStr = JSON.stringify(result.data);
+      if (dataStr.includes(expected)) {
+        confidence = 0.95;
+      } else {
+        return {
+          passed: false,
+          reason: `Expected "${expected}" not found in API response data`,
+          confidence: 0.9,
+        };
+      }
+    }
+
+    return { passed: true, confidence };
+  } catch (err) {
+    return {
+      passed: false,
+      reason: `API verify error: ${String(err)}`,
+      confidence: 0,
+    };
+  }
 }
 
 async function verifyScreenshot(
-  _node: StateNode,
+  node: StateNode,
   _result: StepResult
 ): Promise<VerifyResult> {
-  // TODO: Capture screen and send to vision model
-  return {
-    passed: true,
-    reason: "Screenshot verification not yet implemented",
-    confidence: 0.5,
-  };
+  try {
+    const surface = getSurface();
+
+    if (!surface.isAvailable) {
+      // Native bridge unavailable (e.g. CI / headless) — degrade gracefully
+      return {
+        passed: true,
+        reason: "Native capture unavailable; screenshot verification skipped",
+        confidence: 0.3,
+      };
+    }
+
+    const screenshot = await surface.captureScreen();
+    const expected = node.verify?.expected ?? "";
+
+    const vision = getVision();
+    const visionResult = await vision.verifyState(screenshot.data, expected);
+
+    return {
+      passed: visionResult.passed,
+      reason: visionResult.description,
+      confidence: visionResult.confidence,
+    };
+  } catch (err) {
+    return {
+      passed: false,
+      reason: `Screenshot verify error: ${String(err)}`,
+      confidence: 0,
+    };
+  }
 }
 
 async function verifyFile(
-  _node: StateNode,
+  node: StateNode,
   _result: StepResult
 ): Promise<VerifyResult> {
-  // TODO: Check file existence and contents
-  return { passed: true, confidence: 0.5 };
+  try {
+    const expected = node.verify?.expected ?? "";
+    const deep = getDeep();
+
+    // expected may be a plain path, or a JSON like {"path":"/…","contains":"…"}
+    let filePath = expected;
+    let contentMatch: string | undefined;
+
+    try {
+      const parsed = JSON.parse(expected) as Record<string, string>;
+      if (parsed.path) {
+        filePath = parsed.path;
+        contentMatch = parsed.contains;
+      }
+    } catch {
+      // Not JSON — treat the whole string as the path
+    }
+
+    if (!filePath) {
+      return {
+        passed: false,
+        reason: "No file path specified in verify.expected",
+        confidence: 0.9,
+      };
+    }
+
+    if (!deep.fileExists(filePath)) {
+      return {
+        passed: false,
+        reason: `File not found: ${filePath}`,
+        confidence: 0.95,
+      };
+    }
+
+    // File exists — if no content check required, we're done
+    if (!contentMatch) {
+      return { passed: true, confidence: 0.9 };
+    }
+
+    // Check file contents
+    const contents = deep.readFile(filePath);
+    if (contents.includes(contentMatch)) {
+      return { passed: true, confidence: 0.95 };
+    }
+
+    return {
+      passed: false,
+      reason: `File "${filePath}" exists but does not contain "${contentMatch}"`,
+      confidence: 0.95,
+    };
+  } catch (err) {
+    return {
+      passed: false,
+      reason: `File verify error: ${String(err)}`,
+      confidence: 0,
+    };
+  }
 }
 
 async function verifyProcess(
-  _node: StateNode,
+  node: StateNode,
   _result: StepResult
 ): Promise<VerifyResult> {
-  // TODO: Check process state
-  return { passed: true, confidence: 0.5 };
+  try {
+    const expected = node.verify?.expected ?? "";
+    const deep = getDeep();
+
+    // expected may be a plain process name, or JSON like {"name":"…","running":true}
+    let processName = expected;
+    let shouldBeRunning = true;
+
+    try {
+      const parsed = JSON.parse(expected) as Record<string, unknown>;
+      if (typeof parsed.name === "string") {
+        processName = parsed.name;
+      }
+      if (typeof parsed.running === "boolean") {
+        shouldBeRunning = parsed.running;
+      }
+    } catch {
+      // Not JSON — treat the whole string as the process name
+    }
+
+    if (!processName) {
+      return {
+        passed: false,
+        reason: "No process name specified in verify.expected",
+        confidence: 0.9,
+      };
+    }
+
+    const isRunning = deep.isProcessRunning(processName);
+
+    if (isRunning === shouldBeRunning) {
+      return {
+        passed: true,
+        reason: `Process "${processName}" is ${isRunning ? "running" : "stopped"} as expected`,
+        confidence: 0.9,
+      };
+    }
+
+    return {
+      passed: false,
+      reason: `Process "${processName}" is ${isRunning ? "running" : "not running"}, expected ${shouldBeRunning ? "running" : "stopped"}`,
+      confidence: 0.9,
+    };
+  } catch (err) {
+    return {
+      passed: false,
+      reason: `Process verify error: ${String(err)}`,
+      confidence: 0,
+    };
+  }
 }
 
 async function verifyCompound(
   node: StateNode,
   result: StepResult
 ): Promise<VerifyResult> {
-  // Run all strategies and aggregate
-  const results = await Promise.all([
-    verifyApi(node, result),
-    verifyScreenshot(node, result),
-  ]);
-  const allPassed = results.every((r) => r.passed);
-  const avgConfidence =
-    results.reduce((sum, r) => sum + (r.confidence ?? 0), 0) /
-    results.length;
-  return {
-    passed: allPassed,
-    confidence: avgConfidence,
-  };
+  try {
+    // api + screenshot run in parallel; both must pass
+    const [apiResult, screenshotResult] = await Promise.all([
+      verifyApi(node, result),
+      verifyScreenshot(node, result),
+    ]);
+
+    const allPassed = apiResult.passed && screenshotResult.passed;
+    const avgConfidence =
+      ((apiResult.confidence ?? 0) + (screenshotResult.confidence ?? 0)) / 2;
+
+    if (!allPassed) {
+      const failing = [
+        !apiResult.passed ? `api: ${apiResult.reason}` : null,
+        !screenshotResult.passed
+          ? `screenshot: ${screenshotResult.reason}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("; ");
+      return { passed: false, reason: failing, confidence: avgConfidence };
+    }
+
+    return { passed: true, confidence: avgConfidence };
+  } catch (err) {
+    return {
+      passed: false,
+      reason: `Compound verify error: ${String(err)}`,
+      confidence: 0,
+    };
+  }
 }

@@ -2,6 +2,9 @@ import type { StatePlan, StateNode, ExecutionLayer } from "../types/task.js";
 import { ExecutionQueue } from "./queue.js";
 import { RetryEngine } from "./retry.js";
 import { verifyStep } from "./verify.js";
+import { DeepLayer } from "../layers/deep.js";
+import { SurfaceLayer } from "../layers/surface.js";
+import * as bridge from "../platform/bridge.js";
 
 /**
  * Execution Orchestrator — coordinates the three execution layers.
@@ -12,10 +15,14 @@ import { verifyStep } from "./verify.js";
 export class Orchestrator {
   private queue: ExecutionQueue;
   private retry: RetryEngine;
+  private deep: DeepLayer;
+  private surface: SurfaceLayer;
 
   constructor() {
     this.queue = new ExecutionQueue();
     this.retry = new RetryEngine();
+    this.deep = new DeepLayer();
+    this.surface = new SurfaceLayer();
   }
 
   /** Get current queue depth. */
@@ -25,8 +32,6 @@ export class Orchestrator {
 
   /**
    * Execute a complete plan.
-   *
-   * TODO: Integrate with actual Deep/Surface/Fleet layers.
    */
   async executePlan(plan: StatePlan): Promise<ExecutionResult> {
     const completed = new Set<string>();
@@ -73,15 +78,38 @@ export class Orchestrator {
     _context: Map<string, StepResult>
   ): Promise<StepResult> {
     const layer = this.selectLayer(node);
+    const params = node.action.params;
+    const tool = node.action.tool;
 
-    // TODO: Route to actual execution layer
-    // For now, placeholder
+    const startMs = Date.now();
+    let data: Record<string, unknown> = {};
+
+    try {
+      if (layer === "deep") {
+        data = await this.executeDeep(tool, params);
+      } else if (layer === "surface") {
+        data = await this.executeSurface(tool, params);
+      } else {
+        throw new Error(`Unsupported execution layer: ${layer}`);
+      }
+    } catch (err) {
+      const durationMs = Date.now() - startMs;
+      return {
+        nodeId: node.id,
+        status: "failed",
+        layer,
+        durationMs,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    const durationMs = Date.now() - startMs;
     const result: StepResult = {
       nodeId: node.id,
       status: "ok",
       layer,
-      durationMs: 0,
-      data: {},
+      durationMs,
+      data,
     };
 
     // Verify if configured
@@ -95,10 +123,121 @@ export class Orchestrator {
     return result;
   }
 
+  private async executeDeep(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "shell.exec": {
+        const output = this.deep.exec(params.command as string);
+        return { output };
+      }
+      case "app.launch": {
+        const success = await this.deep.launchApp(params.name as string);
+        return { success };
+      }
+      case "app.activate": {
+        const success = await this.deep.activateApp(params.name as string);
+        return { success };
+      }
+      case "app.quit": {
+        const success = await this.deep.quitApp(params.name as string);
+        return { success };
+      }
+      case "file.read": {
+        const content = this.deep.readFile(params.path as string);
+        return { content };
+      }
+      case "file.write": {
+        this.deep.writeFile(params.path as string, params.content as string);
+        return { path: params.path };
+      }
+      case "process.list": {
+        const processes = await this.deep.getProcessList();
+        return { processes };
+      }
+      case "process.kill": {
+        const success = await this.deep.killProcess(params.pid as number);
+        return { success };
+      }
+      case "system.info": {
+        const info = this.deep.getSystemInfo();
+        return { info };
+      }
+      default:
+        throw new Error(`Unknown deep layer tool: ${tool}`);
+    }
+  }
+
+  private async executeSurface(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    // Surface layer requires native bindings
+    if (!bridge.isNativeAvailable()) {
+      throw new Error(
+        `Surface layer unavailable: ${bridge.getNativeError() ?? "native binary not loaded"}`
+      );
+    }
+
+    switch (tool) {
+      case "screen.capture": {
+        const capture = await this.surface.captureScreen();
+        return {
+          width: capture.width,
+          height: capture.height,
+          timestampMs: capture.timestampMs,
+          captureMethod: capture.captureMethod,
+          bytesPerRow: capture.bytesPerRow,
+          pixelFormat: capture.pixelFormat,
+        };
+      }
+      case "ui.find": {
+        const element = await this.surface.findElement(params.query as string);
+        return { element };
+      }
+      case "ui.click": {
+        const el = params.element as Parameters<
+          typeof this.surface.clickElement
+        >[0];
+        await this.surface.clickElement(el);
+        return {};
+      }
+      case "ui.type": {
+        await this.surface.typeText(params.text as string);
+        return {};
+      }
+      case "ui.key": {
+        await this.surface.keyTap(
+          params.key as string,
+          params.modifiers as Parameters<typeof this.surface.keyTap>[1]
+        );
+        return {};
+      }
+      case "ui.scroll": {
+        await this.surface.scroll(
+          params.dx as number,
+          params.dy as number
+        );
+        return {};
+      }
+      default:
+        throw new Error(`Unknown surface layer tool: ${tool}`);
+    }
+  }
+
+  /**
+   * Resolve "auto" layer by inspecting the tool prefix.
+   *
+   * shell.*, app.*, file.*, process.*, system.* → deep
+   * screen.*, ui.*                               → surface
+   */
   private selectLayer(node: StateNode): ExecutionLayer {
     if (node.layer !== "auto") return node.layer;
-    // Auto-select: prefer deep layer when possible
-    return "deep";
+
+    const prefix = node.action.tool.split(".")[0];
+    const surfacePrefixes = new Set(["screen", "ui"]);
+    return surfacePrefixes.has(prefix) ? "surface" : "deep";
   }
 }
 
