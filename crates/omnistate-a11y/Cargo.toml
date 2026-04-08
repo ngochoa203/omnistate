@@ -11,3 +11,16 @@ omnistate-core = { path = "../omnistate-core" }
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
+
+# [target.'cfg(target_os = "windows")'.dependencies]
+# windows = { version = "0.58", features = [
+#     "Win32_UI_Accessibility",
+#     "Win32_System_Com",
+#     "Win32_Foundation",
+# ]}
+
+# [target.'cfg(target_os = "linux")'.dependencies]
+# atspi = "0.22"     # AT-SPI2 async D-Bus bindings
+# zbus = "4"          # D-Bus client
+
+# iOS/Android: remote protocols via std::process::Command (no native deps)

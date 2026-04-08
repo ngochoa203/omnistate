@@ -1,3 +1,19 @@
+//! Linux screen capture via PipeWire / X11 / Wayland.
+//!
+//! ## Primary: PipeWire + xdg-desktop-portal (Wayland-native)
+//! ```text
+//! ScreenCast portal → pw_stream → SPA_DATA_DmaBuf → mmap → pixels
+//! ```
+//!
+//! ## Fallback: X11 XShm (X.org only)
+//! ```text
+//! XShmGetImage → shared memory → pixels
+//! ```
+//!
+//! ## Wayland alt: wlr-screencopy (wlroots: Sway, Hyprland)
+//!
+//! ## Deps: `pipewire = "0.8"`, `x11rb = "0.13"`, `wayland-client = "0.31"`
+
 use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
 

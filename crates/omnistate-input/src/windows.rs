@@ -1,3 +1,18 @@
+//! Windows input synthesis via SendInput / keybd_event.
+//!
+//! ## Mouse: SendInput(MOUSEINPUT)
+//! ```text
+//! MOUSEINPUT { dx, dy, dwFlags: MOUSEEVENTF_MOVE | _LEFTDOWN | _LEFTUP }
+//! ```
+//!
+//! ## Keyboard: SendInput(KEYBDINPUT)
+//! ```text
+//! KEYBDINPUT { wVk, dwFlags: KEYEVENTF_UNICODE } for text
+//! KEYBDINPUT { wVk: VK_*, dwFlags: 0 | KEYEVENTF_KEYUP } for keys
+//! ```
+//!
+//! ## Deps: `windows = "0.58"` features: Win32_UI_Input_KeyboardAndMouse
+
 use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::{Key, Modifiers, MouseButton, Point};
 

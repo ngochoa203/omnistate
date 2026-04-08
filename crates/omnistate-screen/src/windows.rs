@@ -1,3 +1,20 @@
+//! Windows screen capture via DXGI Output Duplication.
+//!
+//! ## Primary: DXGI Desktop Duplication (Win 8+)
+//! ```text
+//! IDXGIOutput1::DuplicateOutput → IDXGIOutputDuplication
+//!   → AcquireNextFrame → ID3D11Texture2D → Map → pixels
+//! ```
+//!
+//! ## Fallback: GDI BitBlt (WinXP+)
+//! ```text
+//! GetDC(NULL) → BitBlt(SRCCOPY) → GetDIBits → pixels
+//! ```
+//!
+//! ## Window: PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)
+//!
+//! ## Deps: `windows = "0.58"` features: Dxgi, Direct3D11, Gdi, Foundation
+
 use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
 

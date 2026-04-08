@@ -1,3 +1,20 @@
+//! Linux input synthesis via X11 XTest / libei (Wayland).
+//!
+//! ## X11: XTest extension
+//! ```text
+//! XTestFakeMotionEvent → mouse move
+//! XTestFakeButtonEvent → click
+//! XTestFakeKeyEvent → key press/release
+//! ```
+//!
+//! ## Wayland: libei (emulated input)
+//! ```text
+//! ei_seat → ei_device(keyboard/pointer) → ei_event → compositor
+//! Requires portal permission: org.freedesktop.portal.InputCapture
+//! ```
+//!
+//! ## Deps: `x11rb = "0.13"` features: xtest, `reis = "0.2"` for libei
+
 use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::{Key, Modifiers, MouseButton, Point};
 
