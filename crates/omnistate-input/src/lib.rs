@@ -79,3 +79,27 @@ pub fn type_text(text: &str) -> OmniResult<()> {
     #[cfg(target_os = "linux")]
     return linux::type_text(text);
 }
+
+/// Move mouse along a Bezier curve for human-like motion.
+pub fn move_mouse_smooth(from: Point, to: Point, steps: u32) -> OmniResult<()> {
+    #[cfg(target_os = "macos")]
+    return macos::move_mouse_smooth(from, to, steps);
+
+    #[cfg(target_os = "windows")]
+    return windows::move_mouse_smooth(from, to, steps);
+
+    #[cfg(target_os = "linux")]
+    return linux::move_mouse_smooth(from, to, steps);
+}
+
+/// Drag from one point to another with left mouse button held.
+pub fn drag(from: Point, to: Point) -> OmniResult<()> {
+    #[cfg(target_os = "macos")]
+    return macos::drag(from, to);
+
+    #[cfg(target_os = "windows")]
+    return windows::drag(from, to);
+
+    #[cfg(target_os = "linux")]
+    return linux::drag(from, to);
+}

@@ -24,3 +24,11 @@ pub fn key_tap(_key: Key, _modifiers: Modifiers) -> OmniResult<()> {
 pub fn type_text(_text: &str) -> OmniResult<()> {
     Err(OmniError::UnsupportedPlatform("Linux type text not yet implemented".into()))
 }
+
+pub fn move_mouse_smooth(_from: Point, _to: Point, _steps: u32) -> OmniResult<()> {
+    Err(OmniError::UnsupportedPlatform("Linux smooth mouse not yet implemented".into()))
+}
+
+pub fn drag(_from: Point, _to: Point) -> OmniResult<()> {
+    Err(OmniError::UnsupportedPlatform("Linux drag not yet implemented".into()))
+}
