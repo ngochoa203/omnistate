@@ -9,6 +9,8 @@
  */
 
 import type { DetectedElement } from "../layers/surface.js";
+import { ClaudeVisionProvider } from "./providers/claude.js";
+import { LocalVisionProvider } from "./providers/local.js";
 
 export interface VisionProvider {
   name: string;
@@ -100,4 +102,32 @@ export class VisionEngine {
       description: successful.map((r) => r.description).join("; "),
     };
   }
+}
+
+/**
+ * Create a VisionEngine with default providers registered.
+ *
+ * Provider priority (all run in parallel, highest confidence wins):
+ * 1. Local OCR — free, fast (~100-500ms), text-only
+ * 2. Claude Vision — costs API call, slower (~1-3s), semantic understanding
+ *
+ * @param anthropicApiKey - Optional. Falls back to ANTHROPIC_API_KEY env var.
+ */
+export function createDefaultEngine(
+  anthropicApiKey?: string
+): VisionEngine {
+  const engine = new VisionEngine();
+
+  // Local OCR — always available, no API key needed
+  engine.registerProvider(new LocalVisionProvider());
+
+  // Claude Vision — only if API key is available
+  const claude = new ClaudeVisionProvider({
+    apiKey: anthropicApiKey,
+  });
+  if (claude.isAvailable) {
+    engine.registerProvider(claude);
+  }
+
+  return engine;
 }
