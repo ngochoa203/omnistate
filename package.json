@@ -16,5 +16,8 @@
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "clean": "pnpm -r clean && cargo clean"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
   }
 }
