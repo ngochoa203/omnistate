@@ -58,23 +58,26 @@ User (natural language command)
 
 ```
 omnistate/
-├── crates/                     # Rust workspace
+├── crates/                     # Rust workspace (6 crates)
 │   ├── omnistate-core/         # Shared types & traits
 │   ├── omnistate-screen/       # Screen capture (per-platform)
+│   ├── omnistate-capture/      # Zero-copy GPU capture (IOSurface/DXGI)
 │   ├── omnistate-input/        # Mouse & keyboard control
 │   ├── omnistate-a11y/         # Accessibility tree
 │   └── omnistate-napi/         # N-API bridge → Node.js
 ├── packages/
-│   └── gateway/                # TypeScript gateway
-│       └── src/
-│           ├── gateway/        # WebSocket server
-│           ├── planner/        # Intent → State Graph (DAG)
-│           ├── executor/       # Queue, retry, verify
-│           ├── layers/         # Deep, Surface, Fleet
-│           ├── vision/         # Claude/GPT-4V + local OCR
-│           ├── health/         # System monitoring & repair
-│           ├── session/        # Persistent state
-│           └── plugin/         # Plugin system
+│   ├── gateway/                # TypeScript gateway
+│   │   └── src/
+│   │       ├── gateway/        # WebSocket server
+│   │       ├── planner/        # Intent → State Graph (DAG)
+│   │       ├── executor/       # Queue, retry, verify
+│   │       ├── layers/         # Deep, Surface, Fleet
+│   │       ├── vision/         # Claude/GPT-4V + local OCR
+│   │       ├── health/         # System monitoring & repair
+│   │       ├── session/        # Persistent state
+│   │       └── plugin/         # Plugin system
+│   └── cli/                    # CLI tool (`omnistate` binary)
+├── examples/                   # Demo scripts
 └── docs/                       # Architecture documentation
 ```
 
@@ -88,15 +91,76 @@ cd omnistate
 # Install dependencies
 pnpm install
 
-# Build Rust crates
-cargo build
+# Copy env config
+cp .env.example .env
+# Edit .env with your API key
 
-# Build TypeScript
+# Build Rust native bindings
+pnpm build:native
+
+# Run demo
+npx tsx examples/demo-system-check.ts
+
+# Run tests (75 tests)
+pnpm test
+
+# Start gateway daemon
+omnistate start
+
+# Send a command
+omnistate run "check disk space"
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `omnistate start [--port <n>] [--config <path>] [--no-health]` | Start the gateway daemon |
+| `omnistate run "<natural language command>"` | Send a task to the running gateway |
+| `omnistate status` | Show gateway status and active tasks |
+| `omnistate health` | Run a full system health check |
+| `omnistate stop` | Gracefully shut down the gateway |
+| `omnistate help` | Show usage information |
+
+## Demo Scripts
+
+| Script | Description |
+|--------|-------------|
+| `examples/demo-system-check.ts` | Run a health check and display sensor readings |
+| `examples/demo-vision-capture.ts` | Capture a screenshot and analyse it with vision AI |
+| `examples/demo-task-chain.ts` | Execute a multi-step task across Deep and Surface layers |
+
+## Development
+
+### Build
+
+```bash
+# Build everything
 pnpm build
 
-# Run gateway
+# Build only Rust native bindings
+pnpm build:native
+
+# Watch TypeScript
 pnpm dev
 ```
+
+### Tests
+
+```bash
+# Run all tests
+pnpm test
+
+# Run linter
+pnpm lint
+```
+
+### Project Stats
+
+- ~10K lines of code
+- 6 Rust crates
+- 2 TypeScript packages
+- 75 tests (5 test files)
 
 ## Use Cases
 
