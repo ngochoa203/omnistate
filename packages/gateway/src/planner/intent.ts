@@ -351,6 +351,54 @@ function verifyNode(
 }
 
 // ---------------------------------------------------------------------------
+// NL → Shell command extraction
+// ---------------------------------------------------------------------------
+
+const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatchArray) => string) }> = [
+  { pattern: /\blist (?:all )?files?\b/i, command: "ls -la" },
+  { pattern: /\blist (?:all )?director(?:y|ies)\b/i, command: "ls -d */" },
+  { pattern: /\bdisk ?(?:space|usage)\b/i, command: "df -h /" },
+  { pattern: /\btop (\d+) process/i, command: (m) => `ps aux --sort=-%cpu | head -${parseInt(m[1]) + 1}` },
+  { pattern: /\bprocess(?:es)?\b.*\bcpu\b/i, command: "ps aux --sort=-%cpu | head -11" },
+  { pattern: /\bmemory\b.*\busage\b/i, command: "vm_stat" },
+  { pattern: /\bwho(?:ami| am i)\b/i, command: "whoami" },
+  { pattern: /\bhostname\b/i, command: "hostname" },
+  { pattern: /\buptime\b/i, command: "uptime" },
+  { pattern: /\bcurrent dir(?:ectory)?\b/i, command: "pwd" },
+  { pattern: /\bfree (?:disk )?space\b/i, command: "df -h /" },
+  { pattern: /\bnetwork\b.*\binterface/i, command: "ifconfig | head -30" },
+  { pattern: /\bip addr/i, command: "ifconfig | grep 'inet ' | grep -v 127.0.0.1" },
+];
+
+/**
+ * Extract a real shell command from an intent.
+ * If the raw text looks like an actual command (starts with known binary), use it directly.
+ * Otherwise, try NL→command mapping. Falls back to raw text.
+ */
+function extractShellCommand(intent: Intent): string {
+  const text = intent.rawText.trim();
+
+  // If it already looks like a command (starts with known binary or path)
+  if (/^[.\/~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|node|make)\b/.test(text)) {
+    return text;
+  }
+
+  // Try NL → command mapping
+  for (const rule of NL_TO_COMMAND) {
+    const match = text.match(rule.pattern);
+    if (match) {
+      return typeof rule.command === "function" ? rule.command(match) : rule.command;
+    }
+  }
+
+  // Entity-based: if we have a command entity, use it
+  const cmdEntity = Object.values(intent.entities).find(e => e.type === "command");
+  if (cmdEntity?.value) return cmdEntity.value;
+
+  return text; // Fallback to raw text
+}
+
+// ---------------------------------------------------------------------------
 // Public: planFromIntent
 // ---------------------------------------------------------------------------
 
@@ -364,13 +412,14 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
   switch (intent.type as IntentType) {
     // ── shell-command ────────────────────────────────────────────────────────
     case "shell-command": {
+      const cmd = extractShellCommand(intent);
       nodes.push(
         actionNode(
           "exec",
           intent.rawText,
           "shell.exec",
           "deep",
-          { command: intent.rawText, entities: intent.entities },
+          { command: cmd, entities: intent.entities },
         ),
       );
       break;
@@ -389,7 +438,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           `Launch ${appName}`,
           "app.launch",
           "deep",
-          { appName, entities: intent.entities },
+          { name: appName, entities: intent.entities },
           [],
           "verify-launch",
         ),
@@ -407,13 +456,15 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
 
     // ── file-operation ───────────────────────────────────────────────────────
     case "file-operation": {
+      // Extract actual shell command from entities, or infer from NL
+      const cmd = extractShellCommand(intent);
       nodes.push(
         actionNode(
           "file-op",
           intent.rawText,
-          "fs.execute",
+          "shell.exec",
           "deep",
-          { entities: intent.entities },
+          { command: cmd, entities: intent.entities },
         ),
       );
       break;
@@ -425,7 +476,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         actionNode(
           "capture",
           "Capture current screen state",
-          "vision.capture",
+          "screen.capture",
           "surface",
           {},
           [],
@@ -434,7 +485,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         actionNode(
           "find-element",
           `Locate target element for: ${intent.rawText}`,
-          "vision.find-element",
+          "ui.find",
           "surface",
           { query: intent.rawText, entities: intent.entities },
           ["capture"],
@@ -443,7 +494,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         actionNode(
           "interact",
           intent.rawText,
-          "ui.interact",
+          "ui.click",
           "surface",
           { entities: intent.entities },
           ["find-element"],
@@ -461,13 +512,16 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
 
     // ── system-query ─────────────────────────────────────────────────────────
     case "system-query": {
+      const cmd = extractShellCommand(intent);
+      // If we extracted a real command, use shell.exec; otherwise use system.info
+      const tool = cmd !== intent.rawText ? "shell.exec" : "system.info";
       nodes.push(
         actionNode(
           "query",
           intent.rawText,
-          "system.query",
+          tool,
           "deep",
-          { entities: intent.entities },
+          { command: cmd, entities: intent.entities },
         ),
       );
       break;

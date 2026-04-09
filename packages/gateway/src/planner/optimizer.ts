@@ -11,13 +11,14 @@ export function optimizePlan(plan: StatePlan): StatePlan {
 }
 
 function optimizeNode(node: StateNode): StateNode {
-  // Add default verification if missing
-  if (!node.verify && node.type === "action") {
+  // Add default verification if missing — but only for verify-type nodes
+  // Action nodes that already succeed don't need string-match verification
+  if (!node.verify && node.type === "action" && node.layer === "surface") {
     return {
       ...node,
       verify: {
-        strategy: "api",
-        expected: "Step completed successfully",
+        strategy: "screenshot",
+        expected: "UI state updated",
         timeoutMs: 10000,
       },
     };
