@@ -1,5 +1,9 @@
 export { OmniStateGateway } from "./gateway/server.js";
 export type { GatewayConfig } from "./config/schema.js";
+export { classifyIntent, planFromIntent } from "./planner/intent.js";
+export { optimizePlan } from "./planner/optimizer.js";
+export { Orchestrator } from "./executor/orchestrator.js";
+export type { StepResult, ExecutionResult } from "./executor/orchestrator.js";
 
 // ─── Daemon entry point ───────────────────────────────────────────────────────
 
@@ -9,9 +13,9 @@ import { loadConfig } from "./config/loader.js";
 import { HealthMonitor } from "./health/monitor.js";
 import type { ServerMessage } from "./gateway/protocol.js";
 
-// ─── .env loader (no external deps) ─────────────────────────────────────────
+// ─── .env loader (no external deps) — exported for CLI inline use ──────────
 
-function loadDotEnv(envPath: string = ".env"): void {
+export function loadDotEnv(envPath: string = ".env"): void {
   const abs = resolve(envPath);
   if (!existsSync(abs)) return;
 

@@ -60,6 +60,7 @@ export class Orchestrator {
             completedSteps: completed.size,
             totalSteps: plan.nodes.length,
             error: retried.error,
+            stepResults: Array.from(results.values()),
           };
         }
       }
@@ -70,6 +71,7 @@ export class Orchestrator {
       status: "complete",
       completedSteps: completed.size,
       totalSteps: plan.nodes.length,
+      stepResults: Array.from(results.values()),
     };
   }
 
@@ -164,6 +166,13 @@ export class Orchestrator {
         const info = this.deep.getSystemInfo();
         return { info };
       }
+      case "generic.execute": {
+        // Fallback: attempt to run as a shell command
+        const cmd = (params.command as string) ?? (params.intent as { rawText?: string })?.rawText ?? "";
+        if (!cmd) throw new Error("generic.execute: no command provided");
+        const output = this.deep.exec(cmd);
+        return { output };
+      }
       default:
         throw new Error(`Unknown deep layer tool: ${tool}`);
     }
@@ -256,4 +265,5 @@ export interface ExecutionResult {
   completedSteps: number;
   totalSteps: number;
   error?: string;
+  stepResults?: StepResult[];
 }

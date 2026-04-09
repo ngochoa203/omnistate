@@ -47,6 +47,7 @@ export interface TaskStepMessage {
   step: number;
   status: "executing" | "completed" | "failed";
   layer: "deep" | "surface" | "fleet";
+  data?: Record<string, unknown>;
 }
 
 export interface TaskVerifyMessage {

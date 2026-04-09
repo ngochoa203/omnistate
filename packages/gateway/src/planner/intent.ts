@@ -157,6 +157,15 @@ const HEURISTIC_RULES: Array<{
     }),
   },
   {
+    // Bare shell commands that users might type directly
+    pattern:
+      /^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|whoami|hostname|pwd|uptime|date|which|env|printenv|uname|id|ifconfig|ping|traceroute|dig|nslookup)\b/i,
+    type: "shell-command",
+    entityExtractor: (m) => ({
+      command: { type: "command", value: m.input ?? m[0] },
+    }),
+  },
+  {
     // App launch: open, launch, start, activate + known apps
     pattern:
       /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
@@ -189,7 +198,7 @@ const HEURISTIC_RULES: Array<{
   {
     // System queries
     pattern:
-      /\b(disk|memory|ram|cpu|process|processes|network|uptime|battery|who is running|system info|ps aux|top|htop)\b/i,
+      /\b(disk|memory|ram|cpu|process|processes|network|uptime|battery|who is running|system info|ps aux|top|htop|hostname|whoami|who am i|current dir|where am i|what time|date and time)\b/i,
     type: "system-query",
     entityExtractor: () => ({}),
   },
@@ -358,16 +367,20 @@ const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatch
   { pattern: /\blist (?:all )?files?\b/i, command: "ls -la" },
   { pattern: /\blist (?:all )?director(?:y|ies)\b/i, command: "ls -d */" },
   { pattern: /\bdisk ?(?:space|usage)\b/i, command: "df -h /" },
-  { pattern: /\btop (\d+) process/i, command: (m) => `ps aux --sort=-%cpu | head -${parseInt(m[1]) + 1}` },
-  { pattern: /\bprocess(?:es)?\b.*\bcpu\b/i, command: "ps aux --sort=-%cpu | head -11" },
+  { pattern: /\btop (\d+) process/i, command: (m) => `ps -eo pid,pcpu,pmem,comm -r | head -${parseInt(m[1]) + 1}` },
+  { pattern: /\bprocess(?:es)?\b.*\bcpu\b/i, command: "ps -eo pid,pcpu,pmem,comm -r | head -11" },
   { pattern: /\bmemory\b.*\busage\b/i, command: "vm_stat" },
   { pattern: /\bwho(?:ami| am i)\b/i, command: "whoami" },
   { pattern: /\bhostname\b/i, command: "hostname" },
   { pattern: /\buptime\b/i, command: "uptime" },
   { pattern: /\bcurrent dir(?:ectory)?\b/i, command: "pwd" },
+  { pattern: /\bwhat dir/i, command: "pwd" },
+  { pattern: /\bwhere am i\b/i, command: "pwd" },
   { pattern: /\bfree (?:disk )?space\b/i, command: "df -h /" },
   { pattern: /\bnetwork\b.*\binterface/i, command: "ifconfig | head -30" },
   { pattern: /\bip addr/i, command: "ifconfig | grep 'inet ' | grep -v 127.0.0.1" },
+  { pattern: /\bdate\b.*\btime\b|\bwhat time\b|\bcurrent date\b/i, command: "date" },
+  { pattern: /\bshow (?:all )?env/i, command: "env | head -30" },
 ];
 
 /**
@@ -560,14 +573,16 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           prevId = nodeId;
         }
       } else {
-        // Fallback: single auto-layer node when decomposition unavailable
+        // Fallback: try to extract a shell command; use generic.execute as last resort
+        const cmd = extractShellCommand(intent);
+        const isRealCommand = cmd !== intent.rawText;
         nodes.push(
           actionNode(
             "execute",
             intent.rawText,
-            "generic.execute",
-            "auto",
-            { intent },
+            isRealCommand ? "shell.exec" : "generic.execute",
+            "deep",
+            isRealCommand ? { command: cmd } : { intent },
           ),
         );
       }

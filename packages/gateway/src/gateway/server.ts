@@ -186,9 +186,11 @@ export class OmniStateGateway {
     // 4. Execute plan — stream step updates
     const totalSteps = plan.nodes.length;
     let stepNum = 0;
+    const allStepData: Record<string, unknown>[] = [];
 
     for (const node of plan.nodes) {
       stepNum++;
+      const resolvedLayer = node.layer === "auto" ? "deep" : node.layer;
 
       // Notify: step executing
       this.safeSend(ws, {
@@ -196,12 +198,13 @@ export class OmniStateGateway {
         taskId,
         step: stepNum,
         status: "executing",
-        layer: node.layer === "auto" ? "deep" : node.layer,
+        layer: resolvedLayer,
       } as ServerMessage);
 
       // Execute via orchestrator (single-node plan for streaming)
       const singlePlan = { ...plan, nodes: [node] };
       const result = await this.orchestrator.executePlan(singlePlan);
+      const stepData = result.stepResults?.[0]?.data ?? {};
 
       if (result.status === "failed") {
         this.safeSend(ws, {
@@ -209,7 +212,8 @@ export class OmniStateGateway {
           taskId,
           step: stepNum,
           status: "failed",
-          layer: node.layer === "auto" ? "deep" : node.layer,
+          layer: resolvedLayer,
+          data: stepData,
         } as ServerMessage);
 
         this.safeSend(ws, {
@@ -220,13 +224,16 @@ export class OmniStateGateway {
         return;
       }
 
-      // Notify: step completed + verification
+      allStepData.push(stepData);
+
+      // Notify: step completed with data
       this.safeSend(ws, {
         type: "task.step",
         taskId,
         step: stepNum,
         status: "completed",
-        layer: node.layer === "auto" ? "deep" : node.layer,
+        layer: resolvedLayer,
+        data: stepData,
       } as ServerMessage);
 
       if (node.verify) {
@@ -240,7 +247,12 @@ export class OmniStateGateway {
       }
     }
 
-    // 5. All steps complete
+    // 5. All steps complete — aggregate output
+    // Collect all "output" fields from step data for the final result
+    const outputs = allStepData
+      .map((d) => d.output)
+      .filter((o): o is string => typeof o === "string");
+
     this.safeSend(ws, {
       type: "task.complete",
       taskId,
@@ -249,6 +261,8 @@ export class OmniStateGateway {
         stepsCompleted: totalSteps,
         intentType: intent.type,
         confidence: intent.confidence,
+        output: outputs.join("\n") || undefined,
+        stepData: allStepData,
       },
     } as ServerMessage);
   }

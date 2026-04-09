@@ -4,7 +4,7 @@
  *
  * Commands:
  *   omnistate start [--port <n>] [--config <path>] [--no-health]
- *   omnistate run "<NL command>"
+ *   omnistate run "<NL command>" [--inline]
  *   omnistate status
  *   omnistate health
  *   omnistate stop
@@ -22,6 +22,7 @@ const WS_HOST = "127.0.0.1";
 const WS_PORT = 19800;
 const WS_URL = `ws://${WS_HOST}:${WS_PORT}`;
 const CONNECT_TIMEOUT_MS = 5_000;
+const INLINE_DETECT_TIMEOUT_MS = 300;
 
 // ─── Types (inline subset of gateway protocol) ───────────────────────────────
 
@@ -69,6 +70,7 @@ interface TaskStepMessage {
   step: number;
   status: "executing" | "completed" | "failed";
   layer: "deep" | "surface" | "fleet";
+  data?: Record<string, unknown>;
 }
 
 interface TaskVerifyMessage {
@@ -130,7 +132,7 @@ function send(ws: WebSocket, msg: ClientMessage): void {
  * Open a WebSocket to the gateway and wait for the `connected` handshake.
  * Rejects with a clear error if the gateway is not reachable.
  */
-function connect(): Promise<WebSocket> {
+function connect(timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(WS_URL);
 
@@ -141,7 +143,7 @@ function connect(): Promise<WebSocket> {
           `Cannot reach gateway at ${WS_URL} — is it running? Try: omnistate start`
         )
       );
-    }, CONNECT_TIMEOUT_MS);
+    }, timeoutMs);
 
     ws.once("open", () => {
       const msg: ConnectMessage = {
@@ -179,6 +181,19 @@ function connect(): Promise<WebSocket> {
   });
 }
 
+/**
+ * Quick probe: can we reach the daemon within a short timeout?
+ */
+async function isDaemonRunning(): Promise<boolean> {
+  try {
+    const ws = await connect(INLINE_DETECT_TIMEOUT_MS);
+    ws.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── ANSI colour helpers ──────────────────────────────────────────────────────
 
 const isTTY = process.stdout.isTTY;
@@ -193,6 +208,40 @@ const green = (t: string) => clr(32, t);
 const yellow = (t: string) => clr(33, t);
 const red = (t: string) => clr(31, t);
 const cyan = (t: string) => clr(36, t);
+
+// ─── Output formatting ─────────────────────────────────────────────────────
+
+/** Pretty-print step data — extracts output/info and prints it cleanly. */
+function printStepOutput(data: Record<string, unknown>): void {
+  // Shell output
+  if (typeof data.output === "string" && data.output.trim()) {
+    console.log(data.output.trimEnd());
+    return;
+  }
+
+  // System info
+  if (data.info && typeof data.info === "object") {
+    const info = data.info as Record<string, unknown>;
+    for (const [key, val] of Object.entries(info)) {
+      console.log(`  ${dim(padR(key, 16))} ${val}`);
+    }
+    return;
+  }
+
+  // Process list
+  if (Array.isArray(data.processes)) {
+    for (const p of data.processes as Array<Record<string, unknown>>) {
+      console.log(`  ${dim(String(p.pid ?? ""))} ${p.name} ${dim(`cpu=${p.cpu}% mem=${p.memory}%`)}`);
+    }
+    return;
+  }
+
+  // Generic: show as JSON if non-empty and contains useful data
+  const keys = Object.keys(data).filter((k) => data[k] !== undefined && data[k] !== null && data[k] !== "");
+  if (keys.length > 0 && !(keys.length === 1 && data.success === true)) {
+    console.log(JSON.stringify(data, null, 2));
+  }
+}
 
 // ─── Command: start ───────────────────────────────────────────────────────────
 
@@ -234,14 +283,9 @@ async function cmdStart(argv: string[]): Promise<void> {
   console.log(green(`✓ Gateway daemon spawned (pid=${child.pid})`));
 }
 
-// ─── Command: run ─────────────────────────────────────────────────────────────
+// ─── Command: run (daemon mode via WebSocket) ───────────────────────────────
 
-async function cmdRun(goal: string): Promise<void> {
-  if (!goal.trim()) {
-    console.error(red('omnistate run: goal cannot be empty. Usage: omnistate run "<command>"'));
-    process.exit(1);
-  }
-
+async function cmdRunDaemon(goal: string): Promise<void> {
   let ws: WebSocket;
   try {
     ws = await connect();
@@ -250,7 +294,7 @@ async function cmdRun(goal: string): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`${cyan("[omnistate]")} Sending task: ${bold(goal)}`);
+  console.log(`${cyan("[omnistate]")} ${dim("(daemon)")} ${bold(goal)}`);
 
   send(ws, { type: "task", goal });
 
@@ -270,43 +314,38 @@ async function cmdRun(goal: string): Promise<void> {
         case "task.accepted": {
           const m = msg as TaskAcceptedMessage;
           taskId = m.taskId;
-          console.log(dim(`  [${m.taskId.slice(0, 8)}] Task accepted`));
+          console.log(dim(`  task ${m.taskId.slice(0, 8)}`));
           break;
         }
 
         case "task.step": {
           const m = msg as TaskStepMessage;
-          const icon =
-            m.status === "completed" ? green("✓") :
-            m.status === "failed" ? red("✗") :
-            yellow("▸");
-          console.log(
-            `  ${icon} Step ${bold(String(m.step))} — ${m.status} ${dim(`[${m.layer}]`)}`
-          );
+          if (m.status === "completed" && m.data) {
+            printStepOutput(m.data);
+          } else if (m.status === "failed") {
+            console.error(red(`  ✗ Step ${m.step} failed`));
+          }
           break;
         }
 
         case "task.verify": {
+          // Silent on pass; only show failures
           const m = msg as TaskVerifyMessage;
-          const icon =
-            m.result === "pass" ? green("✓") :
-            m.result === "fail" ? red("✗") :
-            yellow("?");
-          const conf = m.confidence !== undefined
-            ? dim(` (confidence: ${(m.confidence * 100).toFixed(0)}%)`)
-            : "";
-          console.log(`  ${icon} Verify step ${m.step}: ${m.result}${conf}`);
+          if (m.result !== "pass") {
+            const icon = m.result === "fail" ? red("✗") : yellow("?");
+            console.log(`  ${icon} Verify: ${m.result}`);
+          }
           break;
         }
 
         case "task.complete": {
           const m = msg as TaskCompleteMessage;
-          console.log(`\n${green("✓")} ${bold("Task complete")} ${dim(`[${(taskId ?? "").slice(0, 8)}]`)}`);
-          const resultStr = JSON.stringify(m.result, null, 2);
-          if (resultStr !== "{}") {
-            console.log(dim("Result:"));
-            console.log(resultStr);
+          // Print aggregated output if step messages didn't already show it
+          if (typeof m.result.output === "string" && m.result.output.trim()) {
+            // Only print if we haven't seen step-level data
+            // (the output field aggregates all steps)
           }
+          console.log(dim(`\n  done ${dim(`[${(taskId ?? "").slice(0, 8)}]`)}`));
           ws.close();
           resolve();
           break;
@@ -314,7 +353,7 @@ async function cmdRun(goal: string): Promise<void> {
 
         case "task.error": {
           const m = msg as TaskErrorMessage;
-          console.error(`\n${red("✗")} ${bold("Task failed")}: ${m.error}`);
+          console.error(`\n${red("✗")} ${m.error}`);
           exitCode = 1;
           ws.close();
           resolve();
@@ -331,7 +370,7 @@ async function cmdRun(goal: string): Promise<void> {
 
         case "error": {
           const m = msg as ErrorMessage;
-          console.error(red(`✗ Gateway error: ${m.message}`));
+          console.error(red(`✗ ${m.message}`));
           exitCode = 1;
           ws.close();
           resolve();
@@ -349,6 +388,120 @@ async function cmdRun(goal: string): Promise<void> {
   });
 
   process.exit(exitCode);
+}
+
+// ─── Command: run (inline mode — no daemon needed) ──────────────────────────
+
+async function cmdRunInline(goal: string): Promise<void> {
+  console.log(`${cyan("[omnistate]")} ${dim("(inline)")} ${bold(goal)}\n`);
+
+  // Locate the gateway dist directory
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const gatewayDist = resolve(__dirname, "../../gateway/dist");
+
+  // Load .env before anything else
+  try {
+    const { loadDotEnv } = (await import(
+      resolve(gatewayDist, "index.js")
+    )) as { loadDotEnv: (path?: string) => void };
+    loadDotEnv();
+  } catch {
+    // .env loading is optional
+  }
+
+  // Import gateway modules directly
+  let classifyIntent: (text: string) => Promise<{ type: string; entities: Record<string, unknown>; confidence: number; rawText: string }>;
+  let planFromIntent: (intent: unknown) => Promise<{ taskId: string; goal: string; estimatedDuration: string; nodes: Array<{ id: string; type: string; layer: string; action: { description: string; tool: string; params: Record<string, unknown> }; verify?: unknown; dependencies: string[]; onSuccess: string | null; onFailure: unknown; estimatedDurationMs: number; priority: string }> }>;
+  let optimizePlan: (plan: unknown) => unknown;
+  let Orchestrator: new () => { executePlan(plan: unknown): Promise<{ taskId: string; status: string; completedSteps: number; totalSteps: number; error?: string; stepResults?: Array<{ nodeId: string; status: string; layer: string; durationMs: number; data?: Record<string, unknown>; error?: string }> }> };
+
+  try {
+    const intentMod = await import(resolve(gatewayDist, "planner/intent.js"));
+    classifyIntent = intentMod.classifyIntent;
+    planFromIntent = intentMod.planFromIntent;
+
+    const optimizerMod = await import(resolve(gatewayDist, "planner/optimizer.js"));
+    optimizePlan = optimizerMod.optimizePlan;
+
+    const orchMod = await import(resolve(gatewayDist, "executor/orchestrator.js"));
+    Orchestrator = orchMod.Orchestrator;
+  } catch (err) {
+    console.error(
+      red("✗ Cannot load gateway modules.") +
+      `\n  Is the gateway built? Try: ${cyan("pnpm build")}`
+    );
+    console.error(dim((err as Error).message));
+    process.exit(1);
+  }
+
+  try {
+    // 1. Classify intent
+    const startMs = Date.now();
+    const intent = await classifyIntent(goal);
+    console.log(dim(`  intent: ${intent.type} (${(intent.confidence * 100).toFixed(0)}%)`));
+
+    // 2. Build plan
+    const rawPlan = await planFromIntent(intent);
+    const plan = optimizePlan(rawPlan) as typeof rawPlan;
+    console.log(dim(`  plan: ${plan.nodes.length} step(s)\n`));
+
+    // 3. Execute
+    const orchestrator = new Orchestrator();
+    const result = await orchestrator.executePlan(plan);
+    const elapsed = Date.now() - startMs;
+
+    if (result.status === "failed") {
+      console.error(`${red("✗")} ${result.error ?? "Execution failed"}`);
+
+      // Show any partial output from completed steps
+      if (result.stepResults) {
+        for (const step of result.stepResults) {
+          if (step.data && step.status === "ok") {
+            printStepOutput(step.data);
+          }
+        }
+      }
+      process.exit(1);
+    }
+
+    // Print output from all steps
+    if (result.stepResults) {
+      for (const step of result.stepResults) {
+        if (step.data) {
+          printStepOutput(step.data);
+        }
+      }
+    }
+
+    console.log(dim(`\n  done (${elapsed}ms)`));
+  } catch (err) {
+    console.error(`${red("✗")} ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+// ─── Command: run (auto-detect daemon vs inline) ────────────────────────────
+
+async function cmdRun(goal: string, forceInline: boolean = false): Promise<void> {
+  if (!goal.trim()) {
+    console.error(red('Usage: omnistate run "<command>"'));
+    process.exit(1);
+  }
+
+  if (forceInline) {
+    await cmdRunInline(goal);
+    return;
+  }
+
+  // Auto-detect: try daemon first, fall back to inline
+  const daemonUp = await isDaemonRunning();
+
+  if (daemonUp) {
+    await cmdRunDaemon(goal);
+  } else {
+    await cmdRunInline(goal);
+  }
 }
 
 // ─── Command: status ──────────────────────────────────────────────────────────
@@ -552,7 +705,9 @@ ${bold("COMMANDS")}
     ${dim("--config <path>")}    Path to config file
     ${dim("--no-health")}        Disable health monitor
 
-  ${cyan('run "<goal>"')}       Send a natural-language task and stream progress
+  ${cyan('run "<goal>"')}       Execute a natural-language task
+    ${dim("--inline")}           Force inline mode (skip daemon check)
+    ${dim("(auto)")}             Tries daemon first, falls back to inline
 
   ${cyan("status")}             Show gateway status (clients, queue, uptime)
 
@@ -563,9 +718,12 @@ ${bold("COMMANDS")}
   ${cyan("--help")}             Print this help message
 
 ${bold("EXAMPLES")}
+  omnistate run "list all files"
+  omnistate run "check disk space"
+  omnistate run "show top 5 processes"
+  omnistate run "what is my hostname"
+  omnistate run "open Safari" --inline
   omnistate start --port 19800
-  omnistate run "open Safari and navigate to github.com"
-  omnistate status
   omnistate health
   omnistate stop
 `);
@@ -598,8 +756,10 @@ async function main(): Promise<void> {
       break;
 
     case "run": {
-      const goal = rest.join(" ").replace(/^["']|["']$/g, "");
-      await cmdRun(goal);
+      const forceInline = rest.includes("--inline");
+      const goalParts = rest.filter((t) => t !== "--inline");
+      const goal = goalParts.join(" ").replace(/^["']|["']$/g, "");
+      await cmdRun(goal, forceInline);
       break;
     }
 
