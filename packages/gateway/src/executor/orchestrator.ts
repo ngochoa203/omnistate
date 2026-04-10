@@ -86,6 +86,27 @@ export class Orchestrator {
     const startMs = Date.now();
     let data: Record<string, unknown> = {};
 
+    // Verify-type nodes are handled by verifyStep() below, not as tool execution
+    if (node.type === "verify" || tool.startsWith("verify.")) {
+      const durationMs = Date.now() - startMs;
+      const result: StepResult = {
+        nodeId: node.id,
+        status: "ok",
+        layer,
+        durationMs,
+        data: {},
+      };
+
+      if (node.verify) {
+        const verified = await verifyStep(node, result);
+        if (!verified.passed) {
+          return { ...result, status: "failed", error: verified.reason };
+        }
+      }
+
+      return result;
+    }
+
     try {
       if (layer === "deep") {
         data = await this.executeDeep(tool, params);
@@ -145,6 +166,10 @@ export class Orchestrator {
       case "app.quit": {
         const success = await this.deep.quitApp(params.name as string);
         return { success };
+      }
+      case "app.script": {
+        const output = await this.deep.runAppleScript(params.script as string);
+        return { output };
       }
       case "file.read": {
         const content = this.deep.readFile(params.path as string);

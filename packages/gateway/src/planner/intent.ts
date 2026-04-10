@@ -28,6 +28,7 @@ export interface Entity {
 const INTENT_TYPES = [
   "shell-command",
   "app-launch",
+  "app-control",
   "file-operation",
   "ui-interaction",
   "system-query",
@@ -63,6 +64,7 @@ Classify the user's natural-language command into exactly ONE intent type:
 
 - "shell-command"   — run/execute a shell command or script
 - "app-launch"      — open, launch, activate, switch to an application
+- "app-control"     — control an app: close/stop/pause/mute/refresh/navigate tabs, windows, media
 - "file-operation"  — read, write, copy, move, delete, rename files or folders
 - "ui-interaction"  — click, type, scroll, navigate, interact with UI elements
 - "system-query"    — check system info, list processes, disk/memory/CPU, network
@@ -166,7 +168,23 @@ const HEURISTIC_RULES: Array<{
     }),
   },
   {
-    // App launch: open, launch, start, activate + known apps
+    // App control: stop, close, quit, pause, mute, refresh, tab management
+    // Must come BEFORE app-launch so "close Safari" → app-control, not app-launch
+    pattern:
+      /\b(stop|close|quit|exit|pause|mute|unmute|resume|refresh|reload|go back|go forward|next tab|prev(?:ious)? tab|close tab|new tab|full ?screen|minimize|maximize|play|volume)\b/i,
+    type: "app-control",
+    entityExtractor: (m) => {
+      const text = m.input ?? "";
+      // Try to extract app name from "X on/in Y" or "X Y" patterns
+      const appMatch = text.match(/\b(?:on|in|from)\s+(\w+)\s*$/i)
+        ?? text.match(/\b(safari|chrome|firefox|slack|vscode|terminal|finder|spotify|music|youtube|discord|telegram|brave)\b/i);
+      return {
+        action: { type: "command", value: m[1] },
+        ...(appMatch ? { app: { type: "app", value: appMatch[1] } } : {}),
+      };
+    },
+  },
+  {
     pattern:
       /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
     type: "app-launch",
@@ -251,7 +269,7 @@ export async function classifyIntent(text: string): Promise<Intent> {
 
 const DECOMPOSE_SYSTEM_PROMPT = `You are a task planner for a computer-automation assistant.
 Break the user's complex task into an ordered list of concrete sub-steps.
-Each step must be classifiable as one of: shell-command, app-launch, file-operation, ui-interaction, system-query.
+Each step must be classifiable as one of: shell-command, app-launch, app-control, file-operation, ui-interaction, system-query.
 
 Respond with ONLY valid JSON (no markdown, no commentary):
 {
@@ -412,6 +430,216 @@ function extractShellCommand(intent: Intent): string {
 }
 
 // ---------------------------------------------------------------------------
+// App control helpers — AppleScript generation for app-level automation
+// ---------------------------------------------------------------------------
+
+/** Known browser apps that support tab control via AppleScript. */
+const BROWSERS = ["safari", "google chrome", "chrome", "firefox", "brave", "arc", "edge"];
+
+/** Known apps with media control. */
+const MEDIA_APPS = ["spotify", "music", "youtube", "vlc", "quicktime"];
+
+/** Extract app name from intent entities or raw text. */
+function extractAppName(intent: Intent): string | null {
+  // From entities
+  const appEntity = Object.values(intent.entities).find(e => e.type === "app");
+  if (appEntity?.value) return appEntity.value;
+
+  // From "X on/in Y" pattern
+  const match = intent.rawText.match(/\b(?:on|in|from)\s+(\w+)\s*$/i);
+  if (match) return match[1];
+
+  // From known app names in text
+  const lower = intent.rawText.toLowerCase();
+  const knownApps = [...BROWSERS, ...MEDIA_APPS, "finder", "terminal", "vscode", "slack", "discord", "telegram", "notes", "mail", "messages", "preview"];
+  for (const app of knownApps) {
+    if (lower.includes(app)) return app;
+  }
+
+  return null;
+}
+
+/** Normalize app name for AppleScript tell blocks. */
+function normalizeAppName(name: string): string {
+  const map: Record<string, string> = {
+    "chrome": "Google Chrome",
+    "safari": "Safari",
+    "firefox": "Firefox",
+    "brave": "Brave Browser",
+    "arc": "Arc",
+    "edge": "Microsoft Edge",
+    "spotify": "Spotify",
+    "music": "Music",
+    "vscode": "Visual Studio Code",
+    "terminal": "Terminal",
+    "finder": "Finder",
+    "slack": "Slack",
+    "discord": "Discord",
+    "notes": "Notes",
+    "mail": "Mail",
+    "messages": "Messages",
+    "preview": "Preview",
+  };
+  return map[name.toLowerCase()] ?? name;
+}
+
+/** Extract a search/target term from the intent text (e.g., "youtube" from "close youtube on safari"). */
+function extractTarget(intent: Intent): string | null {
+  const text = intent.rawText.toLowerCase();
+
+  // "stop/close/pause X on/in Y" → X is the target
+  const match = text.match(/\b(?:stop|close|pause|mute|play|resume)\s+(.+?)\s+(?:on|in|from)\s+/i);
+  if (match) return match[1].trim();
+
+  // "close X tab" → X is the target
+  const tabMatch = text.match(/\b(?:close|stop)\s+(.+?)\s+tab/i);
+  if (tabMatch) return tabMatch[1].trim();
+
+  // "close tab X" → X is the target
+  const tabMatch2 = text.match(/\bclose\s+tab\s+(.+)/i);
+  if (tabMatch2) return tabMatch2[1].trim();
+
+  return null;
+}
+
+/**
+ * Build an AppleScript for app-control actions.
+ * Returns null if no script can be generated (fallback to keyboard shortcuts).
+ */
+function buildAppControlScript(intent: Intent): string | null {
+  const text = intent.rawText.toLowerCase();
+  const appRaw = extractAppName(intent);
+  const app = appRaw ? normalizeAppName(appRaw) : null;
+  const target = extractTarget(intent);
+  const isBrowser = app ? BROWSERS.includes(app.toLowerCase()) || BROWSERS.some(b => app.toLowerCase().includes(b)) : false;
+
+  // ── Quit app ──
+  if (/\b(quit|exit)\b/i.test(text) && app) {
+    return `tell application "${app}" to quit`;
+  }
+
+  // ── Close tab (browser) ──
+  if (/\b(close|stop)\b/i.test(text) && isBrowser && app) {
+    if (target) {
+      // Close specific tab by title match
+      return `tell application "${app}"\nrepeat with w in windows\nrepeat with t in tabs of w\nif name of t contains "${target}" then close t\nend repeat\nend repeat\nend tell`;
+    }
+    // Close current tab
+    return `tell application "${app}" to close current tab of front window`;
+  }
+
+  // ── Close window ──
+  if (/\bclose\b/i.test(text) && app) {
+    return `tell application "${app}" to close front window`;
+  }
+
+  // ── New tab (browser) ──
+  if (/\bnew tab\b/i.test(text) && isBrowser && app) {
+    if (app === "Safari") {
+      return `tell application "Safari" to make new tab in front window`;
+    }
+    return `tell application "${app}"\nmake new tab at end of tabs of front window\nend tell`;
+  }
+
+  // ── Navigate to URL ──
+  const urlMatch = intent.rawText.match(/\b(?:go to|navigate to|open)\s+(https?:\/\/\S+|[\w.-]+\.\w{2,}(?:\/\S*)?)/i);
+  if (urlMatch && isBrowser && app) {
+    let url = urlMatch[1];
+    if (!url.startsWith("http")) url = `https://${url}`;
+    if (app === "Safari") {
+      return `tell application "Safari" to set URL of current tab of front window to "${url}"`;
+    }
+    return `tell application "${app}" to set URL of active tab of front window to "${url}"`;
+  }
+
+  // ── Pause/play media (Spotify, Music) ──
+  if (/\b(pause|play|resume)\b/i.test(text)) {
+    if (app?.toLowerCase() === "spotify" || app?.toLowerCase() === "music") {
+      const action = /\bpause\b/i.test(text) ? "pause" : "play";
+      return `tell application "${app}" to ${action}`;
+    }
+    // For browsers (e.g., "pause youtube"), we can't directly control media via AppleScript
+    // Return null to fall through to keyboard shortcut (space bar)
+    return null;
+  }
+
+  // ── Mute/unmute ──
+  if (/\b(mute|unmute)\b/i.test(text)) {
+    // System-level mute via AppleScript
+    const mute = /\bunmute\b/i.test(text) ? "false" : "true";
+    return `set volume output muted ${mute}`;
+  }
+
+  // ── Minimize/maximize ──
+  if (/\bminimize\b/i.test(text) && app) {
+    return `tell application "System Events" to set miniaturized of front window of process "${app}" to true`;
+  }
+
+  // ── Volume ──
+  if (/\bvolume\s*(up|down)\b/i.test(text)) {
+    const dir = /\bup\b/i.test(text) ? "output volume of (get volume settings) + 10" : "output volume of (get volume settings) - 10";
+    return `set volume output volume (${dir})`;
+  }
+
+  return null;
+}
+
+/**
+ * Build a keyboard shortcut action for app-control.
+ * Returns params for the ui.key orchestrator tool.
+ */
+function buildKeyboardAction(intent: Intent): Record<string, unknown> | null {
+  const text = intent.rawText.toLowerCase();
+
+  // Refresh → Cmd+R
+  if (/\b(refresh|reload)\b/i.test(text)) {
+    return { key: "r", modifiers: { meta: true } };
+  }
+
+  // Go back → Cmd+[
+  if (/\bgo back\b/i.test(text)) {
+    return { key: "[", modifiers: { meta: true } };
+  }
+
+  // Go forward → Cmd+]
+  if (/\bgo forward\b/i.test(text)) {
+    return { key: "]", modifiers: { meta: true } };
+  }
+
+  // Next tab → Ctrl+Tab
+  if (/\bnext tab\b/i.test(text)) {
+    return { key: "Tab", modifiers: { control: true } };
+  }
+
+  // Previous tab → Ctrl+Shift+Tab
+  if (/\bprev(?:ious)? tab\b/i.test(text)) {
+    return { key: "Tab", modifiers: { control: true, shift: true } };
+  }
+
+  // Full screen → Ctrl+Cmd+F
+  if (/\bfull ?screen\b/i.test(text)) {
+    return { key: "f", modifiers: { meta: true, control: true } };
+  }
+
+  // Pause/play media → Space (for video players in browser)
+  if (/\b(pause|play|resume)\b/i.test(text)) {
+    return { key: "space", modifiers: {} };
+  }
+
+  // New tab → Cmd+T
+  if (/\bnew tab\b/i.test(text)) {
+    return { key: "t", modifiers: { meta: true } };
+  }
+
+  // Close tab → Cmd+W
+  if (/\bclose tab\b/i.test(text)) {
+    return { key: "w", modifiers: { meta: true } };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Public: planFromIntent
 // ---------------------------------------------------------------------------
 
@@ -483,6 +711,94 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
       break;
     }
 
+    // ── app-control ─────────────────────────────────────────────────────────
+    case "app-control": {
+      const appRaw = extractAppName(intent);
+      const app = appRaw ? normalizeAppName(appRaw) : null;
+      const text = intent.rawText.toLowerCase();
+      const isQuit = /\b(quit|exit)\b/i.test(text);
+
+      // Quit is simple — use app.quit directly
+      if (isQuit && app) {
+        nodes.push(
+          actionNode(
+            "app-quit",
+            `Quit ${app}`,
+            "app.quit",
+            "deep",
+            { name: app },
+          ),
+        );
+        break;
+      }
+
+      // For all other app-control actions:
+      // Step 1: Activate the target app (bring to front)
+      // Step 2: Use keyboard shortcut OR AppleScript
+      //
+      // Keyboard shortcuts are more reliable because they don't need
+      // Automation permission — they just need Accessibility permission.
+      // AppleScript needs per-app Automation permission (often blocked).
+
+      if (app) {
+        nodes.push(
+          actionNode(
+            "activate",
+            `Activate ${app}`,
+            "app.activate",
+            "deep",
+            { name: app },
+            [],
+            "action",
+          ),
+        );
+      }
+
+      // Try AppleScript first (more precise), keyboard shortcut as fallback
+      const script = buildAppControlScript(intent);
+      const keyAction = buildKeyboardAction(intent);
+
+      if (script) {
+        // Use AppleScript with keyboard fallback via onFailure
+        nodes.push(
+          actionNode(
+            "action",
+            intent.rawText,
+            "app.script",
+            "deep",
+            { script, entities: intent.entities },
+            app ? ["activate"] : [],
+          ),
+        );
+      } else if (keyAction) {
+        nodes.push(
+          actionNode(
+            "action",
+            intent.rawText,
+            "ui.key",
+            "surface",
+            keyAction,
+            app ? ["activate"] : [],
+          ),
+        );
+      } else {
+        // No specific action recognized — try closing the app
+        if (app) {
+          nodes.push(
+            actionNode(
+              "action",
+              intent.rawText,
+              "app.quit",
+              "deep",
+              { name: app },
+              ["activate"],
+            ),
+          );
+        }
+      }
+      break;
+    }
+
     // ── ui-interaction ───────────────────────────────────────────────────────
     case "ui-interaction": {
       nodes.push(
@@ -548,6 +864,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         const layerFor: Record<IntentType, StateNode["layer"]> = {
           "shell-command": "deep",
           "app-launch": "deep",
+          "app-control": "deep",
           "file-operation": "deep",
           "ui-interaction": "surface",
           "system-query": "deep",

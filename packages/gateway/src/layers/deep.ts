@@ -147,6 +147,32 @@ export class DeepLayer {
     }
   }
 
+  /**
+   * Execute an AppleScript and return stdout.
+   * Used for app-level automation: controlling tabs, windows, media, etc.
+   */
+  async runAppleScript(script: string, timeoutMs: number = 5000): Promise<string> {
+    try {
+      // osascript needs each line as a separate -e flag for multiline scripts
+      const lines = script.split("\n").filter(l => l.trim());
+      const args = lines.map(l => `-e ${JSON.stringify(l)}`).join(" ");
+      const { stdout } = await execAsync(
+        `osascript ${args}`,
+        { timeout: timeoutMs, encoding: "utf-8" }
+      );
+      return stdout.trim();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Detect common macOS permission issues
+      if (msg.includes("not allowed") || msg.includes("-1743") || msg.includes("timed out") || msg.includes("ETIMEDOUT")) {
+        throw new Error(
+          `AppleScript blocked by macOS. Grant permission: System Settings → Privacy & Security → Automation → Terminal → enable the target app.`
+        );
+      }
+      throw new Error(`AppleScript failed: ${msg}`);
+    }
+  }
+
   // ------------------------------------------------------------------
   // Process management
   // ------------------------------------------------------------------
