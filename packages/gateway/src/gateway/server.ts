@@ -5,6 +5,7 @@ import { authenticateClient } from "./auth.js";
 import { classifyIntent, planFromIntent } from "../planner/intent.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
+import { HealthMonitor } from "../health/monitor.js";
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -24,10 +25,26 @@ export class OmniStateGateway {
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
+  private monitor: HealthMonitor | null = null;
+  private startedAt = Date.now();
+  private taskHistory: Array<{
+    taskId: string;
+    goal: string;
+    status: "complete" | "failed";
+    output?: string;
+    intentType: string;
+    timestamp: string;
+    durationMs: number;
+  }> = [];
 
   constructor(config: GatewayConfig) {
     this.config = config;
     this.orchestrator = new Orchestrator();
+  }
+
+  /** Wire in the health monitor for health.query responses. */
+  setHealthMonitor(monitor: HealthMonitor): void {
+    this.monitor = monitor;
   }
 
   /** Start the WebSocket server. */
@@ -152,7 +169,53 @@ export class OmniStateGateway {
         break;
       }
 
+      case "history.query": {
+        const limit = msg.limit ?? 20;
+        const entries = this.taskHistory.slice(0, limit);
+        const reply: ServerMessage = { type: "history.result", entries };
+        this.safeSend(ws, reply);
+        break;
+      }
+
+      case "health.query": {
+        if (this.monitor) {
+          this.monitor.runCheck().then((report) => {
+            const reply: ServerMessage = {
+              type: "health.report",
+              overall: report.overall,
+              timestamp: report.timestamp,
+              sensors: report.sensors as Record<string, { status: string; value: number; unit: string; message?: string }>,
+              alerts: report.alerts,
+            };
+            this.safeSend(ws, reply);
+          }).catch(() => {
+            this.safeSend(ws, { type: "error", message: "Health check failed" });
+          });
+        } else {
+          this.safeSend(ws, { type: "error", message: "Health monitor not available" });
+        }
+        break;
+      }
+
+      case "status.query": {
+        const reply: ServerMessage = {
+          type: "status.reply",
+          connectedClients: this.clients.size,
+          queueDepth: 0,
+          uptime: Date.now() - this.startedAt,
+        };
+        this.safeSend(ws, reply);
+        break;
+      }
+
       default: {
+        // Handle admin.shutdown which is not in the ClientMessage union
+        const anyMsg = msg as { type: string };
+        if (anyMsg.type === "admin.shutdown") {
+          this.safeSend(ws, { type: "gateway.shutdown", reason: "Admin requested shutdown" });
+          this.stop();
+          return;
+        }
         ws.send(
           JSON.stringify({
             type: "error",
@@ -173,6 +236,8 @@ export class OmniStateGateway {
     _layerHint: string | undefined,
     ws: WebSocket
   ): Promise<void> {
+    const startMs = Date.now();
+
     // 1. Classify intent
     const intent = await classifyIntent(goal);
 
@@ -221,6 +286,16 @@ export class OmniStateGateway {
           taskId,
           error: result.error ?? "Step execution failed",
         } as ServerMessage);
+
+        this.taskHistory.unshift({
+          taskId,
+          goal,
+          status: "failed",
+          intentType: intent.type,
+          timestamp: new Date().toISOString(),
+          durationMs: Date.now() - startMs,
+        });
+        if (this.taskHistory.length > 100) this.taskHistory.pop();
         return;
       }
 
@@ -265,6 +340,17 @@ export class OmniStateGateway {
         stepData: allStepData,
       },
     } as ServerMessage);
+
+    this.taskHistory.unshift({
+      taskId,
+      goal,
+      status: "complete",
+      output: outputs.join("\n") || undefined,
+      intentType: intent.type,
+      timestamp: new Date().toISOString(),
+      durationMs: Date.now() - startMs,
+    });
+    if (this.taskHistory.length > 100) this.taskHistory.pop();
   }
 
   /** Send message to WS only if still open. */

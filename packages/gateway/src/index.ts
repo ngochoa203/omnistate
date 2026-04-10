@@ -106,6 +106,9 @@ export async function startGateway(): Promise<void> {
   if (healthEnabled) {
     health = new HealthMonitor(config.health.intervalMs, config.health.autoRepair);
 
+    // Wire health monitor into gateway for health.query support
+    gateway.setHealthMonitor(health);
+
     // Wire health alerts to gateway broadcast
     health.onReport((report) => {
       if (report.alerts.length === 0) return;

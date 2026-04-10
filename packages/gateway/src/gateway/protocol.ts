@@ -2,7 +2,12 @@
 export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 
 /** Messages sent from client to gateway. */
-export type ClientMessage = ConnectMessage | TaskMessage;
+export type ClientMessage =
+  | ConnectMessage
+  | TaskMessage
+  | HistoryQueryMessage
+  | HealthQueryMessage
+  | StatusQueryMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -17,6 +22,20 @@ export interface TaskMessage {
   layer?: "deep" | "surface" | "auto";
 }
 
+export interface HistoryQueryMessage {
+  type: "history.query";
+  limit?: number;
+  before?: string;
+}
+
+export interface HealthQueryMessage {
+  type: "health.query";
+}
+
+export interface StatusQueryMessage {
+  type: "status.query";
+}
+
 /** Messages sent from gateway to client. */
 export type ServerMessage =
   | ConnectedMessage
@@ -27,7 +46,10 @@ export type ServerMessage =
   | TaskErrorMessage
   | HealthAlertMessage
   | GatewayShutdownMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | HistoryResultMessage
+  | HealthReportMessage
+  | StatusReplyMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -84,4 +106,32 @@ export interface GatewayShutdownMessage {
 export interface ErrorMessage {
   type: "error";
   message: string;
+}
+
+export interface HistoryResultMessage {
+  type: "history.result";
+  entries: Array<{
+    taskId: string;
+    goal: string;
+    status: "complete" | "failed";
+    output?: string;
+    intentType: string;
+    timestamp: string;
+    durationMs: number;
+  }>;
+}
+
+export interface HealthReportMessage {
+  type: "health.report";
+  overall: string;
+  timestamp: string;
+  sensors: Record<string, { status: string; value: number; unit: string; message?: string }>;
+  alerts: Array<{ sensor: string; severity: string; message: string }>;
+}
+
+export interface StatusReplyMessage {
+  type: "status.reply";
+  connectedClients: number;
+  queueDepth: number;
+  uptime: number;
 }
