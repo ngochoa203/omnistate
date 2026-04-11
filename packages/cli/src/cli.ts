@@ -5,6 +5,14 @@
  * Commands:
  *   omnistate start [--port <n>] [--config <path>] [--no-health]
  *   omnistate run "<NL command>" [--inline]
+ *   omnistate config [subcommand]
+ *   omnistate model [name]
+ *   omnistate session [subcommand]
+ *   omnistate clear | reset | new [name]
+ *   omnistate whoami | commands
+ *   omnistate think [low|medium|high]
+ *   omnistate fast [on|off]
+ *   omnistate verbose [on|off]
  *   omnistate status
  *   omnistate health
  *   omnistate stop
@@ -504,6 +512,60 @@ async function cmdRun(goal: string, forceInline: boolean = false): Promise<void>
   }
 }
 
+// ─── Command: config ─────────────────────────────────────────────────────────
+
+async function cmdConfig(args: string[]): Promise<void> {
+  const goal = ["omnistate", "config", ...args].join(" ").trim();
+  const daemonUp = await isDaemonRunning();
+  if (!daemonUp) {
+    console.error(red("✗ `omnistate config` requires gateway daemon. Start it with: omnistate start"));
+    process.exit(1);
+  }
+  await cmdRunDaemon(goal);
+}
+
+async function cmdModel(args: string[]): Promise<void> {
+  const goal = ["/model", ...args].join(" ").trim();
+  const daemonUp = await isDaemonRunning();
+  if (!daemonUp) {
+    console.error(red("✗ `omnistate model` requires gateway daemon. Start it with: omnistate start"));
+    process.exit(1);
+  }
+  await cmdRunDaemon(goal);
+}
+
+async function cmdSession(args: string[]): Promise<void> {
+  const goal = ["/session", ...args].join(" ").trim();
+  const daemonUp = await isDaemonRunning();
+  if (!daemonUp) {
+    console.error(red("✗ `omnistate session` requires gateway daemon. Start it with: omnistate start"));
+    process.exit(1);
+  }
+  await cmdRunDaemon(goal);
+}
+
+async function cmdClear(): Promise<void> {
+  const daemonUp = await isDaemonRunning();
+  if (!daemonUp) {
+    console.error(red("✗ `omnistate clear` requires gateway daemon. Start it with: omnistate start"));
+    process.exit(1);
+  }
+  await cmdRunDaemon("/clear");
+}
+
+async function cmdGatewaySlash(goal: string, requiresDaemon: boolean = true): Promise<void> {
+  if (requiresDaemon) {
+    const daemonUp = await isDaemonRunning();
+    if (!daemonUp) {
+      console.error(red(`✗ \'${goal}\' requires gateway daemon. Start it with: omnistate start`));
+      process.exit(1);
+    }
+    await cmdRunDaemon(goal);
+    return;
+  }
+  await cmdRun(goal, false);
+}
+
 // ─── Command: status ──────────────────────────────────────────────────────────
 
 async function cmdStatus(): Promise<void> {
@@ -711,7 +773,24 @@ ${bold("COMMANDS")}
 
   ${cyan("status")}             Show gateway status (clients, queue, uptime)
 
+  ${cyan("config")}             Manage LLM provider/model/fallback/session config
+    ${dim("show")}               Show current runtime config
+    ${dim("set <key> <value>")}  Update api_key/base_url/model/provider/token budget
+    ${dim("proxy add ...")}      Add third-party proxy provider
+    ${dim("fallback ...")}       Manage fallback provider chain
+
   ${cyan("health")}             Run a single health check and print sensor table
+
+  ${cyan("model")}              Show or switch active model
+  ${cyan("session")}            Show/list/new/use runtime sessions
+  ${cyan("clear")}              Clear current session counters and task history
+  ${cyan("whoami")}             Show active provider/model identity
+  ${cyan("commands")}           Show available slash commands
+  ${cyan("think")}              Get/set thinking level (low|medium|high)
+  ${cyan("fast")}               Toggle fast mode (on|off)
+  ${cyan("verbose")}            Toggle verbose mode (on|off)
+  ${cyan("new")}                Create a new runtime session
+  ${cyan("reset")}              Reset current session state
 
   ${cyan("stop")}               Gracefully stop the gateway daemon
 
@@ -723,6 +802,19 @@ ${bold("EXAMPLES")}
   omnistate run "show top 5 processes"
   omnistate run "what is my hostname"
   omnistate run "open Safari" --inline
+  omnistate config show
+  omnistate config set model cx/gpt-5.4
+  omnistate config proxy add router9 http://localhost:20128/v1 sk-*** cx/gpt-5.4
+  omnistate model
+  omnistate model cx/gpt-5.4
+  omnistate session list
+  omnistate clear
+  omnistate whoami
+  omnistate think high
+  omnistate fast on
+  omnistate verbose on
+  omnistate new sprint-a
+  omnistate reset
   omnistate start --port 19800
   omnistate health
   omnistate stop
@@ -765,6 +857,50 @@ async function main(): Promise<void> {
 
     case "status":
       await cmdStatus();
+      break;
+
+    case "config":
+      await cmdConfig(rest);
+      break;
+
+    case "model":
+      await cmdModel(rest);
+      break;
+
+    case "session":
+      await cmdSession(rest);
+      break;
+
+    case "clear":
+      await cmdClear();
+      break;
+
+    case "whoami":
+      await cmdGatewaySlash("/whoami");
+      break;
+
+    case "commands":
+      await cmdGatewaySlash("/commands");
+      break;
+
+    case "think":
+      await cmdGatewaySlash(["/think", ...rest].join(" ").trim());
+      break;
+
+    case "fast":
+      await cmdGatewaySlash(["/fast", ...rest].join(" ").trim());
+      break;
+
+    case "verbose":
+      await cmdGatewaySlash(["/verbose", ...rest].join(" ").trim());
+      break;
+
+    case "new":
+      await cmdGatewaySlash(["/new", ...rest].join(" ").trim());
+      break;
+
+    case "reset":
+      await cmdGatewaySlash("/reset");
       break;
 
     case "health":

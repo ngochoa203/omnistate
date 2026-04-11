@@ -64,6 +64,14 @@ export function SettingsPanel() {
                 {llmPreflight?.baseURL ?? "Unknown"}
               </span>
             </div>
+            <div className="flex justify-between items-center gap-3">
+              <span className="text-text-secondary">Provider</span>
+              <span className="text-text-muted text-sm">{llmPreflight?.providerId ?? "Unknown"}</span>
+            </div>
+            <div className="flex justify-between items-center gap-3">
+              <span className="text-text-secondary">Model</span>
+              <span className="text-text-muted text-sm font-mono">{llmPreflight?.model ?? "Unknown"}</span>
+            </div>
             <div className="text-xs text-text-muted wrap-break-word">{llmPreflight?.message ?? "No preflight result yet."}</div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-text-muted">

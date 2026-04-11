@@ -141,6 +141,8 @@ export interface LlmPreflightReportMessage {
   message: string;
   required: boolean;
   baseURL: string;
+  providerId?: string;
+  model?: string;
   checkedAt: string;
 }
 export interface StatusReplyMessage { type: "status.reply"; connectedClients: number; queueDepth: number; uptime: number }
