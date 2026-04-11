@@ -449,7 +449,7 @@ export function tryHandleGatewayCommand(
     clearSessionData();
     return {
       handled: true,
-      output: `Cleared ${removed} task history items in current session`,
+      output: `Cleared ${removed} gateway task history items and reset current session counters`,
       data: { cleared: removed },
     };
   }
@@ -532,7 +532,7 @@ export function tryHandleGatewayCommand(
     clearSessionData();
     return {
       handled: true,
-      output: `Cleared ${removed} task history items in current session`,
+      output: `Cleared ${removed} gateway task history items and reset current session counters`,
       data: { cleared: removed },
     };
   }

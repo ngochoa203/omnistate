@@ -1,6 +1,25 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getProviderChain, loadLlmRuntimeConfig } from "./runtime-config.js";
 
+const PREFLIGHT_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, providerId: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`Preflight timeout for provider '${providerId}'`) as Error & {
+        status?: number;
+      };
+      err.status = 408;
+      reject(err);
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 export interface LlmPreflightResult {
   ok: boolean;
   status: "ok" | "missing_key" | "auth_error" | "insufficient_credits" | "api_error";
@@ -86,12 +105,16 @@ function formatLlmPreflightError(
 
 async function preflightAnthropic(baseURL: string, apiKey: string, model: string): Promise<void> {
   const client = new Anthropic({ apiKey, baseURL });
-  await client.messages.create({
-    model,
-    max_tokens: 1,
-    system: "Connectivity preflight",
-    messages: [{ role: "user", content: "ping" }],
-  });
+  await withTimeout(
+    client.messages.create({
+      model,
+      max_tokens: 1,
+      system: "Connectivity preflight",
+      messages: [{ role: "user", content: "ping" }],
+    }),
+    PREFLIGHT_TIMEOUT_MS,
+    "anthropic",
+  );
 }
 
 async function preflightOpenAICompatible(
@@ -100,22 +123,39 @@ async function preflightOpenAICompatible(
   model: string,
 ): Promise<void> {
   const endpoint = `${baseURL.replace(/\/+$/, "")}/chat/completions`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: "Connectivity preflight" },
-        { role: "user", content: "ping" },
-      ],
-      max_tokens: 1,
-      temperature: 0,
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PREFLIGHT_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: "Connectivity preflight" },
+          { role: "user", content: "ping" },
+        ],
+        max_tokens: 1,
+        temperature: 0,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      const timeoutErr = new Error(
+        `Preflight timeout after ${PREFLIGHT_TIMEOUT_MS}ms`,
+      ) as Error & { status?: number };
+      timeoutErr.status = 408;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const text = await response.text();

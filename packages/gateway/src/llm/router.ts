@@ -24,6 +24,25 @@ export interface LlmRouterErrorDetails {
   status?: number;
 }
 
+const PROVIDER_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, providerId: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`Provider '${providerId}' timed out after ${timeoutMs}ms`) as Error & {
+        status?: number;
+      };
+      err.status = 408;
+      reject(err);
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 function normalizeProviderError(
   provider: LlmProviderConfig,
   model: string,
@@ -80,23 +99,40 @@ async function callOpenAICompatible(
 ): Promise<string> {
   const base = provider.baseURL.replace(/\/+$/, "");
   const endpoint = `${base}/chat/completions`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages: [
-        { role: "system", content: req.system },
-        { role: "user", content: req.user },
-      ],
-      max_tokens: req.maxTokens,
-      temperature: 0,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${provider.apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [
+          { role: "system", content: req.system },
+          { role: "user", content: req.user },
+        ],
+        max_tokens: req.maxTokens,
+        temperature: 0,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      const timeoutErr = new Error(
+        `Provider '${provider.id}' timed out after ${PROVIDER_TIMEOUT_MS}ms`,
+      ) as Error & { status?: number };
+      timeoutErr.status = 408;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     let text = "";
@@ -123,7 +159,7 @@ async function callProvider(
   req: LlmTextRequest,
 ): Promise<string> {
   if (provider.kind === "anthropic") {
-    return callAnthropic(provider, req);
+    return withTimeout(callAnthropic(provider, req), PROVIDER_TIMEOUT_MS, provider.id);
   }
   return callOpenAICompatible(provider, req);
 }

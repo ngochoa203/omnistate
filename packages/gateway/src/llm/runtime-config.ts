@@ -77,9 +77,7 @@ function defaultConfig(): LlmRuntimeConfig {
     id: "router9",
     kind: "openai-compatible",
     baseURL: process.env.OMNISTATE_ROUTER9_BASE_URL ?? "http://localhost:20128/v1",
-    apiKey:
-      process.env.OMNISTATE_ROUTER9_API_KEY ??
-      "sk-3ec03d8b7156d20d-v11kjl-a78ecb37",
+    apiKey: process.env.OMNISTATE_ROUTER9_API_KEY ?? "",
     model: process.env.OMNISTATE_ROUTER9_MODEL ?? "cx/gpt-5.4",
     enabled: true,
   };
@@ -192,7 +190,10 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
 export function saveLlmRuntimeConfig(config: LlmRuntimeConfig): void {
   const dir = dirname(CONFIG_PATH);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8");
+  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 }
 
 export function setActiveModel(model: string): LlmRuntimeConfig {
