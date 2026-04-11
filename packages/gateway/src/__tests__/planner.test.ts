@@ -355,6 +355,16 @@ describe("planFromIntent() — plan structure", () => {
     expect(String(plan.nodes[1]?.action.params?.script ?? "")).toContain("youtube.com/results?search_query=Do%20Mixi");
   });
 
+  it("create react project with vite in Projects maps to shell command", async () => {
+    const intent = await classifyIntent("Create project react use vite in Projects");
+    const plan = await planFromIntent(intent);
+
+    expect(intent.type).toBe("shell-command");
+    expect(plan.nodes[0]?.action.tool).toBe("shell.exec");
+    expect(String(plan.nodes[0]?.action.params?.command ?? "")).toContain("npm create vite@latest");
+    expect(String(plan.nodes[0]?.action.params?.command ?? "")).toContain("$HOME/Projects");
+  });
+
   it("zalo messaging phrase surfaces an LLM provider error when generation fails", async () => {
     const intent = await classifyIntent(
       "Open zalo and message for 0389027907 with text 'Hi'"

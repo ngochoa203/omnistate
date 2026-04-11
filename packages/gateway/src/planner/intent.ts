@@ -362,6 +362,14 @@ const HEURISTIC_RULES: Array<{
     }),
   },
   {
+    // Dev scaffolding request should route to shell-command.
+    pattern: /\bcreate\b.*\b(project|app)\b.*\b(vite|react)\b/i,
+    type: "shell-command",
+    entityExtractor: () => ({
+      command: { type: "command", value: "scaffold-project" },
+    }),
+  },
+  {
     // App control: stop, close, quit, pause, mute, refresh, tab management
     // Must come BEFORE app-launch so "close Safari" → app-control, not app-launch
     pattern:
@@ -626,6 +634,14 @@ function verifyNode(
 // ---------------------------------------------------------------------------
 
 const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatchArray) => string) }> = [
+  {
+    pattern: /\bcreate\b.*\breact\b.*\bvite\b.*\bprojects\b/i,
+    command: 'cd "$HOME/Projects" && npm create vite@latest react-vite-app -- --template react',
+  },
+  {
+    pattern: /\bcreate\b.*\breact\b.*\bvite\b/i,
+    command: "npm create vite@latest react-vite-app -- --template react",
+  },
   { pattern: /\blist (?:all )?files?\b/i, command: "ls -la" },
   { pattern: /\blist (?:all )?director(?:y|ies)\b/i, command: "ls -d */" },
   { pattern: /\bdisk ?(?:space|usage)\b/i, command: "df -h /" },

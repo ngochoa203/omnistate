@@ -20,6 +20,14 @@ import { hostname, platform, arch, cpus, totalmem, freemem } from "node:os";
 const execAsync = promisify(exec);
 
 export class DeepLayer {
+  private static buildBrowserUrl(target: string): string {
+    const trimmed = target.trim();
+    if (!trimmed) return "https://www.google.com";
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (/^[\w.-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(trimmed)) return `https://${trimmed}`;
+    return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  }
+
   // ------------------------------------------------------------------
   // Shell execution
   // ------------------------------------------------------------------
@@ -112,6 +120,26 @@ export class DeepLayer {
           break;
       }
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Open URL or query in the system default browser. */
+  async openDefaultBrowser(target: string): Promise<boolean> {
+    try {
+      const url = DeepLayer.buildBrowserUrl(target);
+      switch (this.platform) {
+        case "macos":
+          await execAsync(`open ${JSON.stringify(url)}`);
+          return true;
+        case "linux":
+          spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+          return true;
+        case "windows":
+          await execAsync(`start "" ${JSON.stringify(url)}`);
+          return true;
+      }
     } catch {
       return false;
     }

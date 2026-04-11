@@ -180,8 +180,18 @@ export class Orchestrator {
         return { output };
       }
       case "app.launch": {
-        const success = await this.deep.launchApp(params.name as string);
-        return { success };
+        const name = params.name as string;
+        const success = await this.deep.launchApp(name);
+        if (success) return { success: true };
+
+        const fallbackSuccess = await this.deep.openDefaultBrowser(name);
+        return {
+          success: fallbackSuccess,
+          fallback: fallbackSuccess ? "default-browser" : "none",
+          output: fallbackSuccess
+            ? `App '${name}' not found. Opened in default browser instead.`
+            : `Unable to launch app '${name}' and fallback browser open failed.`,
+        };
       }
       case "app.activate": {
         const success = await this.deep.activateApp(params.name as string);

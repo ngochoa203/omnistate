@@ -135,6 +135,22 @@ describe("Orchestrator.executePlan()", () => {
     expect(orch.queueDepth).toBeGreaterThanOrEqual(0);
   });
 
+  it("app.launch falls back to default browser when app is not found", async () => {
+    const orch = new Orchestrator() as any;
+    orch.deep = {
+      launchApp: async () => false,
+      openDefaultBrowser: async () => true,
+    };
+
+    const plan = makePlan([
+      makeDeepNode("launch", "app.launch", { name: "UnknownAppName" }),
+    ]);
+
+    const result = await orch.executePlan(plan);
+    expect(result.status).toBe("complete");
+    expect(result.completedSteps).toBe(1);
+  });
+
   it("empty plan completes with 0 steps", async () => {
     const orch = new Orchestrator();
     const plan = makePlan([]);
