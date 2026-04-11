@@ -125,7 +125,7 @@ function defaultConfig(): LlmRuntimeConfig {
         enabled: false,
         mode: "handoff",
         shortcutName: "OmniState Bridge",
-        endpoint: "http://127.0.0.1:19800",
+        endpoint: "http://127.0.0.1:19801/siri/command",
         token: process.env.OMNISTATE_SIRI_TOKEN ?? "",
       },
     },

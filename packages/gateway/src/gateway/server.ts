@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
@@ -30,6 +31,7 @@ interface ConnectedClient {
  */
 export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
+  private siriBridgeServer: HttpServer | null = null;
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -87,6 +89,8 @@ export class OmniStateGateway {
     this.wss.on("connection", (ws, req) => {
       this.handleConnection(ws, req);
     });
+
+    this.startSiriBridge();
   }
 
   /** Gracefully shut down the gateway. */
@@ -102,7 +106,120 @@ export class OmniStateGateway {
     this.clients.clear();
     this.wss?.close();
     this.wss = null;
+    this.siriBridgeServer?.close();
+    this.siriBridgeServer = null;
     console.log("[OmniState] Gateway stopped");
+  }
+
+  private startSiriBridge(): void {
+    const runtime = loadLlmRuntimeConfig();
+    const siri = runtime.voice?.siri;
+    if (!siri?.enabled) return;
+
+    let endpoint: URL;
+    try {
+      endpoint = new URL(siri.endpoint);
+    } catch {
+      console.warn(`[OmniState] Siri bridge disabled: invalid endpoint '${siri.endpoint}'`);
+      return;
+    }
+
+    const host = endpoint.hostname || "127.0.0.1";
+    const port = Number(endpoint.port || "19801");
+    const path = endpoint.pathname && endpoint.pathname !== "/" ? endpoint.pathname : "/siri/command";
+
+    const server = createServer((req, res) => {
+      void this.handleSiriBridgeRequest(req, res, path);
+    });
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`[OmniState] Siri bridge port ${port} is already in use. Bridge is disabled.`);
+        return;
+      }
+      console.warn(`[OmniState] Siri bridge error: ${err.message}`);
+    });
+
+    server.listen(port, host, () => {
+      console.log(`[OmniState] Siri bridge listening on http://${host}:${port}${path}`);
+    });
+
+    this.siriBridgeServer = server;
+  }
+
+  private async handleSiriBridgeRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    expectedPath: string,
+  ): Promise<void> {
+    const requestPath = (() => {
+      try {
+        return new URL(req.url ?? "", "http://localhost").pathname;
+      } catch {
+        return req.url ?? "";
+      }
+    })();
+
+    if (req.method !== "POST" || requestPath !== expectedPath) {
+      res.statusCode = 404;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok: false, error: "Not found" }));
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+
+    await new Promise<void>((resolve) => req.on("end", () => resolve()));
+
+    const runtime = loadLlmRuntimeConfig();
+    const siri = runtime.voice.siri;
+
+    try {
+      const bodyText = Buffer.concat(chunks).toString("utf-8");
+      const body = JSON.parse(bodyText) as { token?: string; text?: string; goal?: string };
+      const token = body.token ?? "";
+      const goal = (body.text ?? body.goal ?? "").trim();
+
+      if (!siri.enabled) {
+        res.statusCode = 403;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "Siri bridge disabled" }));
+        return;
+      }
+
+      if (!siri.token || token !== siri.token) {
+        res.statusCode = 401;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "Invalid token" }));
+        return;
+      }
+
+      if (!goal) {
+        res.statusCode = 400;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "Missing text" }));
+        return;
+      }
+
+      const taskId = `siri-${crypto.randomUUID()}`;
+      this.executeTaskPipeline(taskId, goal, undefined, undefined).catch(() => {
+        // no-op: pipeline error is returned through history and server logs
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok: true, taskId, accepted: true }));
+    } catch (err) {
+      res.statusCode = 400;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
   }
 
   /** Broadcast a message to all connected clients. */
@@ -486,7 +603,7 @@ export class OmniStateGateway {
     taskId: string,
     goal: string,
     _layerHint: string | undefined,
-    ws: WebSocket
+    ws?: WebSocket
   ): Promise<void> {
     const startMs = Date.now();
 
@@ -615,7 +732,8 @@ export class OmniStateGateway {
   }
 
   /** Send message to WS only if still open. */
-  private safeSend(ws: WebSocket, msg: ServerMessage): void {
+  private safeSend(ws: WebSocket | undefined, msg: ServerMessage): void {
+    if (!ws) return;
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(JSON.stringify(msg));
     }
