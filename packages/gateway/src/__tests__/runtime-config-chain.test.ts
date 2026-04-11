@@ -46,6 +46,20 @@ function makeConfig(): LlmRuntimeConfig {
       decomposeMaxTokens: 360,
       maxInputChars: 1400,
     },
+    voice: {
+      lowLatency: true,
+      autoExecuteTranscript: true,
+      primaryProvider: "native",
+      fallbackProviders: ["whisper-local", "whisper-cloud"],
+      chunkMs: 220,
+      siri: {
+        enabled: false,
+        mode: "handoff",
+        shortcutName: "OmniState Bridge",
+        endpoint: "http://127.0.0.1:19800",
+        token: "",
+      },
+    },
     session: {
       currentSessionId: "default",
       sessions: [

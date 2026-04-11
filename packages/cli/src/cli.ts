@@ -789,6 +789,7 @@ ${bold("COMMANDS")}
   ${cyan("think")}              Get/set thinking level (low|medium|high)
   ${cyan("fast")}               Toggle fast mode (on|off)
   ${cyan("verbose")}            Toggle verbose mode (on|off)
+  ${cyan("voice")}              Show/update low-latency voice and Siri bridge config
   ${cyan("new")}                Create a new runtime session
   ${cyan("reset")}              Reset current session state
 
@@ -813,6 +814,9 @@ ${bold("EXAMPLES")}
   omnistate think high
   omnistate fast on
   omnistate verbose on
+  omnistate voice show
+  omnistate voice providers native,whisper-local,whisper-cloud
+  omnistate voice siri on
   omnistate new sprint-a
   omnistate reset
   omnistate start --port 19800
@@ -893,6 +897,10 @@ async function main(): Promise<void> {
 
     case "verbose":
       await cmdGatewaySlash(["/verbose", ...rest].join(" ").trim());
+      break;
+
+    case "voice":
+      await cmdGatewaySlash(["/voice", ...rest].join(" ").trim() || "/voice");
       break;
 
     case "new":

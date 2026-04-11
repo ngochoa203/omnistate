@@ -11,7 +11,7 @@ import { HealthMonitor } from "../health/monitor.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
-import { incrementSessionUsage } from "../llm/runtime-config.js";
+import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 
 const execAsync = promisify(exec);
 
@@ -235,42 +235,76 @@ export class OmniStateGateway {
       case "voice.transcribe": {
         const { id, audio, format: _format } = msg;
         try {
-          // Decode base64 audio and run LOCAL transcription engines only.
+          // Decode base64 audio and run configured voice provider chain.
           const audioBuffer = Buffer.from(audio, "base64");
+          const runtime = loadLlmRuntimeConfig();
+          const voice = runtime.voice;
+
+          const dedupedProviders = [
+            voice.primaryProvider,
+            ...voice.fallbackProviders,
+          ].filter((p, i, arr) => arr.indexOf(p) === i);
+          const orderedProviders = voice.lowLatency
+            ? (["native", ...dedupedProviders.filter((p) => p !== "native")] as Array<
+                "native" | "whisper-local" | "whisper-cloud"
+              >)
+            : dedupedProviders;
 
           let transcript = "";
+          let usedProvider = "";
 
-          // Try local Whisper first
           try {
-            const localResult = await HybridAutomation.transcribeAudio(
-              audioBuffer,
-              "whisper-local",
+            // Low-latency mode races providers and takes first non-empty transcript.
+            const fastest = await Promise.any(
+              orderedProviders.map(async (provider) => {
+                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+                const text = result.text.trim();
+                if (!text) throw new Error(`empty transcript from ${provider}`);
+                return { text, provider };
+              }),
             );
-            transcript = localResult.text.trim();
+            transcript = fastest.text;
+            usedProvider = fastest.provider;
           } catch {
-            // Fallback to offline native recognizer
-            const nativeResult = await HybridAutomation.transcribeAudio(
-              audioBuffer,
-              "native",
-            );
-            transcript = nativeResult.text.trim();
+            // If race fails, retry sequentially through provider chain.
+            for (const provider of orderedProviders) {
+              try {
+                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+                const text = result.text.trim();
+                if (text) {
+                  transcript = text;
+                  usedProvider = provider;
+                  break;
+                }
+              } catch {
+                // try next provider
+              }
+            }
           }
 
           if (transcript) {
             this.safeSend(ws, { type: "voice.transcript", id, text: transcript });
 
-            // Auto-execute transcript as a task
-            const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
-            this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: transcript });
-            this.executeTaskPipeline(voiceTaskId, transcript, undefined, ws).catch(
-              (err) => {
-                this.safeSend(ws, {
-                  type: "task.error",
-                  taskId: voiceTaskId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
-            );
+            const shouldAutoExecute =
+              voice.autoExecuteTranscript &&
+              !(voice.siri.enabled && voice.siri.mode === "handoff");
+
+            if (shouldAutoExecute) {
+              const goal = usedProvider
+                ? `${transcript}`
+                : transcript;
+              const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
+              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal });
+              this.executeTaskPipeline(voiceTaskId, goal, undefined, ws).catch(
+                (err) => {
+                  this.safeSend(ws, {
+                    type: "task.error",
+                    taskId: voiceTaskId,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              );
+            }
           } else {
             this.safeSend(ws, {
               type: "voice.error",

@@ -20,6 +20,25 @@ export interface TokenBudgetConfig {
   maxInputChars: number;
 }
 
+export type VoiceProvider = "native" | "whisper-local" | "whisper-cloud";
+
+export interface SiriBridgeConfig {
+  enabled: boolean;
+  mode: "handoff" | "command";
+  shortcutName: string;
+  endpoint: string;
+  token: string;
+}
+
+export interface VoiceRuntimeConfig {
+  lowLatency: boolean;
+  autoExecuteTranscript: boolean;
+  primaryProvider: VoiceProvider;
+  fallbackProviders: VoiceProvider[];
+  chunkMs: number;
+  siri: SiriBridgeConfig;
+}
+
 export interface SessionMeta {
   id: string;
   name: string;
@@ -37,6 +56,7 @@ export interface LlmRuntimeConfig {
   fallbackProviderIds: string[];
   providers: LlmProviderConfig[];
   tokenBudget: TokenBudgetConfig;
+  voice: VoiceRuntimeConfig;
   session: {
     currentSessionId: string;
     sessions: SessionMeta[];
@@ -94,6 +114,20 @@ function defaultConfig(): LlmRuntimeConfig {
       intentMaxTokens: 220,
       decomposeMaxTokens: 360,
       maxInputChars: 1400,
+    },
+    voice: {
+      lowLatency: true,
+      autoExecuteTranscript: true,
+      primaryProvider: "native",
+      fallbackProviders: ["whisper-local", "whisper-cloud"],
+      chunkMs: 220,
+      siri: {
+        enabled: false,
+        mode: "handoff",
+        shortcutName: "OmniState Bridge",
+        endpoint: "http://127.0.0.1:19800",
+        token: process.env.OMNISTATE_SIRI_TOKEN ?? "",
+      },
     },
     session: {
       currentSessionId: session.id,
@@ -160,6 +194,36 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
       decomposeMaxTokens:
         raw.tokenBudget?.decomposeMaxTokens ?? def.tokenBudget.decomposeMaxTokens,
       maxInputChars: raw.tokenBudget?.maxInputChars ?? def.tokenBudget.maxInputChars,
+    },
+    voice: {
+      lowLatency: raw.voice?.lowLatency ?? def.voice.lowLatency,
+      autoExecuteTranscript:
+        raw.voice?.autoExecuteTranscript ?? def.voice.autoExecuteTranscript,
+      primaryProvider:
+        raw.voice?.primaryProvider === "whisper-cloud" ||
+        raw.voice?.primaryProvider === "whisper-local"
+          ? raw.voice.primaryProvider
+          : "native",
+      fallbackProviders: Array.isArray(raw.voice?.fallbackProviders)
+        ? raw.voice.fallbackProviders.filter(
+            (p): p is VoiceProvider =>
+              p === "native" || p === "whisper-local" || p === "whisper-cloud",
+          )
+        : def.voice.fallbackProviders,
+      chunkMs:
+        typeof raw.voice?.chunkMs === "number" && raw.voice.chunkMs >= 80
+          ? Math.round(raw.voice.chunkMs)
+          : def.voice.chunkMs,
+      siri: {
+        enabled: raw.voice?.siri?.enabled ?? def.voice.siri.enabled,
+        mode:
+          raw.voice?.siri?.mode === "command"
+            ? "command"
+            : def.voice.siri.mode,
+        shortcutName: raw.voice?.siri?.shortcutName ?? def.voice.siri.shortcutName,
+        endpoint: raw.voice?.siri?.endpoint ?? def.voice.siri.endpoint,
+        token: raw.voice?.siri?.token ?? def.voice.siri.token,
+      },
     },
     session: {
       currentSessionId,
@@ -270,6 +334,58 @@ export function setTokenBudgetField(
     if (!Number.isNaN(num) && Number.isFinite(num) && num > 0) {
       conf.tokenBudget[key] = Math.round(num);
     }
+  }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setVoiceField(
+  key: keyof Omit<VoiceRuntimeConfig, "siri" | "fallbackProviders" | "primaryProvider">,
+  value: number | boolean,
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  if (key === "lowLatency" || key === "autoExecuteTranscript") {
+    conf.voice[key] = Boolean(value);
+  } else if (key === "chunkMs") {
+    const num = Number(value);
+    if (!Number.isNaN(num) && Number.isFinite(num) && num >= 80) {
+      conf.voice.chunkMs = Math.round(num);
+    }
+  }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setVoiceProviderChain(
+  primary: VoiceProvider,
+  fallback: VoiceProvider[],
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  conf.voice.primaryProvider = primary;
+  const deduped: VoiceProvider[] = [];
+  for (const p of fallback) {
+    if (p !== primary && !deduped.includes(p)) deduped.push(p);
+  }
+  conf.voice.fallbackProviders = deduped;
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setSiriField(
+  key: keyof SiriBridgeConfig,
+  value: string | boolean,
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  if (key === "enabled") {
+    conf.voice.siri.enabled = Boolean(value);
+  } else if (key === "mode") {
+    conf.voice.siri.mode = value === "command" ? "command" : "handoff";
+  } else if (key === "shortcutName") {
+    conf.voice.siri.shortcutName = String(value);
+  } else if (key === "endpoint") {
+    conf.voice.siri.endpoint = String(value);
+  } else if (key === "token") {
+    conf.voice.siri.token = String(value);
   }
   saveLlmRuntimeConfig(conf);
   return conf;

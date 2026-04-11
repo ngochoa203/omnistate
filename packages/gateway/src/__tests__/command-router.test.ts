@@ -20,6 +20,20 @@ const mockConfig = {
     decomposeMaxTokens: 360,
     maxInputChars: 1400,
   },
+  voice: {
+    lowLatency: true,
+    autoExecuteTranscript: true,
+    primaryProvider: "native",
+    fallbackProviders: ["whisper-local", "whisper-cloud"],
+    chunkMs: 220,
+    siri: {
+      enabled: false,
+      mode: "handoff",
+      shortcutName: "OmniState Bridge",
+      endpoint: "http://127.0.0.1:19800",
+      token: "",
+    },
+  },
   session: {
     currentSessionId: "default",
     sessions: [
@@ -48,6 +62,9 @@ const runtimeConfigMocks = vi.hoisted(() => ({
   setActiveProvider: vi.fn(() => mockConfig),
   setFallbackOrder: vi.fn((ids: string[]) => ({ ...mockConfig, fallbackProviderIds: ids })),
   setTokenBudgetField: vi.fn(() => mockConfig),
+  setVoiceField: vi.fn(() => mockConfig),
+  setVoiceProviderChain: vi.fn(() => mockConfig),
+  setSiriField: vi.fn(() => mockConfig),
   switchSession: vi.fn(() => mockConfig),
   updateCurrentSessionMeta: vi.fn(() => mockConfig),
   updateActiveProviderField: vi.fn(() => mockConfig),
@@ -113,5 +130,19 @@ describe("tryHandleGatewayCommand()", () => {
     expect(out?.output).toContain("* default (default)");
     expect(out?.output).toContain("think=medium");
     expect(out?.output).toContain("verbose=true");
+  });
+
+  it("voice providers command updates provider chain", () => {
+    const out = tryHandleGatewayCommand("/voice providers native,whisper-local", ctx);
+    expect(runtimeConfigMocks.setVoiceProviderChain).toHaveBeenCalledWith("native", [
+      "whisper-local",
+    ]);
+    expect(out?.handled).toBe(true);
+  });
+
+  it("voice siri command toggles siri integration", () => {
+    const out = tryHandleGatewayCommand("/voice siri on", ctx);
+    expect(runtimeConfigMocks.setSiriField).toHaveBeenCalledWith("enabled", true);
+    expect(out?.output).toContain("siri.enabled=");
   });
 });
