@@ -386,6 +386,16 @@ const HEURISTIC_RULES: Array<{
     entityExtractor: () => ({}),
   },
   {
+    // Browser media intent: "open <query> on youtube" should route to browser control
+    pattern: /\bopen\s+(.+?)\s+on\s+youtube\b/i,
+    type: "app-control",
+    entityExtractor: (m) => ({
+      action: { type: "command", value: "open" },
+      app: { type: "app", value: "safari" },
+      query: { type: "text", value: m[1]?.trim() ?? "" },
+    }),
+  },
+  {
     pattern:
       /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
     type: "app-launch",
@@ -719,8 +729,23 @@ const KNOWN_APPS = [
 function extractAppName(intent: Intent): string | null {
   const raw = intent.rawText;
 
-  // Prefer explicit "on/in/from <app>" context anywhere in the sentence.
   const contextMatch = raw.match(/\b(?:on|in|from)\s+([a-zA-Z][\w\s.-]{1,40}?)(?=\s+(?:and|then|to|for)\b|$)/i);
+  const contextCandidate = contextMatch?.[1]?.trim();
+  const contextBrowser = contextCandidate
+    ? BROWSERS.find((b) => contextCandidate.toLowerCase().includes(b))
+    : null;
+
+  // Prefer explicit app entity, except when sentence has explicit browser context
+  // like "... on safari" and entity points to a media target like "youtube".
+  const appEntity = Object.values(intent.entities).find(e => e.type === "app");
+  if (appEntity?.value) {
+    const entityLower = appEntity.value.toLowerCase();
+    const entityIsBrowser = BROWSERS.some((b) => entityLower.includes(b));
+    if (!entityIsBrowser && contextBrowser) return contextBrowser;
+    return appEntity.value;
+  }
+
+  // Prefer explicit "on/in/from <app>" context anywhere in the sentence.
   if (contextMatch?.[1]) {
     const candidate = contextMatch[1].trim();
     const candidateLower = candidate.toLowerCase();
@@ -739,10 +764,6 @@ function extractAppName(intent: Intent): string | null {
       if (candidateLower.includes(app)) return app;
     }
   }
-
-  // From entities
-  const appEntity = Object.values(intent.entities).find(e => e.type === "app");
-  if (appEntity?.value) return appEntity.value;
 
   // From "X on/in Y" pattern
   const match = intent.rawText.match(/\b(?:on|in|from)\s+(\w+)\s*$/i);
@@ -878,7 +899,8 @@ function buildAppControlScript(intent: Intent): string | null {
   // Example: "open youtube on safari and play video first in search '...'
   if (isBrowser && /\byoutube\b/i.test(text)) {
     const searchMatch = intent.rawText.match(/\bsearch\s+["'“”]?(.+?)["'“”]?$/i);
-    const query = searchMatch?.[1]?.trim();
+    const openOnYoutubeMatch = intent.rawText.match(/\bopen\s+(.+?)\s+on\s+youtube\b/i);
+    const query = searchMatch?.[1]?.trim() ?? openOnYoutubeMatch?.[1]?.trim();
     const url = query
       ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
       : "https://www.youtube.com";

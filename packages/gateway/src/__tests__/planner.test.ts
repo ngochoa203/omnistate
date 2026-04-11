@@ -344,6 +344,17 @@ describe("planFromIntent() — plan structure", () => {
     expect(plan.nodes[0]?.action.params?.name).toBe("Safari");
   });
 
+  it("open <query> on youtube should map to browser app-control flow", async () => {
+    const intent = await classifyIntent("open Do Mixi on youtube");
+    const plan = await planFromIntent(intent);
+
+    expect(intent.type).toBe("app-control");
+    expect(plan.nodes[0]?.action.tool).toBe("app.activate");
+    expect(plan.nodes[0]?.action.params?.name).toBe("Safari");
+    expect(plan.nodes[1]?.action.tool).toBe("app.script");
+    expect(String(plan.nodes[1]?.action.params?.script ?? "")).toContain("youtube.com/results?search_query=Do%20Mixi");
+  });
+
   it("zalo messaging phrase surfaces an LLM provider error when generation fails", async () => {
     const intent = await classifyIntent(
       "Open zalo and message for 0389027907 with text 'Hi'"
