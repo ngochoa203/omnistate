@@ -348,10 +348,14 @@ async function cmdRunDaemon(goal: string): Promise<void> {
 
         case "task.complete": {
           const m = msg as TaskCompleteMessage;
-          // Print aggregated output if step messages didn't already show it
           if (typeof m.result.output === "string" && m.result.output.trim()) {
-            // Only print if we haven't seen step-level data
-            // (the output field aggregates all steps)
+            console.log(m.result.output.trimEnd());
+          } else if (m.result && typeof m.result === "object") {
+            const success = (m.result as Record<string, unknown>).success;
+            const error = (m.result as Record<string, unknown>).error;
+            if (success === false || typeof error === "string") {
+              console.log(JSON.stringify(m.result, null, 2));
+            }
           }
           console.log(dim(`\n  done ${dim(`[${(taskId ?? "").slice(0, 8)}]`)}`));
           ws.close();
