@@ -1,4 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getProviderChain, loadLlmRuntimeConfig } from "./runtime-config.js";
+
+const PREFLIGHT_TIMEOUT_MS = 15_000;
 
 export interface LlmPreflightResult {
   ok: boolean;
@@ -6,6 +9,8 @@ export interface LlmPreflightResult {
   message: string;
   required: boolean;
   baseURL: string;
+  providerId?: string;
+  model?: string;
   checkedAt: string;
 }
 
@@ -13,8 +18,12 @@ export function shouldRequireLlm(): boolean {
   return process.env.OMNISTATE_REQUIRE_LLM !== "false";
 }
 
-function formatLlmPreflightError(err: unknown): LlmPreflightResult {
-  const baseURL = process.env.ANTHROPIC_BASE_URL ?? "https://chat.trollllm.xyz";
+function formatLlmPreflightError(
+  err: unknown,
+  baseURL: string,
+  providerId?: string,
+  model?: string,
+): LlmPreflightResult {
   const required = shouldRequireLlm();
 
   if (!err || typeof err !== "object") {
@@ -24,6 +33,8 @@ function formatLlmPreflightError(err: unknown): LlmPreflightResult {
       message: `LLM API preflight failed: ${String(err ?? "Unknown LLM error")}`,
       required,
       baseURL,
+      providerId,
+      model,
       checkedAt: new Date().toISOString(),
     };
   }
@@ -44,6 +55,8 @@ function formatLlmPreflightError(err: unknown): LlmPreflightResult {
       message: "LLM API preflight failed: Insufficient credits. Please top up and retry.",
       required,
       baseURL,
+      providerId,
+      model,
       checkedAt: new Date().toISOString(),
     };
   }
@@ -55,6 +68,8 @@ function formatLlmPreflightError(err: unknown): LlmPreflightResult {
       message: "LLM API preflight failed: Invalid API credentials. Check ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL.",
       required,
       baseURL,
+      providerId,
+      model,
       checkedAt: new Date().toISOString(),
     };
   }
@@ -65,45 +80,132 @@ function formatLlmPreflightError(err: unknown): LlmPreflightResult {
     message: `LLM API preflight failed${statusCode ? ` (${statusCode})` : ""}: ${apiMessage}`,
     required,
     baseURL,
+    providerId,
+    model,
     checkedAt: new Date().toISOString(),
   };
 }
 
+async function preflightAnthropic(baseURL: string, apiKey: string, model: string): Promise<void> {
+  const client = new Anthropic({ apiKey, baseURL, timeout: PREFLIGHT_TIMEOUT_MS });
+  await client.messages.create({
+    model,
+    max_tokens: 1,
+    system: "Connectivity preflight",
+    messages: [{ role: "user", content: "ping" }],
+  });
+}
+
+async function preflightOpenAICompatible(
+  baseURL: string,
+  apiKey: string,
+  model: string,
+): Promise<void> {
+  const endpoint = `${baseURL.replace(/\/+$/, "")}/chat/completions`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PREFLIGHT_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: "Connectivity preflight" },
+          { role: "user", content: "ping" },
+        ],
+        max_tokens: 1,
+        temperature: 0,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      const timeoutErr = new Error(
+        `Preflight timeout after ${PREFLIGHT_TIMEOUT_MS}ms`,
+      ) as Error & { status?: number };
+      timeoutErr.status = 408;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    const err = new Error(text) as Error & { status?: number };
+    err.status = response.status;
+    throw err;
+  }
+}
+
 export async function runLlmPreflight(): Promise<LlmPreflightResult> {
   const required = shouldRequireLlm();
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const baseURL = process.env.ANTHROPIC_BASE_URL ?? "https://chat.trollllm.xyz";
+  const runtime = loadLlmRuntimeConfig();
+  const providers = getProviderChain(runtime);
 
-  if (!apiKey) {
+  if (providers.length === 0) {
     return {
       ok: false,
       status: "missing_key",
-      message: "LLM API preflight failed: ANTHROPIC_API_KEY is missing.",
+      message:
+        "LLM API preflight failed: no enabled provider with API key. Configure via `omnistate config` or env vars.",
       required,
-      baseURL,
+      baseURL: "",
       checkedAt: new Date().toISOString(),
     };
   }
 
-  const client = new Anthropic({ apiKey, baseURL });
+  let firstError: LlmPreflightResult | null = null;
 
-  try {
-    await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 1,
-      system: "Connectivity preflight",
-      messages: [{ role: "user", content: "ping" }],
-    });
+  for (const provider of providers) {
+    try {
+      if (provider.kind === "anthropic") {
+        await preflightAnthropic(provider.baseURL, provider.apiKey, provider.model);
+      } else {
+        await preflightOpenAICompatible(
+          provider.baseURL,
+          provider.apiKey,
+          provider.model,
+        );
+      }
 
-    return {
-      ok: true,
-      status: "ok",
-      message: "LLM API is reachable and credentials are valid.",
-      required,
-      baseURL,
-      checkedAt: new Date().toISOString(),
-    };
-  } catch (err) {
-    return formatLlmPreflightError(err);
+      return {
+        ok: true,
+        status: "ok",
+        message: `LLM provider '${provider.id}' is reachable and credentials are valid.`,
+        required,
+        baseURL: provider.baseURL,
+        providerId: provider.id,
+        model: provider.model,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      const error = formatLlmPreflightError(
+        err,
+        provider.baseURL,
+        provider.id,
+        provider.model,
+      );
+      if (!firstError) firstError = error;
+    }
   }
+
+  return (
+    firstError ?? {
+      ok: false,
+      status: "api_error",
+      message: "LLM API preflight failed: all providers failed.",
+      required,
+      baseURL: providers[0]?.baseURL ?? "",
+      providerId: providers[0]?.id,
+      model: providers[0]?.model,
+      checkedAt: new Date().toISOString(),
+    }
+  );
 }

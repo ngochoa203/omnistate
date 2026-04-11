@@ -131,6 +131,8 @@ export function useGateway() {
           message: msg.message,
           required: msg.required,
           baseURL: msg.baseURL,
+          providerId: msg.providerId,
+          model: msg.model,
           checkedAt: msg.checkedAt,
         });
       }

@@ -161,6 +161,8 @@ export interface LlmPreflightReportMessage {
   message: string;
   required: boolean;
   baseURL: string;
+  providerId?: string;
+  model?: string;
   checkedAt: string;
 }
 

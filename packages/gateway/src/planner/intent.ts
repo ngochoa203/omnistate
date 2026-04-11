@@ -1,5 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { StatePlan, StateNode, FailureStrategy } from "../types/task.js";
+import { requestLlmTextWithFallback } from "../llm/router.js";
+import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 
 /**
  * Intent classification — convert natural language to structured intent.
@@ -66,12 +67,6 @@ const INTENT_TYPES = [
 
 type IntentType = (typeof INTENT_TYPES)[number];
 
-// ---------------------------------------------------------------------------
-// Anthropic client (lazy singleton)
-// ---------------------------------------------------------------------------
-
-let _client: Anthropic | null = null;
-
 function isLlmRequired(): boolean {
   // Default: required. Tests/dev can explicitly disable with OMINSTATE_REQUIRE_LLM=false.
   return process.env.OMNISTATE_REQUIRE_LLM !== "false";
@@ -96,18 +91,6 @@ function formatLlmError(err: unknown): string {
   }
 
   return `LLM API error${status ? ` (${status})` : ""}: ${apiMessage}`;
-}
-
-function getClient(): Anthropic | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-
-  if (!_client) {
-    const baseURL =
-      process.env.ANTHROPIC_BASE_URL ?? "https://chat.trollllm.xyz";
-    _client = new Anthropic({ apiKey, baseURL });
-  }
-  return _client;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +145,48 @@ Respond with ONLY valid JSON matching this schema (no markdown fences, no extra 
   }
 }`;
 
+const CLASSIFICATION_SYSTEM_PROMPT_COMPACT = `Classify this automation request to exactly one intent type and return JSON only.
+Allowed types: shell-command, app-launch, app-control, file-operation, ui-interaction, system-query, multi-step,
+process-management, service-management, package-management, network-control, os-config, power-management,
+hardware-control, security-management, container-management, display-audio, backup-restore, update-management,
+health-check, disk-cleanup, network-diagnose, security-scan, self-healing, voice-control, script-generation,
+automation-macro, workflow-template, file-organization, debug-assist, compliance-check, resource-forecast,
+multi-app-orchestration.
+Schema:
+{"type":"<intent-type>","confidence":0.0,"entities":{"k":{"type":"file|app|url|person|text|command","value":"v"}}}`;
+
+function resolveEffectiveBudget() {
+  const runtime = loadLlmRuntimeConfig();
+  const currentSession = runtime.session.sessions.find(
+    (s) => s.id === runtime.session.currentSessionId,
+  );
+
+  let intentMax = runtime.tokenBudget.intentMaxTokens;
+  let decomposeMax = runtime.tokenBudget.decomposeMaxTokens;
+  let maxInputChars = runtime.tokenBudget.maxInputChars;
+  let compactPrompt = runtime.tokenBudget.compactPrompt;
+
+  if (currentSession?.fastMode) {
+    intentMax = Math.max(80, Math.round(intentMax * 0.65));
+    decomposeMax = Math.max(120, Math.round(decomposeMax * 0.65));
+    maxInputChars = Math.max(500, Math.round(maxInputChars * 0.8));
+    compactPrompt = true;
+  }
+
+  if (currentSession?.thinkingLevel === "medium") {
+    intentMax = Math.max(intentMax, 260);
+    decomposeMax = Math.max(decomposeMax, 440);
+  }
+
+  if (currentSession?.thinkingLevel === "high") {
+    intentMax = Math.max(intentMax, 360);
+    decomposeMax = Math.max(decomposeMax, 700);
+    maxInputChars = Math.max(maxInputChars, 2400);
+  }
+
+  return { intentMax, decomposeMax, maxInputChars, compactPrompt };
+}
+
 // ---------------------------------------------------------------------------
 // LLM-based classification
 // ---------------------------------------------------------------------------
@@ -176,28 +201,19 @@ async function classifyWithLLM(
   text: string,
   strict: boolean,
 ): Promise<LLMClassificationResult | null> {
-  const client = getClient();
-  if (!client) {
-    if (strict) {
-      throw new Error(
-        "LLM API is required but ANTHROPIC_API_KEY is missing. Set ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL."
-      );
-    }
-    return null;
-  }
+  const budget = resolveEffectiveBudget();
+  const userText = text.slice(0, budget.maxInputChars);
 
   try {
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 512,
-      system: CLASSIFICATION_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: text }],
+    const response = await requestLlmTextWithFallback({
+      system: budget.compactPrompt
+        ? CLASSIFICATION_SYSTEM_PROMPT_COMPACT
+        : CLASSIFICATION_SYSTEM_PROMPT,
+      user: userText,
+      maxTokens: budget.intentMax,
     });
 
-    const raw = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
+    const raw = response.text;
 
     const parsed = JSON.parse(raw) as {
       type?: string;
@@ -510,21 +526,16 @@ interface DecomposedStep {
 async function decomposeMultiStep(
   text: string,
 ): Promise<DecomposedStep[] | null> {
-  const client = getClient();
-  if (!client) return null;
+  const budget = resolveEffectiveBudget();
 
   try {
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 1024,
+    const response = await requestLlmTextWithFallback({
       system: DECOMPOSE_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: text }],
+      user: text.slice(0, budget.maxInputChars),
+      maxTokens: budget.decomposeMax,
     });
 
-    const raw = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
+    const raw = response.text;
 
     const parsed = JSON.parse(raw) as { steps?: unknown[] };
     if (!Array.isArray(parsed.steps)) return null;
@@ -809,12 +820,7 @@ function isMessagingIntentText(text: string): boolean {
 }
 
 async function buildMessagingScriptWithLLM(intent: Intent): Promise<string> {
-  const client = getClient();
-  if (!client) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is required for messaging tasks. Please set ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL."
-    );
-  }
+  const runtime = loadLlmRuntimeConfig();
 
   const appRaw = extractAppName(intent) ?? "Zalo";
   const app = normalizeAppName(appRaw);
@@ -836,18 +842,13 @@ Rules:
   });
 
   try {
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 700,
+    const response = await requestLlmTextWithFallback({
       system,
-      messages: [{ role: "user", content: user }],
+      user,
+      maxTokens: Math.max(runtime.tokenBudget.intentMaxTokens, 320),
     });
 
-    const raw = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("")
-      .trim();
+    const raw = response.text.trim();
 
     const parsed = JSON.parse(raw) as { script?: string };
     const script = parsed.script?.trim();

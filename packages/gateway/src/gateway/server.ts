@@ -10,6 +10,8 @@ import { Orchestrator } from "../executor/orchestrator.js";
 import { HealthMonitor } from "../health/monitor.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
+import { tryHandleGatewayCommand } from "./command-router.js";
+import { incrementSessionUsage } from "../llm/runtime-config.js";
 
 const execAsync = promisify(exec);
 
@@ -177,6 +179,36 @@ export class OmniStateGateway {
 
       case "task": {
         const taskId = crypto.randomUUID();
+
+        const commandResult = tryHandleGatewayCommand(msg.goal, {
+          clearTaskHistory: () => this.clearTaskHistory(),
+          connectedClients: () => this.clients.size,
+          uptimeMs: () => Date.now() - this.startedAt,
+          taskHistorySize: () => this.taskHistory.length,
+        });
+
+        if (commandResult) {
+          const accepted: ServerMessage = {
+            type: "task.accepted",
+            taskId,
+            goal: msg.goal,
+          };
+          this.safeSend(ws, accepted);
+
+          this.safeSend(ws, {
+            type: "task.complete",
+            taskId,
+            result: {
+              goal: msg.goal,
+              command: true,
+              output: commandResult.output,
+              ...(commandResult.data ? { commandData: commandResult.data } : {}),
+            },
+          } as ServerMessage);
+
+          incrementSessionUsage();
+          return;
+        }
 
         // Acknowledge immediately
         const accepted: ServerMessage = {
@@ -382,6 +414,8 @@ export class OmniStateGateway {
           message: report.message,
           required: report.required,
           baseURL: report.baseURL,
+          providerId: report.providerId,
+          model: report.model,
           checkedAt: report.checkedAt,
         };
         this.safeSend(ws, reply);
@@ -480,6 +514,7 @@ export class OmniStateGateway {
           durationMs: Date.now() - startMs,
         });
         if (this.taskHistory.length > 100) this.taskHistory.pop();
+        incrementSessionUsage();
         return;
       }
 
@@ -535,6 +570,14 @@ export class OmniStateGateway {
       durationMs: Date.now() - startMs,
     });
     if (this.taskHistory.length > 100) this.taskHistory.pop();
+
+    incrementSessionUsage();
+  }
+
+  private clearTaskHistory(): number {
+    const count = this.taskHistory.length;
+    this.taskHistory = [];
+    return count;
   }
 
   /** Send message to WS only if still open. */
