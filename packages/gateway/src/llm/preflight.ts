@@ -3,23 +3,6 @@ import { getProviderChain, loadLlmRuntimeConfig } from "./runtime-config.js";
 
 const PREFLIGHT_TIMEOUT_MS = 15_000;
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, providerId: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error(`Preflight timeout for provider '${providerId}'`) as Error & {
-        status?: number;
-      };
-      err.status = 408;
-      reject(err);
-    }, timeoutMs);
-  });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timer) clearTimeout(timer);
-  }) as Promise<T>;
-}
-
 export interface LlmPreflightResult {
   ok: boolean;
   status: "ok" | "missing_key" | "auth_error" | "insufficient_credits" | "api_error";
@@ -104,17 +87,13 @@ function formatLlmPreflightError(
 }
 
 async function preflightAnthropic(baseURL: string, apiKey: string, model: string): Promise<void> {
-  const client = new Anthropic({ apiKey, baseURL });
-  await withTimeout(
-    client.messages.create({
-      model,
-      max_tokens: 1,
-      system: "Connectivity preflight",
-      messages: [{ role: "user", content: "ping" }],
-    }),
-    PREFLIGHT_TIMEOUT_MS,
-    "anthropic",
-  );
+  const client = new Anthropic({ apiKey, baseURL, timeout: PREFLIGHT_TIMEOUT_MS });
+  await client.messages.create({
+    model,
+    max_tokens: 1,
+    system: "Connectivity preflight",
+    messages: [{ role: "user", content: "ping" }],
+  });
 }
 
 async function preflightOpenAICompatible(

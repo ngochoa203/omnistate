@@ -26,23 +26,6 @@ export interface LlmRouterErrorDetails {
 
 const PROVIDER_TIMEOUT_MS = 30_000;
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, providerId: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error(`Provider '${providerId}' timed out after ${timeoutMs}ms`) as Error & {
-        status?: number;
-      };
-      err.status = 408;
-      reject(err);
-    }, timeoutMs);
-  });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timer) clearTimeout(timer);
-  }) as Promise<T>;
-}
-
 function normalizeProviderError(
   provider: LlmProviderConfig,
   model: string,
@@ -77,6 +60,7 @@ async function callAnthropic(
   const client = new Anthropic({
     apiKey: provider.apiKey,
     baseURL: provider.baseURL,
+    timeout: PROVIDER_TIMEOUT_MS,
   });
 
   const message = await client.messages.create({
@@ -159,7 +143,7 @@ async function callProvider(
   req: LlmTextRequest,
 ): Promise<string> {
   if (provider.kind === "anthropic") {
-    return withTimeout(callAnthropic(provider, req), PROVIDER_TIMEOUT_MS, provider.id);
+    return callAnthropic(provider, req);
   }
   return callOpenAICompatible(provider, req);
 }

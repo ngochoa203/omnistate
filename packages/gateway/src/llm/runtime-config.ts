@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -194,6 +194,7 @@ export function saveLlmRuntimeConfig(config: LlmRuntimeConfig): void {
     encoding: "utf-8",
     mode: 0o600,
   });
+  chmodSync(CONFIG_PATH, 0o600);
 }
 
 export function setActiveModel(model: string): LlmRuntimeConfig {
