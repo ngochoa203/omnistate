@@ -12,6 +12,7 @@ allowBuilds:
   c: true
   d: true
   e: true
+  esbuild: false
   i: true
   j: true
   l: true
