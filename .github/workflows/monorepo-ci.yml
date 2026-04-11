@@ -1,0 +1,42 @@
+name: Monorepo CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build gateway
+        run: pnpm -C packages/gateway build
+
+      - name: Build web
+        run: pnpm -C packages/web build
+
+      - name: Test gateway (if script exists)
+        shell: bash
+        run: |
+          if node -e "const p=require('./packages/gateway/package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)"; then
+            pnpm -C packages/gateway test
+          else
+            echo "No test script in packages/gateway. Skipping tests."
+          fi

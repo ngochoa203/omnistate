@@ -1,0 +1,67 @@
+{
+  "intent": {
+    "type": "app-control",
+    "entities": {
+      "action": {
+        "type": "command",
+        "value": "play"
+      },
+      "app": {
+        "type": "app",
+        "value": "youtube"
+      }
+    },
+    "confidence": 0.55,
+    "rawText": "open youtube on safari and play video first in search 'Chào em cô gái lam hồng'"
+  },
+  "plan": {
+    "taskId": "task-1775868506367",
+    "goal": "open youtube on safari and play video first in search 'Chào em cô gái lam hồng'",
+    "estimatedDuration": "10s",
+    "nodes": [
+      {
+        "id": "activate",
+        "type": "action",
+        "layer": "deep",
+        "action": {
+          "description": "Activate youtube",
+          "tool": "app.activate",
+          "params": {
+            "name": "youtube"
+          }
+        },
+        "dependencies": [],
+        "onSuccess": "action",
+        "onFailure": {
+          "strategy": "retry",
+          "maxRetries": 2
+        },
+        "estimatedDurationMs": 5000,
+        "priority": "normal"
+      },
+      {
+        "id": "action",
+        "type": "action",
+        "layer": "surface",
+        "action": {
+          "description": "open youtube on safari and play video first in search 'Chào em cô gái lam hồng'",
+          "tool": "ui.key",
+          "params": {
+            "key": "space",
+            "modifiers": {}
+          }
+        },
+        "dependencies": [
+          "activate"
+        ],
+        "onSuccess": null,
+        "onFailure": {
+          "strategy": "retry",
+          "maxRetries": 2
+        },
+        "estimatedDurationMs": 5000,
+        "priority": "normal"
+      }
+    ]
+  }
+}

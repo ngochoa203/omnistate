@@ -1,0 +1,146 @@
+import { useEffect, useRef } from "react";
+import { GatewayClient } from "../lib/gateway-client";
+import { useChatStore } from "../lib/chat-store";
+import type { ServerMessage } from "../lib/protocol";
+
+let _client: GatewayClient | null = null;
+
+export function getClient(): GatewayClient {
+  if (!_client) _client = new GatewayClient();
+  return _client;
+}
+
+export function useGateway() {
+  const clientRef = useRef(getClient());
+  const store = useChatStore();
+
+  useEffect(() => {
+    const client = clientRef.current;
+    store.setConnectionState("connecting");
+    client.connect();
+
+    const unsubs: Array<() => void> = [];
+
+    unsubs.push(client.on("connected", () => {
+      store.setConnectionState("connected");
+      client.requestLlmPreflight();
+    }));
+
+    unsubs.push(client.on("_disconnected", () => {
+      store.setConnectionState("disconnected");
+    }));
+
+    unsubs.push(client.on("task.accepted", (msg: ServerMessage) => {
+      if (msg.type === "task.accepted") {
+        store.addSystemMessage("", msg.taskId);
+      }
+    }));
+
+    unsubs.push(client.on("task.step", (msg: ServerMessage) => {
+      if (msg.type === "task.step") {
+        store.addStep(msg.taskId, {
+          step: msg.step,
+          status: msg.status,
+          layer: msg.layer,
+          data: msg.data,
+        });
+      }
+    }));
+
+    unsubs.push(client.on("task.complete", (msg: ServerMessage) => {
+      if (msg.type === "task.complete") {
+        store.completeTask(msg.taskId, msg.result);
+      }
+    }));
+
+    unsubs.push(client.on("openclaw.result", (msg: ServerMessage) => {
+      if (msg.type === "openclaw.result") {
+        if (msg.status === "complete") {
+          store.addSystemMessage(`OpenClaw sequence completed (${msg.taskId})`);
+        } else {
+          store.addSystemMessage(`OpenClaw sequence failed (${msg.taskId}): ${msg.error ?? "unknown error"}`);
+        }
+      }
+    }));
+
+    unsubs.push(client.on("task.error", (msg: ServerMessage) => {
+      if (msg.type === "task.error") {
+        store.failTask(msg.taskId, msg.error);
+      }
+    }));
+
+    unsubs.push(client.on("health.report", (msg: ServerMessage) => {
+      if (msg.type === "health.report") {
+        store.setHealth({
+          overall: msg.overall,
+          timestamp: msg.timestamp,
+          sensors: msg.sensors,
+          alerts: msg.alerts,
+        });
+      }
+    }));
+
+    unsubs.push(client.on("voice.transcript", (msg: ServerMessage) => {
+      if (msg.type === "voice.transcript") {
+        store.setVoiceState("idle");
+        // The voice transcript is auto-executed as a task by the gateway,
+        // so task.accepted/task.step/task.complete will follow automatically
+      }
+    }));
+
+    unsubs.push(client.on("voice.error", (msg: ServerMessage) => {
+      if (msg.type === "voice.error") {
+        store.setVoiceState("idle");
+        store.addSystemMessage(`Voice error: ${(msg as any).error}`);
+      }
+    }));
+
+    unsubs.push(client.on("vibevoice.partial", (msg: ServerMessage) => {
+      if (msg.type === "vibevoice.partial") {
+        store.addSystemMessage(
+          `VibeVoice ${msg.sessionId}: ${msg.receivedChunks} chunks / ${msg.receivedBytes} bytes received`
+        );
+      }
+    }));
+
+    unsubs.push(client.on("vibevoice.transcript", (msg: ServerMessage) => {
+      if (msg.type === "vibevoice.transcript") {
+        store.setVoiceState("idle");
+        store.addSystemMessage(`VibeVoice transcript: ${msg.text}`);
+      }
+    }));
+
+    unsubs.push(client.on("vibevoice.error", (msg: ServerMessage) => {
+      if (msg.type === "vibevoice.error") {
+        store.setVoiceState("idle");
+        store.addSystemMessage(`VibeVoice error (${msg.sessionId}): ${msg.error}`);
+      }
+    }));
+
+    unsubs.push(client.on("system.info", (msg: ServerMessage) => {
+      if (msg.type === "system.info") {
+        store.setSystemInfo((msg as any).data);
+      }
+    }));
+
+    unsubs.push(client.on("llm.preflight.report", (msg: ServerMessage) => {
+      if (msg.type === "llm.preflight.report") {
+        store.setLlmPreflight({
+          ok: msg.ok,
+          status: msg.status,
+          message: msg.message,
+          required: msg.required,
+          baseURL: msg.baseURL,
+          checkedAt: msg.checkedAt,
+        });
+      }
+    }));
+
+    return () => {
+      unsubs.forEach(u => u());
+      client.disconnect();
+    };
+  }, []);
+
+  return clientRef.current;
+}

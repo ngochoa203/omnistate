@@ -5,7 +5,18 @@
  * and triggers auto-repair when configured.
  */
 
-import { checkCpu, checkMemory, checkDisk, checkNetwork, checkProcesses } from "./sensors.js";
+import { execSync } from "node:child_process";
+import {
+  checkCpu,
+  checkMemory,
+  checkDisk,
+  checkNetwork,
+  checkProcesses,
+  checkThermal,
+  checkBattery,
+  checkDnsResolution,
+  checkCertificateExpiry,
+} from "./sensors.js";
 import { autoRepair, type RepairAction } from "./repair.js";
 
 export type HealthStatus = "healthy" | "degraded" | "critical";
@@ -33,11 +44,45 @@ export interface HealthAlert {
   timestamp: string;
 }
 
+export interface ProcessWatchConfig {
+  name: string;
+  checkCommand?: string;
+  restartCommand: string;
+  maxRestarts?: number;
+  baseBackoffMs?: number;
+  maxBackoffMs?: number;
+  check?: () => Promise<boolean>;
+  restart?: () => Promise<boolean>;
+}
+
+export interface DnsWatchConfig {
+  host: string;
+  check?: () => Promise<SensorResult>;
+}
+
+export interface CertWatchConfig {
+  host: string;
+  port?: number;
+  warningDays?: number;
+  check?: () => Promise<SensorResult>;
+}
+
+interface ProcessWatchState {
+  restartCount: number;
+  lastRestartMs: number;
+}
+
 export class HealthMonitor {
   private intervalMs: number;
   private autoRepairEnabled: boolean;
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners: ((report: HealthReport) => void)[] = [];
+  private processWatches = new Map<string, ProcessWatchConfig>();
+  private processStates = new Map<string, ProcessWatchState>();
+  private dnsWatches: DnsWatchConfig[] = [];
+  private certWatches: CertWatchConfig[] = [];
+  private thermalCheck: () => Promise<SensorResult> = checkThermal;
+  private batteryCheck: () => Promise<SensorResult> = checkBattery;
 
   constructor(intervalMs: number = 30000, autoRepair: boolean = true) {
     this.intervalMs = intervalMs;
@@ -65,6 +110,40 @@ export class HealthMonitor {
     this.listeners.push(listener);
   }
 
+  /** Register a process that should be auto-restarted after crashes. */
+  watchProcess(config: ProcessWatchConfig): void {
+    this.processWatches.set(config.name, config);
+    if (!this.processStates.has(config.name)) {
+      this.processStates.set(config.name, { restartCount: 0, lastRestartMs: 0 });
+    }
+  }
+
+  /** Stop watching a process for crash recovery. */
+  unwatchProcess(name: string): void {
+    this.processWatches.delete(name);
+    this.processStates.delete(name);
+  }
+
+  /** Configure DNS targets for monitoring. */
+  setDnsWatches(watches: DnsWatchConfig[]): void {
+    this.dnsWatches = [...watches];
+  }
+
+  /** Configure certificate targets for expiry monitoring. */
+  setCertWatches(watches: CertWatchConfig[]): void {
+    this.certWatches = [...watches];
+  }
+
+  /** Override thermal sensor function (primarily for tests). */
+  setThermalCheck(check: () => Promise<SensorResult>): void {
+    this.thermalCheck = check;
+  }
+
+  /** Override battery sensor function (primarily for tests). */
+  setBatteryCheck(check: () => Promise<SensorResult>): void {
+    this.batteryCheck = check;
+  }
+
   /** Run a single health check cycle. */
   async runCheck(): Promise<HealthReport> {
     const sensors: Record<string, SensorResult> = {};
@@ -77,6 +156,94 @@ export class HealthMonitor {
     sensors.disk = await checkDisk();
     sensors.network = await checkNetwork();
     sensors.processes = await checkProcesses();
+    sensors.thermal = await this.thermalCheck();
+    sensors.battery = await this.batteryCheck();
+
+    // UC-C14: DNS monitoring
+    for (const dnsWatch of this.dnsWatches) {
+      const key = `dns.${dnsWatch.host}`;
+      sensors[key] = dnsWatch.check
+        ? await dnsWatch.check()
+        : await checkDnsResolution(dnsWatch.host);
+    }
+
+    // UC-C14: Certificate expiry monitoring
+    for (const certWatch of this.certWatches) {
+      const port = certWatch.port ?? 443;
+      const warningDays = certWatch.warningDays ?? 30;
+      const key = `cert.${certWatch.host}:${port}`;
+      sensors[key] = certWatch.check
+        ? await certWatch.check()
+        : await checkCertificateExpiry(certWatch.host, port, warningDays);
+    }
+
+    // UC-C04: Crash detection + auto-restart with exponential backoff
+    for (const [name, watch] of this.processWatches.entries()) {
+      const state = this.processStates.get(name) ?? {
+        restartCount: 0,
+        lastRestartMs: 0,
+      };
+
+      const isRunning = watch.check
+        ? await watch.check()
+        : this.isProcessRunning(watch);
+
+      sensors[`service.${name}`] = {
+        status: isRunning ? "ok" : "critical",
+        value: isRunning ? 1 : 0,
+        unit: "running",
+        message: isRunning ? undefined : `${name} is not running`,
+      };
+
+      if (isRunning) {
+        state.restartCount = 0;
+        this.processStates.set(name, state);
+        continue;
+      }
+
+      if (!this.autoRepairEnabled) continue;
+
+      const maxRestarts = watch.maxRestarts ?? 5;
+      if (state.restartCount >= maxRestarts) {
+        repairs.push({
+          sensor: `service.${name}`,
+          action: `Skipped restart for ${name} (max retries reached)`,
+          success: false,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
+
+      const baseBackoffMs = watch.baseBackoffMs ?? 1000;
+      const maxBackoffMs = watch.maxBackoffMs ?? 30000;
+      const delayMs = Math.min(
+        baseBackoffMs * Math.pow(2, state.restartCount),
+        maxBackoffMs
+      );
+      const now = Date.now();
+
+      if (state.lastRestartMs > 0 && now - state.lastRestartMs < delayMs) {
+        continue;
+      }
+
+      const restarted = watch.restart
+        ? await watch.restart()
+        : this.restartProcess(watch);
+
+      state.lastRestartMs = now;
+      state.restartCount += 1;
+      this.processStates.set(name, state);
+
+      repairs.push({
+        sensor: `service.${name}`,
+        action: restarted
+          ? `Restarted ${name} with backoff`
+          : `Failed to restart ${name}`,
+        success: restarted,
+        timestamp: new Date().toISOString(),
+        detail: `attempt=${state.restartCount} backoffMs=${delayMs}`,
+      });
+    }
 
     // Generate alerts from sensor results
     for (const [name, result] of Object.entries(sensors)) {
@@ -125,5 +292,28 @@ export class HealthMonitor {
     }
 
     return report;
+  }
+
+  private isProcessRunning(watch: ProcessWatchConfig): boolean {
+    try {
+      const checkCommand = watch.checkCommand ?? `pgrep -f "${watch.name}"`;
+      execSync(checkCommand, { encoding: "utf-8", timeout: 5000, stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private restartProcess(watch: ProcessWatchConfig): boolean {
+    try {
+      execSync(watch.restartCommand, {
+        encoding: "utf-8",
+        timeout: 15000,
+        stdio: "pipe",
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

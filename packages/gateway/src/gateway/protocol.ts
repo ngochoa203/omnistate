@@ -2,7 +2,15 @@
 export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 
 /** Messages sent from client to gateway. */
-export type ClientMessage = ConnectMessage | TaskMessage;
+export type ClientMessage =
+  | ConnectMessage
+  | TaskMessage
+  | HistoryQueryMessage
+  | HealthQueryMessage
+  | LlmPreflightQueryMessage
+  | StatusQueryMessage
+  | VoiceTranscribeMessage
+  | SystemDashboardMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -17,6 +25,38 @@ export interface TaskMessage {
   layer?: "deep" | "surface" | "auto";
 }
 
+export interface HistoryQueryMessage {
+  type: "history.query";
+  limit?: number;
+  before?: string;
+}
+
+export interface HealthQueryMessage {
+  type: "health.query";
+}
+
+export interface LlmPreflightQueryMessage {
+  type: "llm.preflight.query";
+}
+
+export interface StatusQueryMessage {
+  type: "status.query";
+}
+
+export interface VoiceTranscribeMessage {
+  type: "voice.transcribe";
+  id: string;
+  /** Base64-encoded audio data. */
+  audio: string;
+  /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
+  format?: string;
+}
+
+export interface SystemDashboardMessage {
+  type: "system.dashboard";
+  id: string;
+}
+
 /** Messages sent from gateway to client. */
 export type ServerMessage =
   | ConnectedMessage
@@ -27,7 +67,14 @@ export type ServerMessage =
   | TaskErrorMessage
   | HealthAlertMessage
   | GatewayShutdownMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | HistoryResultMessage
+  | HealthReportMessage
+  | LlmPreflightReportMessage
+  | StatusReplyMessage
+  | VoiceTranscriptMessage
+  | VoiceErrorMessage
+  | SystemInfoMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -84,4 +131,68 @@ export interface GatewayShutdownMessage {
 export interface ErrorMessage {
   type: "error";
   message: string;
+}
+
+export interface HistoryResultMessage {
+  type: "history.result";
+  entries: Array<{
+    taskId: string;
+    goal: string;
+    status: "complete" | "failed";
+    output?: string;
+    intentType: string;
+    timestamp: string;
+    durationMs: number;
+  }>;
+}
+
+export interface HealthReportMessage {
+  type: "health.report";
+  overall: string;
+  timestamp: string;
+  sensors: Record<string, { status: string; value: number; unit: string; message?: string }>;
+  alerts: Array<{ sensor: string; severity: string; message: string }>;
+}
+
+export interface LlmPreflightReportMessage {
+  type: "llm.preflight.report";
+  ok: boolean;
+  status: "ok" | "missing_key" | "auth_error" | "insufficient_credits" | "api_error";
+  message: string;
+  required: boolean;
+  baseURL: string;
+  checkedAt: string;
+}
+
+export interface StatusReplyMessage {
+  type: "status.reply";
+  connectedClients: number;
+  queueDepth: number;
+  uptime: number;
+}
+
+export interface VoiceTranscriptMessage {
+  type: "voice.transcript";
+  id: string;
+  text: string;
+}
+
+export interface VoiceErrorMessage {
+  type: "voice.error";
+  id: string;
+  error: string;
+}
+
+export interface SystemInfoMessage {
+  type: "system.info";
+  id: string;
+  data: {
+    battery: any;
+    wifi: any;
+    disk: any;
+    cpu: any;
+    memory: any;
+    hostname: string;
+    error?: string;
+  };
 }

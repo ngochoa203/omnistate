@@ -8,7 +8,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { HealthMonitor } from "../health/monitor.js";
 import type { HealthReport, SensorResult } from "../health/monitor.js";
-import { checkCpu, checkMemory, checkDisk } from "../health/sensors.js";
+import {
+  checkCpu,
+  checkMemory,
+  checkDisk,
+  checkThermal,
+  checkBattery,
+} from "../health/sensors.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -70,6 +76,42 @@ describe("sensors", () => {
       expect(result.unit).toBe("%");
     });
   });
+
+  describe("checkThermal()", () => {
+    it("returns a SensorResult with status", async () => {
+      const result = await checkThermal();
+      expect(["ok", "warning", "critical"]).toContain(result.status);
+    });
+
+    it("value is a non-negative number", async () => {
+      const result = await checkThermal();
+      expect(typeof result.value).toBe("number");
+      expect(result.value).toBeGreaterThanOrEqual(0);
+    });
+
+    it("unit is celsius or limit", async () => {
+      const result = await checkThermal();
+      expect(["celsius", "limit"]).toContain(result.unit);
+    });
+  });
+
+  describe("checkBattery()", () => {
+    it("returns a SensorResult with status", async () => {
+      const result = await checkBattery();
+      expect(["ok", "warning", "critical"]).toContain(result.status);
+    });
+
+    it("value is between 0 and 100", async () => {
+      const result = await checkBattery();
+      expect(result.value).toBeGreaterThanOrEqual(0);
+      expect(result.value).toBeLessThanOrEqual(100);
+    });
+
+    it("unit is '%'", async () => {
+      const result = await checkBattery();
+      expect(result.unit).toBe("%");
+    });
+  });
 });
 
 // ── HealthMonitor.runCheck() ──────────────────────────────────────────────────
@@ -96,6 +138,8 @@ describe("HealthMonitor.runCheck()", () => {
     expect(report.sensors).toHaveProperty("disk");
     expect(report.sensors).toHaveProperty("network");
     expect(report.sensors).toHaveProperty("processes");
+    expect(report.sensors).toHaveProperty("thermal");
+    expect(report.sensors).toHaveProperty("battery");
   });
 
   it("each sensor in the report is a valid SensorResult", async () => {
@@ -238,5 +282,139 @@ describe("HealthMonitor overall status logic", () => {
       monitor.start();
       monitor.stop();
     }).not.toThrow();
+  });
+});
+
+describe("HealthMonitor UC-C04 crash detection", () => {
+  it("restarts crashed watched process and records repair", async () => {
+    const monitor = new HealthMonitor(60000, true);
+
+    let running = false;
+    monitor.watchProcess({
+      name: "test-service",
+      restartCommand: "echo restart",
+      check: async () => running,
+      restart: async () => {
+        running = true;
+        return true;
+      },
+      baseBackoffMs: 1000,
+      maxRestarts: 3,
+    });
+
+    const report = await monitor.runCheck();
+    expect(report.sensors["service.test-service"]?.status).toBe("critical");
+    expect(report.alerts.some((a) => a.sensor === "service.test-service")).toBe(true);
+    expect(report.repairs.some((r) => r.sensor === "service.test-service" && r.success)).toBe(true);
+
+    const recoveredReport = await monitor.runCheck();
+    expect(recoveredReport.sensors["service.test-service"]?.status).toBe("ok");
+  });
+
+  it("applies exponential backoff between restart attempts", async () => {
+    const monitor = new HealthMonitor(60000, true);
+
+    monitor.watchProcess({
+      name: "backoff-service",
+      restartCommand: "echo restart",
+      check: async () => false,
+      restart: async () => false,
+      baseBackoffMs: 60000,
+      maxRestarts: 3,
+    });
+
+    const first = await monitor.runCheck();
+    const second = await monitor.runCheck();
+
+    const firstRepairs = first.repairs.filter((r) => r.sensor === "service.backoff-service");
+    const secondRepairs = second.repairs.filter((r) => r.sensor === "service.backoff-service");
+
+    expect(firstRepairs.length).toBe(1);
+    expect(secondRepairs.length).toBe(0);
+  });
+});
+
+describe("HealthMonitor UC-C14 DNS/certificate monitoring", () => {
+  it("includes configured DNS and cert checks in report", async () => {
+    const monitor = new HealthMonitor(60000, false);
+
+    monitor.setDnsWatches([
+      {
+        host: "example.com",
+        check: async () => ({ status: "ok", value: 1, unit: "resolved" }),
+      },
+    ]);
+
+    monitor.setCertWatches([
+      {
+        host: "example.com",
+        port: 443,
+        warningDays: 30,
+        check: async () => ({
+          status: "warning",
+          value: 7,
+          unit: "days",
+          message: "Certificate expires soon",
+        }),
+      },
+    ]);
+
+    const report = await monitor.runCheck();
+
+    expect(report.sensors["dns.example.com"]?.status).toBe("ok");
+    expect(report.sensors["cert.example.com:443"]?.status).toBe("warning");
+    expect(report.alerts.some((a) => a.sensor === "cert.example.com:443")).toBe(true);
+  });
+});
+
+describe("HealthMonitor UC-C10/UC-C11 thermal and battery alerts", () => {
+  it("raises warning alert when thermal pressure is elevated", async () => {
+    const monitor = new HealthMonitor(60000, false);
+    monitor.setThermalCheck(async () => ({
+      status: "warning",
+      value: 82,
+      unit: "celsius",
+      message: "Thermal pressure elevated",
+    }));
+    monitor.setBatteryCheck(async () => ({ status: "ok", value: 65, unit: "%" }));
+
+    const report = await monitor.runCheck();
+
+    expect(report.sensors.thermal?.status).toBe("warning");
+    expect(report.alerts.some((a) => a.sensor === "thermal" && a.severity === "warning")).toBe(true);
+    expect(["degraded", "critical"]).toContain(report.overall);
+  });
+
+  it("raises warning alert for low battery and degraded battery health", async () => {
+    const monitor = new HealthMonitor(60000, false);
+    monitor.setThermalCheck(async () => ({ status: "ok", value: 55, unit: "celsius" }));
+    monitor.setBatteryCheck(async () => ({
+      status: "warning",
+      value: 18,
+      unit: "%",
+      message: "Battery low at 18%",
+    }));
+
+    const report = await monitor.runCheck();
+
+    expect(report.sensors.battery?.status).toBe("warning");
+    expect(report.alerts.some((a) => a.sensor === "battery" && a.severity === "warning")).toBe(true);
+  });
+
+  it("raises critical alert for severe battery issue", async () => {
+    const monitor = new HealthMonitor(60000, false);
+    monitor.setThermalCheck(async () => ({ status: "ok", value: 50, unit: "celsius" }));
+    monitor.setBatteryCheck(async () => ({
+      status: "critical",
+      value: 5,
+      unit: "%",
+      message: "Battery low at 5%",
+    }));
+
+    const report = await monitor.runCheck();
+
+    expect(report.sensors.battery?.status).toBe("critical");
+    expect(report.alerts.some((a) => a.sensor === "battery" && a.severity === "critical")).toBe(true);
+    expect(report.overall).toBe("critical");
   });
 });

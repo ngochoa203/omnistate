@@ -15,7 +15,10 @@
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
-    "clean": "pnpm -r clean && cargo clean"
+    "clean": "pnpm -r clean && cargo clean",
+    "repl": "node packages/gateway/scripts/test-repl.mjs",
+    "start": "node packages/gateway/dist/index.js",
+    "web": "cd packages/web && pnpm dev"
   },
   "devDependencies": {
     "tsx": "^4.21.0"
