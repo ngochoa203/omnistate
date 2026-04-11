@@ -344,12 +344,14 @@ describe("planFromIntent() — plan structure", () => {
     expect(plan.nodes[0]?.action.params?.name).toBe("Safari");
   });
 
-  it("zalo messaging phrase requires LLM API key for plan generation", async () => {
+  it("zalo messaging phrase surfaces an LLM provider error when generation fails", async () => {
     const intent = await classifyIntent(
       "Open zalo and message for 0389027907 with text 'Hi'"
     );
 
-    await expect(planFromIntent(intent)).rejects.toThrow(/ANTHROPIC_API_KEY is required/i);
+    await expect(planFromIntent(intent)).rejects.toThrow(
+      /(LLM API error|No enabled LLM providers|Insufficient credits|Invalid API credentials)/i
+    );
   });
 
   it("multi-step fallback should pass plain goal string to generic.execute", async () => {
