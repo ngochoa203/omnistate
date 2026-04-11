@@ -5,13 +5,29 @@ export { optimizePlan } from "./planner/optimizer.js";
 export { Orchestrator } from "./executor/orchestrator.js";
 export type { StepResult, ExecutionResult } from "./executor/orchestrator.js";
 
+// ─── Domain B: Deep OS Layer ─────────────────────────────────────────────────
+export { DeepOSLayer } from "./layers/deep-os.js";
+export { DeepSystemLayer } from "./layers/deep-system.js";
+
+// ─── Domain A: Advanced Vision ───────────────────────────────────────────────
+export { AdvancedVision } from "./vision/advanced.js";
+
+// ─── Domain C: Advanced Health & Self-Healing ────────────────────────────────
+export { AdvancedHealthMonitor } from "./health/advanced-health.js";
+
+// ─── Domain D: Hybrid Automation & Tooling ───────────────────────────────────
+export * as HybridAutomation from "./hybrid/automation.js";
+export * as HybridTooling from "./hybrid/tooling.js";
+
 // ─── Daemon entry point ───────────────────────────────────────────────────────
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { createServer } from "node:net";
 import { loadConfig } from "./config/loader.js";
 import { HealthMonitor } from "./health/monitor.js";
 import type { ServerMessage } from "./gateway/protocol.js";
+import { runLlmPreflight, shouldRequireLlm } from "./llm/preflight.js";
 
 // ─── .env loader (no external deps) — exported for CLI inline use ──────────
 
@@ -74,6 +90,26 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
+async function isPortAvailable(bind: string, port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const server = createServer();
+
+    server.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        resolve(false);
+        return;
+      }
+      resolve(false);
+    });
+
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+
+    server.listen(port, bind);
+  });
+}
+
 // ─── startGateway ────────────────────────────────────────────────────────────
 
 export async function startGateway(): Promise<void> {
@@ -87,6 +123,21 @@ export async function startGateway(): Promise<void> {
   const config = loadConfig(args.configPath ?? undefined);
   if (args.port !== null) {
     config.gateway.port = args.port;
+  }
+
+  // 3.5. If LLM is required, fail fast on auth/credits/network issues.
+  const preflight = await runLlmPreflight();
+  if (shouldRequireLlm() && !preflight.ok) {
+    throw new Error(preflight.message);
+  }
+
+  const available = await isPortAvailable(config.gateway.bind, config.gateway.port);
+  if (!available) {
+    console.error(
+      `[OmniState] Port ${config.gateway.port} on ${config.gateway.bind} is already in use. ` +
+        "Stop the existing daemon or start with --port <other-port>."
+    );
+    return;
   }
 
   // 4. Import gateway here (after config is ready)

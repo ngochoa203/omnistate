@@ -8,8 +8,8 @@ export const gatewayConfigSchema = z.object({
     auth: z.object({
       token: z.string().optional(),
       localAutoApprove: z.boolean().default(true),
-    }),
-  }),
+    }).default({}),
+  }).default({}),
 
   execution: z.object({
     defaultLayer: z.enum(["auto", "deep", "surface"]).default("auto"),
@@ -17,7 +17,7 @@ export const gatewayConfigSchema = z.object({
     retryBackoffMs: z.array(z.number()).default([1000, 3000, 10000]),
     verifyAfterEachStep: z.boolean().default(true),
     screenshotOnError: z.boolean().default(true),
-  }),
+  }).default({}),
 
   session: z.object({
     store: z.string().default("~/.omnistate/sessions/sessions.json"),
@@ -26,26 +26,26 @@ export const gatewayConfigSchema = z.object({
       mode: z.enum(["warn", "enforce"]).default("enforce"),
       pruneAfter: z.string().default("30d"),
       maxEntries: z.number().int().default(500),
-    }),
-  }),
+    }).default({}),
+  }).default({}),
 
   fleet: z.object({
     enabled: z.boolean().default(false),
     discoveryMode: z.enum(["tailscale", "manual", "mdns"]).default("tailscale"),
     agents: z.array(z.string()).default([]),
-  }),
+  }).default({}),
 
   health: z.object({
     enabled: z.boolean().default(true),
     intervalMs: z.number().int().min(1000).default(30000),
     autoRepair: z.boolean().default(true),
     notifyChannel: z.string().optional(),
-  }),
+  }).default({}),
 
   plugins: z.object({
     dir: z.string().default("~/.omnistate/plugins/"),
     enabled: z.array(z.string()).default([]),
-  }),
+  }).default({}),
 });
 
 export type GatewayConfig = z.infer<typeof gatewayConfigSchema>;

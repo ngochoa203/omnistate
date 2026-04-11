@@ -56,12 +56,21 @@ export class SurfaceLayer {
 
   /** Capture a specific window by its platform window ID. */
   async captureWindow(windowId: number): Promise<ScreenCapture> {
-    const meta = bridge.captureWindow(windowId);
+    const windows = await this.listWindows();
+    const target = windows.find((w) => w.id === windowId);
+    if (!target) {
+      throw new Error(`Window ${windowId} not found`);
+    }
+
+    const region = await this.captureRegion(
+      target.bounds.x,
+      target.bounds.y,
+      target.bounds.width,
+      target.bounds.height
+    );
+
     return {
-      width: meta.width,
-      height: meta.height,
-      data: Buffer.alloc(0), // Metadata only — use captureScreenBuffer for data
-      timestampMs: Date.now(),
+      ...region,
       captureMethod: "window",
     };
   }
@@ -73,13 +82,28 @@ export class SurfaceLayer {
     width: number,
     height: number
   ): Promise<ScreenCapture> {
-    const meta = bridge.captureRegion(x, y, width, height);
+    // Native bridge currently exposes metadata-only region capture.
+    // Crop from a full-frame buffer so callers always receive real pixels.
+    const full = await this.captureScreen();
+    const cropped = cropBufferRegion(
+      full.data,
+      full.width,
+      full.height,
+      x,
+      y,
+      width,
+      height,
+      full.bytesPerRow
+    );
+
     return {
-      width: meta.width,
-      height: meta.height,
-      data: Buffer.alloc(0),
+      width: cropped.width,
+      height: cropped.height,
+      data: cropped.data,
       timestampMs: Date.now(),
       captureMethod: "region",
+      bytesPerRow: cropped.width * 4,
+      pixelFormat: full.pixelFormat,
     };
   }
 
@@ -241,6 +265,38 @@ export class SurfaceLayer {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function cropBufferRegion(
+  src: Buffer,
+  srcWidth: number,
+  srcHeight: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  srcBytesPerRow?: number
+): { width: number; height: number; data: Buffer } {
+  const startX = Math.max(0, Math.floor(x));
+  const startY = Math.max(0, Math.floor(y));
+  const endX = Math.min(srcWidth, startX + Math.max(1, Math.floor(width)));
+  const endY = Math.min(srcHeight, startY + Math.max(1, Math.floor(height)));
+
+  const outWidth = Math.max(1, endX - startX);
+  const outHeight = Math.max(1, endY - startY);
+
+  const bytesPerPixel = 4;
+  const inStride = srcBytesPerRow ?? srcWidth * bytesPerPixel;
+  const outStride = outWidth * bytesPerPixel;
+  const out = Buffer.alloc(outStride * outHeight);
+
+  for (let row = 0; row < outHeight; row++) {
+    const inOffset = (startY + row) * inStride + startX * bytesPerPixel;
+    const outOffset = row * outStride;
+    src.copy(out, outOffset, inOffset, inOffset + outStride);
+  }
+
+  return { width: outWidth, height: outHeight, data: out };
 }
 
 export interface ScreenCapture {

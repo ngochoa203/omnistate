@@ -7,7 +7,10 @@ export type ClientMessage =
   | TaskMessage
   | HistoryQueryMessage
   | HealthQueryMessage
-  | StatusQueryMessage;
+  | LlmPreflightQueryMessage
+  | StatusQueryMessage
+  | VoiceTranscribeMessage
+  | SystemDashboardMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -32,8 +35,26 @@ export interface HealthQueryMessage {
   type: "health.query";
 }
 
+export interface LlmPreflightQueryMessage {
+  type: "llm.preflight.query";
+}
+
 export interface StatusQueryMessage {
   type: "status.query";
+}
+
+export interface VoiceTranscribeMessage {
+  type: "voice.transcribe";
+  id: string;
+  /** Base64-encoded audio data. */
+  audio: string;
+  /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
+  format?: string;
+}
+
+export interface SystemDashboardMessage {
+  type: "system.dashboard";
+  id: string;
 }
 
 /** Messages sent from gateway to client. */
@@ -49,7 +70,11 @@ export type ServerMessage =
   | ErrorMessage
   | HistoryResultMessage
   | HealthReportMessage
-  | StatusReplyMessage;
+  | LlmPreflightReportMessage
+  | StatusReplyMessage
+  | VoiceTranscriptMessage
+  | VoiceErrorMessage
+  | SystemInfoMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -129,9 +154,45 @@ export interface HealthReportMessage {
   alerts: Array<{ sensor: string; severity: string; message: string }>;
 }
 
+export interface LlmPreflightReportMessage {
+  type: "llm.preflight.report";
+  ok: boolean;
+  status: "ok" | "missing_key" | "auth_error" | "insufficient_credits" | "api_error";
+  message: string;
+  required: boolean;
+  baseURL: string;
+  checkedAt: string;
+}
+
 export interface StatusReplyMessage {
   type: "status.reply";
   connectedClients: number;
   queueDepth: number;
   uptime: number;
+}
+
+export interface VoiceTranscriptMessage {
+  type: "voice.transcript";
+  id: string;
+  text: string;
+}
+
+export interface VoiceErrorMessage {
+  type: "voice.error";
+  id: string;
+  error: string;
+}
+
+export interface SystemInfoMessage {
+  type: "system.info";
+  id: string;
+  data: {
+    battery: any;
+    wifi: any;
+    disk: any;
+    cpu: any;
+    memory: any;
+    hostname: string;
+    error?: string;
+  };
 }
