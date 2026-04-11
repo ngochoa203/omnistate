@@ -33,6 +33,12 @@ const mockConfig = {
       endpoint: "http://127.0.0.1:19800",
       token: "",
     },
+    wake: {
+      enabled: false,
+      phrase: "hey omni",
+      cooldownMs: 2500,
+      commandWindowSec: 7,
+    },
   },
   session: {
     currentSessionId: "default",
@@ -65,6 +71,7 @@ const runtimeConfigMocks = vi.hoisted(() => ({
   setVoiceField: vi.fn(() => mockConfig),
   setVoiceProviderChain: vi.fn(() => mockConfig),
   setSiriField: vi.fn(() => mockConfig),
+  setWakeField: vi.fn(() => mockConfig),
   switchSession: vi.fn(() => mockConfig),
   updateCurrentSessionMeta: vi.fn(() => mockConfig),
   updateActiveProviderField: vi.fn(() => mockConfig),
@@ -144,5 +151,17 @@ describe("tryHandleGatewayCommand()", () => {
     const out = tryHandleGatewayCommand("/voice siri on", ctx);
     expect(runtimeConfigMocks.setSiriField).toHaveBeenCalledWith("enabled", true);
     expect(out?.output).toContain("siri.enabled=");
+  });
+
+  it("wake command toggles wake listener", () => {
+    const out = tryHandleGatewayCommand("/wake on", ctx);
+    expect(runtimeConfigMocks.setWakeField).toHaveBeenCalledWith("enabled", true);
+    expect(out?.output).toContain("wake.enabled=");
+  });
+
+  it("config set updates wake phrase", () => {
+    const out = tryHandleGatewayCommand("omnistate config set wake_phrase hey omni", ctx);
+    expect(runtimeConfigMocks.setWakeField).toHaveBeenCalledWith("phrase", "hey omni");
+    expect(out?.output).toContain("wake_phrase=");
   });
 });

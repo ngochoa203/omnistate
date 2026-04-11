@@ -516,6 +516,26 @@ async function cmdRun(goal: string, forceInline: boolean = false): Promise<void>
   }
 }
 
+async function cmdRunAll(): Promise<void> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const scriptPath = resolve(__dirname, "../../../scripts/run-all.mjs");
+  const repoRoot = resolve(__dirname, "../../..");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: "inherit",
+      env: process.env,
+      cwd: repoRoot,
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`run all failed with exit code ${code}`));
+    });
+  });
+}
+
 // ─── Command: config ─────────────────────────────────────────────────────────
 
 async function cmdConfig(args: string[]): Promise<void> {
@@ -756,6 +776,77 @@ async function cmdStop(): Promise<void> {
   });
 }
 
+// ─── Command: voiceprint ─────────────────────────────────────────────────────
+
+async function cmdVoiceprint(args: string[]): Promise<void> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const scriptPath = resolve(__dirname, "../../gateway/scripts/speechbrain_voiceprint.py");
+  const pythonBin = process.env.OMNISTATE_PYTHON || `${process.env.HOME}/.pyenv/versions/3.12.12/bin/python3`;
+
+  if (args.length === 0) {
+    console.log("Usage: omnistate voiceprint <enroll|verify> [options]");
+    process.exit(1);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(pythonBin, [scriptPath, ...args], {
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`voiceprint command failed with exit code ${code}`));
+    });
+  });
+}
+
+// ─── Command: doctor ─────────────────────────────────────────────────────────
+
+async function cmdDoctor(): Promise<void> {
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const profilePath = `${process.env.HOME}/.omnistate/voice_profile.json`;
+  const pythonBin = process.env.OMNISTATE_PYTHON || `${process.env.HOME}/.pyenv/versions/3.12.12/bin/python3`;
+
+  console.log(`${cyan("[doctor]")} OmniState quick diagnostics`);
+
+  const daemonUp = await isDaemonRunning();
+  console.log(`  gateway        : ${daemonUp ? green("running") : red("stopped")}`);
+
+  let profileCount = 0;
+  let backend = "unknown";
+  if (fs.existsSync(profilePath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(profilePath, "utf-8")) as Record<string, unknown>;
+      backend = typeof raw.speakerBackend === "string" ? raw.speakerBackend : "legacy";
+      if (Array.isArray(raw.speakerProfiles)) profileCount = raw.speakerProfiles.length;
+    } catch {
+      // ignore parse error
+    }
+  }
+  console.log(`  voice backend  : ${backend}`);
+  console.log(`  speaker profiles: ${profileCount}`);
+
+  const checkScript = `import importlib.util\nmods=['speechbrain','torch','torchaudio']\nprint(' '.join([m+':'+('ok' if importlib.util.find_spec(m) else 'missing') for m in mods]))`;
+  await new Promise<void>((resolve) => {
+    const child = spawn(pythonBin, ["-c", checkScript], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (d) => (out += String(d)));
+    child.on("close", () => {
+      console.log(`  python deps    : ${out.trim() || "unavailable"}`);
+      resolve();
+    });
+    child.on("error", () => {
+      console.log("  python deps    : unavailable");
+      resolve();
+    });
+  });
+
+  console.log(`  host           : ${os.hostname()}`);
+  console.log(green("✓ doctor finished"));
+}
+
 // ─── Help ─────────────────────────────────────────────────────────────────────
 
 function printHelp(): void {
@@ -771,19 +862,19 @@ ${bold("COMMANDS")}
     ${dim("--config <path>")}    Path to config file
     ${dim("--no-health")}        Disable health monitor
 
+  ${cyan('run all')}            Start full stack (gateway + web), auto-free ports
+
   ${cyan('run "<goal>"')}       Execute a natural-language task
     ${dim("--inline")}           Force inline mode (skip daemon check)
     ${dim("(auto)")}             Tries daemon first, falls back to inline
 
   ${cyan("status")}             Show gateway status (clients, queue, uptime)
 
-  ${cyan("config")}             Manage LLM provider/model/fallback/session config
-    ${dim("show")}               Show current runtime config
-    ${dim("set <key> <value>")}  Update api_key/base_url/model/provider/token budget
-    ${dim("proxy add ...")}      Add third-party proxy provider
-    ${dim("fallback ...")}       Manage fallback provider chain
+  ${cyan("config")}             Runtime config (provider/model/base URL/API key)
 
   ${cyan("health")}             Run a single health check and print sensor table
+  ${cyan("doctor")}             Run diagnostics (gateway, voice backend, python deps)
+  ${cyan("voiceprint")}         Enroll/verify voiceprint from audio files
 
   ${cyan("model")}              Show or switch active model
   ${cyan("session")}            Show/list/new/use runtime sessions
@@ -793,7 +884,8 @@ ${bold("COMMANDS")}
   ${cyan("think")}              Get/set thinking level (low|medium|high)
   ${cyan("fast")}               Toggle fast mode (on|off)
   ${cyan("verbose")}            Toggle verbose mode (on|off)
-  ${cyan("voice")}              Show/update low-latency voice and Siri bridge config
+  ${cyan("voice")}              Show/update voice config
+  ${cyan("wake")}               Show/update wake-word config
   ${cyan("new")}                Create a new runtime session
   ${cyan("reset")}              Reset current session state
 
@@ -802,29 +894,18 @@ ${bold("COMMANDS")}
   ${cyan("--help")}             Print this help message
 
 ${bold("EXAMPLES")}
+  omnistate run all
   omnistate run "list all files"
-  omnistate run "check disk space"
-  omnistate run "show top 5 processes"
-  omnistate run "what is my hostname"
-  omnistate run "open Safari" --inline
   omnistate config show
   omnistate config set model cx/gpt-5.4
-  omnistate config proxy add router9 http://localhost:20128/v1 sk-*** cx/gpt-5.4
   omnistate model
-  omnistate model cx/gpt-5.4
   omnistate session list
   omnistate clear
-  omnistate whoami
-  omnistate think high
-  omnistate fast on
-  omnistate verbose on
   omnistate voice show
-  omnistate voice providers native,whisper-local,whisper-cloud
-  omnistate voice siri on
-  omnistate new sprint-a
-  omnistate reset
-  omnistate start --port 19800
+  omnistate wake show
   omnistate health
+  omnistate doctor
+  omnistate voiceprint enroll --audio ~/owner.wav --user-id owner --display-name Owner
   omnistate stop
 `);
 }
@@ -856,6 +937,10 @@ async function main(): Promise<void> {
       break;
 
     case "run": {
+      if (rest.length === 1 && rest[0] === "all") {
+        await cmdRunAll();
+        break;
+      }
       const forceInline = rest.includes("--inline");
       const goalParts = rest.filter((t) => t !== "--inline");
       const goal = goalParts.join(" ").replace(/^["']|["']$/g, "");
@@ -907,6 +992,10 @@ async function main(): Promise<void> {
       await cmdGatewaySlash(["/voice", ...rest].join(" ").trim() || "/voice");
       break;
 
+    case "wake":
+      await cmdGatewaySlash(["/wake", ...rest].join(" ").trim() || "/wake");
+      break;
+
     case "new":
       await cmdGatewaySlash(["/new", ...rest].join(" ").trim());
       break;
@@ -917,6 +1006,14 @@ async function main(): Promise<void> {
 
     case "health":
       await cmdHealth();
+      break;
+
+    case "doctor":
+      await cmdDoctor();
+      break;
+
+    case "voiceprint":
+      await cmdVoiceprint(rest);
       break;
 
     case "stop":

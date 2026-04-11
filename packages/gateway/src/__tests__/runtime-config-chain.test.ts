@@ -59,6 +59,12 @@ function makeConfig(): LlmRuntimeConfig {
         endpoint: "http://127.0.0.1:19800",
         token: "",
       },
+      wake: {
+        enabled: false,
+        phrase: "hey omni",
+        cooldownMs: 2500,
+        commandWindowSec: 7,
+      },
     },
     session: {
       currentSessionId: "default",

@@ -13,8 +13,7 @@ function resolveGatewayUrl(): string {
 
   if (typeof window !== "undefined") {
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-    const host = window.location.hostname || "127.0.0.1";
-    return `${scheme}://${host}:19800`;
+    return `${scheme}://${window.location.host}/ws`;
   }
 
   return "ws://127.0.0.1:19800";
@@ -98,6 +97,34 @@ export class GatewayClient {
 
   requestLlmPreflight(): void {
     this.send({ type: "llm.preflight.query" } as ClientMessage);
+  }
+
+  requestRuntimeConfig(): void {
+    this.send({ type: "runtime.config.get" } as ClientMessage);
+  }
+
+  setRuntimeConfig(
+    key: "provider" | "model" | "baseURL" | "apiKey" | "voice.lowLatency" | "voice.autoExecuteTranscript",
+    value: string | boolean,
+  ): void {
+    this.send({ type: "runtime.config.set", key, value } as ClientMessage);
+  }
+
+  upsertRuntimeProvider(provider: {
+    id: string;
+    kind: "anthropic" | "openai-compatible";
+    baseURL: string;
+    apiKey: string;
+    model: string;
+    enabled?: boolean;
+    models?: string[];
+  }, options?: { activate?: boolean; addToFallback?: boolean }): void {
+    this.send({
+      type: "runtime.config.upsertProvider",
+      provider,
+      activate: options?.activate,
+      addToFallback: options?.addToFallback,
+    } as ClientMessage);
   }
 
   requestHistory(limit: number = 20): void {

@@ -109,6 +109,9 @@ omnistate start
 
 # Send a command
 omnistate run "check disk space"
+
+# Run full stack (gateway + web dashboard + voice panel)
+pnpm run:all
 ```
 
 ## CLI Commands
@@ -143,6 +146,9 @@ pnpm build:native
 
 # Watch TypeScript
 pnpm dev
+
+# Run gateway + web in one command (FE on one port with proxy)
+pnpm run:all:one-port
 ```
 
 ### Tests

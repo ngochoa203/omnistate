@@ -8,7 +8,11 @@ export type ClientMessage =
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
+  | RuntimeConfigGetMessage
+  | RuntimeConfigSetMessage
+  | RuntimeConfigUpsertProviderMessage
   | StatusQueryMessage
+  | AdminShutdownMessage
   | VoiceTranscribeMessage
   | SystemDashboardMessage;
 
@@ -39,8 +43,43 @@ export interface LlmPreflightQueryMessage {
   type: "llm.preflight.query";
 }
 
+export interface RuntimeConfigGetMessage {
+  type: "runtime.config.get";
+}
+
+export interface RuntimeConfigSetMessage {
+  type: "runtime.config.set";
+  key:
+    | "provider"
+    | "model"
+    | "baseURL"
+    | "apiKey"
+    | "voice.lowLatency"
+    | "voice.autoExecuteTranscript";
+  value: string | boolean;
+}
+
+export interface RuntimeConfigUpsertProviderMessage {
+  type: "runtime.config.upsertProvider";
+  provider: {
+    id: string;
+    kind: "anthropic" | "openai-compatible";
+    baseURL: string;
+    apiKey: string;
+    model: string;
+    enabled?: boolean;
+    models?: string[];
+  };
+  activate?: boolean;
+  addToFallback?: boolean;
+}
+
 export interface StatusQueryMessage {
   type: "status.query";
+}
+
+export interface AdminShutdownMessage {
+  type: "admin.shutdown";
 }
 
 export interface VoiceTranscribeMessage {
@@ -71,6 +110,8 @@ export type ServerMessage =
   | HistoryResultMessage
   | HealthReportMessage
   | LlmPreflightReportMessage
+  | RuntimeConfigReportMessage
+  | RuntimeConfigAckMessage
   | StatusReplyMessage
   | VoiceTranscriptMessage
   | VoiceErrorMessage
@@ -164,6 +205,19 @@ export interface LlmPreflightReportMessage {
   providerId?: string;
   model?: string;
   checkedAt: string;
+}
+
+export interface RuntimeConfigReportMessage {
+  type: "runtime.config.report";
+  config: unknown;
+}
+
+export interface RuntimeConfigAckMessage {
+  type: "runtime.config.ack";
+  ok: boolean;
+  key: RuntimeConfigSetMessage["key"];
+  message: string;
+  config: unknown;
 }
 
 export interface StatusReplyMessage {

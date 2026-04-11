@@ -111,7 +111,7 @@ export async function checkProcesses(): Promise<SensorResult> {
       const count = parseInt(output.trim()) - 1; // minus header
 
       // Check for zombies
-      const zombies = execSync("ps aux | grep -c Z | head -1", {
+      const zombies = execSync("ps -axo stat= | awk '/^Z/{c++} END{print c+0}'", {
         encoding: "utf-8",
         timeout: 5000,
       });

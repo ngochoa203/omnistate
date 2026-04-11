@@ -11,7 +11,8 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist *.tsbuildinfo",
     "lint": "oxlint src/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:planner": "vitest run src/__tests__/planner.test.ts --testTimeout=30000"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.85.0",

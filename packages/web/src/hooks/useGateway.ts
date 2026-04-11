@@ -24,6 +24,7 @@ export function useGateway() {
     unsubs.push(client.on("connected", () => {
       store.setConnectionState("connected");
       client.requestLlmPreflight();
+      client.requestRuntimeConfig();
     }));
 
     unsubs.push(client.on("_disconnected", () => {
@@ -32,7 +33,7 @@ export function useGateway() {
 
     unsubs.push(client.on("task.accepted", (msg: ServerMessage) => {
       if (msg.type === "task.accepted") {
-        store.addSystemMessage("", msg.taskId);
+        store.addSystemMessage("Dang xu ly yeu cau...", msg.taskId);
       }
     }));
 
@@ -134,6 +135,24 @@ export function useGateway() {
           providerId: msg.providerId,
           model: msg.model,
           checkedAt: msg.checkedAt,
+        });
+      }
+    }));
+
+    unsubs.push(client.on("runtime.config.report", (msg: ServerMessage) => {
+      if (msg.type === "runtime.config.report") {
+        store.setRuntimeConfig(msg.config);
+      }
+    }));
+
+    unsubs.push(client.on("runtime.config.ack", (msg: ServerMessage) => {
+      if (msg.type === "runtime.config.ack") {
+        store.setRuntimeConfig(msg.config);
+        store.setRuntimeConfigAck({
+          ok: msg.ok,
+          key: msg.key,
+          message: msg.message,
+          at: Date.now(),
         });
       }
     }));
