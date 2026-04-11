@@ -1,0 +1,31 @@
+UC ID,Status,Implementation Level,Evidence File,Line Range,Implemented Features,Missing Features,Priority
+UC-B01,PARTIAL,List & Kill Only,packages/gateway/src/layers/deep.ts,180-233,"getProcessList, isProcessRunning, killProcess, killProcessByName","restart, renice, cgroup, CPU affinity, signal handling, monitoring",MEDIUM
+UC-B02,MISSING,0%,packages/gateway/src/layers/deep.ts,100-118,"launchApp (basic wrapper)","app resolution, dependency checking, auto-install, verification, wait for interactive",MEDIUM
+UC-B03,IMPLEMENTED,100%,packages/gateway/src/layers/deep.ts,51-88,"readFile, readFileBinary, writeFile, fileExists, fileStat, listDir","native search/find, native sorting, async I/O",LOW
+UC-B04,MISSING,0%,N/A,N/A,None,"APFS snapshot, ZFS snapshot, Btrfs snapshot, VSS, LVM snapshot, Time Machine, backup-before-op",HIGH
+UC-B05,MISSING,0%,packages/gateway/src/layers/deep.ts,240-253,"getSystemInfo (basic)","DNS, dark mode, proxy, sleep settings, system policies, hostname config, timezone, NTP",HIGH
+UC-B06,MISSING,0%,N/A,N/A,None,"launchd, systemd, Windows Services, init.d, upstart, service files, dependency ordering, auto-start",CRITICAL
+UC-B07,MISSING,0%,N/A,N/A,None,"brew, apt, yum, dnf, winget, choco, snap, dependency resolution, version pinning, repository management",CRITICAL
+UC-B08,MISSING,0%,N/A,N/A,None,"WiFi control, firewall rules, VPN, routing, DNS, port management, network interface, proxy",HIGH
+UC-B09,MISSING,0%,N/A,N/A,None,"sysctl, pmset, bcdedit, CPU frequency, I/O scheduler, swap, buffer cache",MEDIUM
+UC-B10,MISSING,5%,packages/gateway/src/planner/intent.ts,569-581,"volume control (AppleScript)","audio input/output device, Bluetooth, brightness, USB, printer, camera/mic, keyboard layout",LOW
+UC-B11,MISSING,0%,N/A,N/A,None,"cron, launchd timers, Task Scheduler, at command, task creation, recurrence",MEDIUM
+UC-B12,MISSING,0%,N/A,N/A,None,"Windows Registry, macOS plist, Linux /etc, transactions, backup/restore",MEDIUM
+UC-B13,MISSING,0%,N/A,N/A,None,"user accounts, groups, password policy, chmod/chown, ACL, sudo, login shell",MEDIUM
+UC-B14,MISSING,0%,N/A,N/A,None,"create/delete/resize partition, format volumes, mount/unmount, LVM, disk utilities, compression, quotas",HIGH
+UC-B15,MISSING,0%,N/A,N/A,None,"session env vars, user-level env vars, system-level env vars, persistent storage, profile scripts",MEDIUM
+UC-B16,MISSING,0%,N/A,N/A,None,".zshrc, .bashrc, alias, functions, shell settings, profile sourcing, shell prompt",MEDIUM
+UC-B17,MISSING,0%,N/A,N/A,None,"system log collection, app log aggregation, log rotation, filtering, retention, centralized logging",MEDIUM
+UC-B18,MISSING,0%,N/A,N/A,None,"read clipboard, write clipboard, clipboard history, cross-platform sync, format handling",LOW
+UC-B19,MISSING,0%,N/A,N/A,None,"font installation, locale, keyboard layout, IME, language packs, time/date format",LOW
+UC-B20,MISSING,0%,N/A,N/A,None,"boot order, boot menu, secure boot, UEFI/BIOS, startup items, boot animation",LOW
+UC-B21,MISSING,0%,N/A,N/A,None,"sleep, hibernation, shutdown, wake-on-LAN, power profiles, battery management, CPU throttling",HIGH
+UC-B22,MISSING,0%,N/A,N/A,None,"SSH keys, GPG keys, X.509 certs, keychain, certificate chain, key import/export, passphrases",MEDIUM
+UC-B23,MISSING,0%,N/A,N/A,None,"rate limiting, geo-blocking, app-based rules, DPI, intrusion detection",MEDIUM
+UC-B24,MISSING,0%,N/A,N/A,None,"Docker, Podman, VirtualBox, KVM, QEMU, Kubernetes, image building",MEDIUM
+UC-B25,MISSING,0%,N/A,N/A,None,"resolution, refresh rate, multi-monitor, display on/off, rotation, scaling/DPI",LOW
+UC-B26,MISSING,5%,packages/gateway/src/planner/intent.ts,569-581,"volume control (AppleScript)","per-app volume, per-device I/O, equalizer, surround sound, audio format",LOW
+UC-B27,MISSING,0%,N/A,N/A,None,"printer enum, default printer, print queue, scanner enum, scan-to-file, driver mgmt, network printer",MEDIUM
+UC-B28,MISSING,0%,N/A,N/A,None,"Time Machine, rsync, restic, Duplicati, Windows Backup, incremental backup, scheduling, retention",MEDIUM
+UC-B29,MISSING,0%,N/A,N/A,None,"OS update check, security patches, update scheduling, rollback, progress monitoring, reboot coordination",MEDIUM
+UC-B30,MISSING,0%,N/A,N/A,None,"swap file, zram, OOM killer, memory pressure, swap priority, memory compaction",LOW
