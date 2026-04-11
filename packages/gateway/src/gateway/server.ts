@@ -1,4 +1,9 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readFile, writeFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
@@ -11,9 +16,82 @@ import { HealthMonitor } from "../health/monitor.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
-import { incrementSessionUsage } from "../llm/runtime-config.js";
+import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setVoiceField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
+import { WakeManager } from "../voice/wake-manager.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
+const speechbrainScriptPath = fileURLToPath(new URL("../../scripts/speechbrain_voiceprint.py", import.meta.url));
+
+type KnownAudioFormat = "wav" | "webm" | "ogg" | "mp3" | "unknown";
+
+function sniffAudioFormat(buffer: Buffer): KnownAudioFormat {
+  if (buffer.length < 4) return "unknown";
+  const four = buffer.toString("ascii", 0, 4);
+  const isWebm =
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3;
+  const isWav =
+    buffer.length >= 12 &&
+    four === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WAVE";
+  const isOgg = four === "OggS";
+  const isMp3 =
+    (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) ||
+    buffer.toString("ascii", 0, 3) === "ID3";
+
+  if (isWav) return "wav";
+  if (isWebm) return "webm";
+  if (isOgg) return "ogg";
+  if (isMp3) return "mp3";
+  return "unknown";
+}
+
+function normalizeDeclaredAudioFormat(raw: string): KnownAudioFormat {
+  let format = (raw || "").trim().toLowerCase();
+  if (format.startsWith("audio/")) format = format.slice("audio/".length);
+  if (format.includes(";")) format = format.split(";", 1)[0] ?? format;
+
+  if (format.includes("wav") || format.includes("wave")) return "wav";
+  if (format.includes("webm")) return "webm";
+  if (format.includes("ogg")) return "ogg";
+  if (format.includes("mp3") || format.includes("mpeg") || format.includes("m4a") || format.includes("mp4")) return "mp3";
+  return "unknown";
+}
+
+async function ensureSpeechbrainCompatibleAudio(
+  inputPath: string,
+  declaredFormat: string,
+): Promise<{ finalPath: string; cleanupPaths: string[] }> {
+  const raw = await readFile(inputPath);
+  const sniffed = sniffAudioFormat(raw);
+  const declared = normalizeDeclaredAudioFormat(declaredFormat);
+  const effective = sniffed !== "unknown" ? sniffed : declared;
+
+  if (effective === "wav") {
+    return { finalPath: inputPath, cleanupPaths: [] };
+  }
+
+  const convertedPath = join(tmpdir(), `omnistate-voice-converted-${crypto.randomUUID()}.wav`);
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      ["-nostdin", "-y", "-i", inputPath, "-ac", "1", "-ar", "16000", "-f", "wav", convertedPath],
+      { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    return { finalPath: convertedPath, cleanupPaths: [convertedPath] };
+  } catch (err) {
+    throw new Error(
+      "Cannot decode uploaded audio for SpeechBrain. Install ffmpeg or upload PCM WAV. Root error: " +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
+}
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -30,6 +108,8 @@ interface ConnectedClient {
  */
 export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
+  private siriBridgeServer: HttpServer | null = null;
+  private wakeManager: WakeManager = new WakeManager();
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -87,6 +167,9 @@ export class OmniStateGateway {
     this.wss.on("connection", (ws, req) => {
       this.handleConnection(ws, req);
     });
+
+    this.startSiriBridge();
+    this.startWakeListener();
   }
 
   /** Gracefully shut down the gateway. */
@@ -102,7 +185,352 @@ export class OmniStateGateway {
     this.clients.clear();
     this.wss?.close();
     this.wss = null;
+    this.siriBridgeServer?.close();
+    this.siriBridgeServer = null;
+    this.wakeManager.stop();
     console.log("[OmniState] Gateway stopped");
+  }
+
+  private startWakeListener(): void {
+    const runtime = loadLlmRuntimeConfig();
+    this.wakeManager.start({
+      config: runtime.voice.wake,
+      endpoint: runtime.voice.siri.endpoint,
+      token: runtime.voice.siri.token,
+    });
+  }
+
+  private shouldRefreshWakeListener(goal: string): boolean {
+    const normalized = goal.trim().toLowerCase();
+    if (!normalized) return false;
+
+    return (
+      normalized.startsWith("/wake") ||
+      normalized.startsWith("omnistate wake") ||
+      normalized.startsWith("/voice siri") ||
+      normalized.startsWith("omnistate voice siri") ||
+      normalized.startsWith("/config set wake_") ||
+      normalized.startsWith("omnistate config set wake_") ||
+      normalized.startsWith("/config set siri_") ||
+      normalized.startsWith("omnistate config set siri_")
+    );
+  }
+
+  private startSiriBridge(): void {
+    const runtime = loadLlmRuntimeConfig();
+    const siri = runtime.voice?.siri;
+
+    let endpoint: URL;
+    try {
+      endpoint = new URL(siri?.endpoint || "http://127.0.0.1:19801/siri/command");
+    } catch {
+      endpoint = new URL("http://127.0.0.1:19801/siri/command");
+    }
+
+    const host = endpoint.hostname || "127.0.0.1";
+    const port = Number(endpoint.port || "19801");
+    const path = endpoint.pathname && endpoint.pathname !== "/" ? endpoint.pathname : "/siri/command";
+
+    const server = createServer((req, res) => {
+      void this.handleSiriBridgeRequest(req, res, path);
+    });
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`[OmniState] Siri bridge port ${port} is already in use. Bridge is disabled.`);
+        return;
+      }
+      console.warn(`[OmniState] Siri bridge error: ${err.message}`);
+    });
+
+    server.listen(port, host, () => {
+      console.log(`[OmniState] Siri bridge listening on http://${host}:${port}${path}`);
+    });
+
+    this.siriBridgeServer = server;
+  }
+
+  private async handleSiriBridgeRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    expectedPath: string,
+  ): Promise<void> {
+    const json = (status: number, body: Record<string, unknown>) => {
+      res.statusCode = status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(body));
+    };
+
+    const requestPath = (() => {
+      try {
+        return new URL(req.url ?? "", "http://localhost").pathname;
+      } catch {
+        return req.url ?? "";
+      }
+    })();
+
+    const remote = req.socket.remoteAddress ?? "";
+    const isLocalRequest =
+      remote === "127.0.0.1" ||
+      remote === "::1" ||
+      remote.startsWith("::ffff:127.0.0.1");
+
+    if (req.method === "GET" && requestPath === "/healthz") {
+      json(200, {
+        ok: true,
+        service: "omnistate-gateway",
+        uptimeMs: Date.now() - this.startedAt,
+        clients: this.clients.size,
+      });
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/readyz") {
+      json(200, {
+        ok: true,
+        ready: true,
+        wakeListenerRunning: this.wakeManager.isRunning(),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/screen/tree") {
+      if (!isLocalRequest) {
+        json(403, { ok: false, error: "Only local requests are allowed" });
+        return;
+      }
+      try {
+        const { stdout } = await execFileAsync(process.execPath, [bridgeProbeScriptPath, "tree"], {
+          timeout: 15_000,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        json(200, JSON.parse(stdout));
+      } catch (err) {
+        json(500, {
+          ok: false,
+          error:
+            "Native bridge worker failed while collecting screen tree. " +
+            (err instanceof Error ? err.message : String(err)),
+        });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/latency/benchmark") {
+      if (!isLocalRequest) {
+        json(403, { ok: false, error: "Only local requests are allowed" });
+        return;
+      }
+      try {
+        const { stdout } = await execFileAsync(process.execPath, [bridgeProbeScriptPath, "latency"], {
+          timeout: 20_000,
+          maxBuffer: 2 * 1024 * 1024,
+        });
+        json(200, JSON.parse(stdout));
+      } catch (err) {
+        json(500, {
+          ok: false,
+          error:
+            "Native bridge worker failed while benchmarking latency. " +
+            (err instanceof Error ? err.message : String(err)),
+        });
+      }
+      return;
+    }
+
+    if (req.method !== "POST") {
+      json(404, { ok: false, error: "Not found" });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    const MAX_BODY_BYTES = 5 * 1024 * 1024;
+    let bodyTooLarge = false;
+    let currentSize = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      req.on("data", (chunk) => {
+        if (bodyTooLarge) return;
+        const asBuffer = Buffer.from(chunk);
+        chunks.push(asBuffer);
+        currentSize += asBuffer.length;
+        if (currentSize > MAX_BODY_BYTES) {
+          bodyTooLarge = true;
+          req.destroy(new Error("Request body too large"));
+        }
+      });
+      req.on("end", () => resolve());
+      req.on("aborted", () => reject(new Error("Request aborted")));
+      req.on("error", (err) => reject(err));
+    }).catch((err) => {
+      if (bodyTooLarge) {
+        json(413, { ok: false, error: "Request body too large" });
+      } else {
+        json(400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    if (bodyTooLarge || res.writableEnded) {
+      return;
+    }
+
+    const runtime = loadLlmRuntimeConfig();
+    const siri = runtime.voice.siri;
+
+    try {
+      const bodyText = Buffer.concat(chunks).toString("utf-8");
+      const body = JSON.parse(bodyText) as {
+        token?: string;
+        text?: string;
+        goal?: string;
+        audioPath?: string;
+        audioBase64?: string;
+        audioFormat?: string;
+        profilePath?: string;
+        userId?: string;
+        displayName?: string;
+        threshold?: number;
+      };
+      const token = body.token ?? "";
+      const goal = (body.text ?? body.goal ?? "").trim();
+
+      const isVoiceApi = requestPath === "/voice/enroll" || requestPath === "/voice/verify";
+
+      if (!siri.enabled && !isVoiceApi) {
+        res.statusCode = 403;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: false, error: "Siri bridge disabled" }));
+        return;
+      }
+
+      const allowLocalVoiceWithoutToken =
+        isVoiceApi && isLocalRequest && process.env.OMNISTATE_LOCAL_VOICE_API_NO_TOKEN !== "0";
+
+      if ((!siri.token || token !== siri.token) && !allowLocalVoiceWithoutToken) {
+        json(401, { ok: false, error: "Invalid token" });
+        return;
+      }
+
+      if (isVoiceApi) {
+        let audioPath = (body.audioPath ?? "").trim();
+        const cleanupPaths: string[] = [];
+        const audioBase64 = (body.audioBase64 ?? "").trim();
+        let audioFormat = (body.audioFormat ?? "wav") as string;
+
+        if (!audioPath && audioBase64) {
+          const dataUrlMatch = /^data:audio\/([a-zA-Z0-9+.-]+);base64,/i.exec(audioBase64);
+          const formatFromDataUrl = (dataUrlMatch?.[1] ?? "").toLowerCase();
+          const normalizedFromDataUrl = normalizeDeclaredAudioFormat(formatFromDataUrl);
+
+          if (normalizedFromDataUrl !== "unknown") audioFormat = normalizedFromDataUrl;
+
+          const clean = audioBase64.replace(/^data:[^;]+;base64,/, "");
+          const rawAudio = Buffer.from(clean, "base64");
+
+          // Sniff raw bytes regardless of declared format to avoid wrong extension.
+          const sniffed = sniffAudioFormat(rawAudio);
+          if (sniffed !== "unknown") audioFormat = sniffed;
+
+          const ext =
+            audioFormat === "mp3"
+              ? "mp3"
+              : audioFormat === "ogg"
+                ? "ogg"
+                : audioFormat === "webm"
+                  ? "webm"
+                  : "wav";
+          const tempPath = join(tmpdir(), `omnistate-voice-${crypto.randomUUID()}.${ext}`);
+          await writeFile(tempPath, rawAudio);
+          audioPath = tempPath;
+                  cleanupPaths.push(tempPath);
+        }
+
+        if (!audioPath) {
+          json(400, { ok: false, error: "Missing audioPath" });
+          return;
+        }
+
+        const profilePath = (body.profilePath ?? `${process.env.HOME}/.omnistate/voice_profile.json`).trim();
+        const pythonBin = process.env.OMNISTATE_PYTHON || `${process.env.HOME}/.pyenv/versions/3.12.12/bin/python3`;
+
+        try {
+          const prepared = await ensureSpeechbrainCompatibleAudio(audioPath, audioFormat);
+          audioPath = prepared.finalPath;
+          cleanupPaths.push(...prepared.cleanupPaths);
+
+          if (requestPath === "/voice/enroll") {
+            const userId = (body.userId ?? "owner").trim();
+            const displayName = (body.displayName ?? userId).trim();
+            const threshold = typeof body.threshold === "number" ? body.threshold : 0.85;
+
+            const { stdout } = await execFileAsync(pythonBin, [
+              speechbrainScriptPath,
+              "enroll",
+              "--audio",
+              audioPath,
+              "--user-id",
+              userId,
+              "--display-name",
+              displayName,
+              "--profile",
+              profilePath,
+              "--threshold",
+              String(threshold),
+            ], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
+
+            try {
+              json(200, JSON.parse(stdout));
+            } catch {
+              json(200, { ok: true, output: stdout.trim() });
+            }
+            return;
+          }
+
+          const { stdout } = await execFileAsync(pythonBin, [
+            speechbrainScriptPath,
+            "verify",
+            "--audio",
+            audioPath,
+            "--profile",
+            profilePath,
+          ], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
+          try {
+            json(200, JSON.parse(stdout));
+          } catch {
+            json(200, { ok: true, output: stdout.trim() });
+          }
+          return;
+        } finally {
+          for (const path of [...new Set(cleanupPaths)]) {
+            await unlink(path).catch(() => {
+              // ignore cleanup errors
+            });
+          }
+        }
+      }
+
+      if (requestPath !== expectedPath) {
+        json(404, { ok: false, error: "Not found" });
+        return;
+      }
+
+      if (!goal) {
+        json(400, { ok: false, error: "Missing text" });
+        return;
+      }
+
+      const taskId = `siri-${crypto.randomUUID()}`;
+      this.executeTaskPipeline(taskId, goal, undefined, undefined).catch(() => {
+        // no-op: pipeline error is returned through history and server logs
+      });
+
+      json(200, { ok: true, taskId, accepted: true });
+    } catch (err) {
+      json(400, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Broadcast a message to all connected clients. */
@@ -188,6 +616,10 @@ export class OmniStateGateway {
         });
 
         if (commandResult) {
+          if (this.shouldRefreshWakeListener(msg.goal)) {
+            this.startWakeListener();
+          }
+
           const accepted: ServerMessage = {
             type: "task.accepted",
             taskId,
@@ -235,42 +667,76 @@ export class OmniStateGateway {
       case "voice.transcribe": {
         const { id, audio, format: _format } = msg;
         try {
-          // Decode base64 audio and run LOCAL transcription engines only.
+          // Decode base64 audio and run configured voice provider chain.
           const audioBuffer = Buffer.from(audio, "base64");
+          const runtime = loadLlmRuntimeConfig();
+          const voice = runtime.voice;
+
+          const dedupedProviders = [
+            voice.primaryProvider,
+            ...voice.fallbackProviders,
+          ].filter((p, i, arr) => arr.indexOf(p) === i);
+          const orderedProviders = voice.lowLatency
+            ? (["native", ...dedupedProviders.filter((p) => p !== "native")] as Array<
+                "native" | "whisper-local" | "whisper-cloud"
+              >)
+            : dedupedProviders;
 
           let transcript = "";
+          let usedProvider = "";
 
-          // Try local Whisper first
           try {
-            const localResult = await HybridAutomation.transcribeAudio(
-              audioBuffer,
-              "whisper-local",
+            // Low-latency mode races providers and takes first non-empty transcript.
+            const fastest = await Promise.any(
+              orderedProviders.map(async (provider) => {
+                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+                const text = result.text.trim();
+                if (!text) throw new Error(`empty transcript from ${provider}`);
+                return { text, provider };
+              }),
             );
-            transcript = localResult.text.trim();
+            transcript = fastest.text;
+            usedProvider = fastest.provider;
           } catch {
-            // Fallback to offline native recognizer
-            const nativeResult = await HybridAutomation.transcribeAudio(
-              audioBuffer,
-              "native",
-            );
-            transcript = nativeResult.text.trim();
+            // If race fails, retry sequentially through provider chain.
+            for (const provider of orderedProviders) {
+              try {
+                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+                const text = result.text.trim();
+                if (text) {
+                  transcript = text;
+                  usedProvider = provider;
+                  break;
+                }
+              } catch {
+                // try next provider
+              }
+            }
           }
 
           if (transcript) {
             this.safeSend(ws, { type: "voice.transcript", id, text: transcript });
 
-            // Auto-execute transcript as a task
-            const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
-            this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: transcript });
-            this.executeTaskPipeline(voiceTaskId, transcript, undefined, ws).catch(
-              (err) => {
-                this.safeSend(ws, {
-                  type: "task.error",
-                  taskId: voiceTaskId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
-            );
+            const shouldAutoExecute =
+              voice.autoExecuteTranscript &&
+              !(voice.siri.enabled && voice.siri.mode === "handoff");
+
+            if (shouldAutoExecute) {
+              const goal = usedProvider
+                ? `${transcript}`
+                : transcript;
+              const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
+              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal });
+              this.executeTaskPipeline(voiceTaskId, goal, undefined, ws).catch(
+                (err) => {
+                  this.safeSend(ws, {
+                    type: "task.error",
+                    taskId: voiceTaskId,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              );
+            }
           } else {
             this.safeSend(ws, {
               type: "voice.error",
@@ -422,6 +888,122 @@ export class OmniStateGateway {
         break;
       }
 
+      case "runtime.config.get": {
+        const config = loadLlmRuntimeConfig();
+        this.safeSend(ws, {
+          type: "runtime.config.report",
+          config,
+        } as ServerMessage);
+        break;
+      }
+
+      case "runtime.config.set": {
+        let config = loadLlmRuntimeConfig();
+        const key = msg.key;
+
+        try {
+          switch (key) {
+            case "provider":
+              config = setActiveProvider(String(msg.value));
+              break;
+            case "model":
+              config = setActiveModel(String(msg.value));
+              break;
+            case "baseURL":
+              config = updateActiveProviderField("baseURL", String(msg.value));
+              break;
+            case "apiKey":
+              config = updateActiveProviderField("apiKey", String(msg.value));
+              break;
+            case "voice.lowLatency":
+              config = setVoiceField("lowLatency", Boolean(msg.value));
+              break;
+            case "voice.autoExecuteTranscript":
+              config = setVoiceField("autoExecuteTranscript", Boolean(msg.value));
+              break;
+          }
+
+          this.safeSend(ws, {
+            type: "runtime.config.ack",
+            ok: true,
+            key,
+            message: `Updated ${key}`,
+            config,
+          } as ServerMessage);
+
+          this.safeSend(ws, {
+            type: "runtime.config.report",
+            config,
+          } as ServerMessage);
+        } catch (err) {
+          this.safeSend(ws, {
+            type: "runtime.config.ack",
+            ok: false,
+            key,
+            message: err instanceof Error ? err.message : String(err),
+            config,
+          } as ServerMessage);
+        }
+        break;
+      }
+
+      case "runtime.config.upsertProvider": {
+        const providerInput = msg.provider ?? ({} as Record<string, unknown>);
+        const providerId = String(providerInput.id ?? "").trim();
+        const providerModel = String(providerInput.model ?? "").trim();
+        const providerBaseURL = String(providerInput.baseURL ?? "").trim();
+        if (!providerId || !providerModel || !providerBaseURL) {
+          this.safeSend(ws, {
+            type: "runtime.config.ack",
+            ok: false,
+            key: "provider",
+            message: "Provider id/model/baseURL are required",
+            config: loadLlmRuntimeConfig(),
+          } as ServerMessage);
+          break;
+        }
+
+        const kindRaw = String(providerInput.kind ?? "openai-compatible");
+        const kind = kindRaw === "anthropic" ? "anthropic" : "openai-compatible";
+        const modelsRaw = Array.isArray(providerInput.models)
+          ? providerInput.models
+          : String(providerInput.models ?? "")
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean);
+
+        let config = upsertProvider({
+          id: providerId,
+          kind,
+          baseURL: providerBaseURL,
+          apiKey: String(providerInput.apiKey ?? ""),
+          model: providerModel,
+          enabled: providerInput.enabled !== false,
+          models: modelsRaw,
+        });
+
+        if (msg.addToFallback) {
+          config = addFallbackProvider(providerId);
+        }
+        if (msg.activate) {
+          config = setActiveProvider(providerId);
+        }
+
+        this.safeSend(ws, {
+          type: "runtime.config.ack",
+          ok: true,
+          key: "provider",
+          message: `Upserted provider ${providerId}`,
+          config,
+        } as ServerMessage);
+
+        this.safeSend(ws, {
+          type: "runtime.config.report",
+          config,
+        } as ServerMessage);
+        break;
+      }
+
       case "status.query": {
         const reply: ServerMessage = {
           type: "status.reply",
@@ -430,6 +1012,16 @@ export class OmniStateGateway {
           uptime: Date.now() - this.startedAt,
         };
         this.safeSend(ws, reply);
+        break;
+      }
+
+      case "admin.shutdown": {
+        const reply: ServerMessage = {
+          type: "gateway.shutdown",
+          reason: "Requested by admin",
+        };
+        this.safeSend(ws, reply);
+        setTimeout(() => this.stop(), 100);
         break;
       }
 
@@ -452,7 +1044,7 @@ export class OmniStateGateway {
     taskId: string,
     goal: string,
     _layerHint: string | undefined,
-    ws: WebSocket
+    ws?: WebSocket
   ): Promise<void> {
     const startMs = Date.now();
 
@@ -581,7 +1173,8 @@ export class OmniStateGateway {
   }
 
   /** Send message to WS only if still open. */
-  private safeSend(ws: WebSocket, msg: ServerMessage): void {
+  private safeSend(ws: WebSocket | undefined, msg: ServerMessage): void {
+    if (!ws) return;
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(JSON.stringify(msg));
     }

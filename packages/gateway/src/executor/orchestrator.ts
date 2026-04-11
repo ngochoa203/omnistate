@@ -180,8 +180,18 @@ export class Orchestrator {
         return { output };
       }
       case "app.launch": {
-        const success = await this.deep.launchApp(params.name as string);
-        return { success };
+        const name = params.name as string;
+        const success = await this.deep.launchApp(name);
+        if (success) return { success: true };
+
+        const fallbackSuccess = await this.deep.openDefaultBrowser(name);
+        return {
+          success: fallbackSuccess,
+          fallback: fallbackSuccess ? "default-browser" : "none",
+          output: fallbackSuccess
+            ? `App '${name}' not found. Opened in default browser instead.`
+            : `Unable to launch app '${name}' and fallback browser open failed.`,
+        };
       }
       case "app.activate": {
         const success = await this.deep.activateApp(params.name as string);
@@ -1145,6 +1155,14 @@ export class Orchestrator {
       );
     }
 
+    // Mouse/keyboard/accessibility actions require Accessibility permission.
+    const requiresAccessibility = tool.startsWith("ui.");
+    if (requiresAccessibility && !this.surface.isAccessibilityTrusted()) {
+      throw new Error(
+        "Accessibility permission is not granted. Enable System Settings -> Privacy & Security -> Accessibility for terminal/Node, then restart OmniState gateway."
+      );
+    }
+
     switch (tool) {
       case "screen.capture": {
         const capture = await this.surface.captureScreen();
@@ -1193,10 +1211,47 @@ export class Orchestrator {
         return {};
       }
       case "ui.click": {
-        const el = params.element as Parameters<
-          typeof this.surface.clickElement
-        >[0];
-        await this.surface.clickElement(el);
+        const button = (params.button as "left" | "right" | "middle" | undefined) ?? "left";
+        const x = params.x as number | undefined;
+        const y = params.y as number | undefined;
+
+        if (typeof x === "number" && typeof y === "number") {
+          await this.surface.moveMouse(x, y);
+          await this.surface.click(button);
+          return {};
+        }
+
+        const el = params.element as Parameters<typeof this.surface.clickElement>[0] | undefined;
+        if (el && (el as any).bounds) {
+          if (button === "left") {
+            await this.surface.clickElement(el);
+          } else {
+            const centerX = el.bounds.x + el.bounds.width / 2;
+            const centerY = el.bounds.y + el.bounds.height / 2;
+            await this.surface.moveMouse(centerX, centerY);
+            await this.surface.click(button);
+          }
+          return {};
+        }
+
+        const query = typeof params.query === "string" ? params.query.trim() : "";
+        if (query) {
+          const found = await this.surface.findElement(query);
+          if (found) {
+            if (button === "left") {
+              await this.surface.clickElement(found);
+            } else {
+              const centerX = found.bounds.x + found.bounds.width / 2;
+              const centerY = found.bounds.y + found.bounds.height / 2;
+              await this.surface.moveMouse(centerX, centerY);
+              await this.surface.click(button);
+            }
+            return {};
+          }
+          throw new Error(`ui.click target not found for query: ${query}`);
+        }
+
+        throw new Error("ui.click requires element, query, or x/y coordinates");
         return {};
       }
       case "ui.clickAt": {

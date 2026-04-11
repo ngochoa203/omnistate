@@ -93,6 +93,27 @@ function formatLlmError(err: unknown): string {
   return `LLM API error${status ? ` (${status})` : ""}: ${apiMessage}`;
 }
 
+function parseLlmJson<T>(rawInput: string): T {
+  const raw = rawInput.trim();
+
+  // Common model output: fenced JSON block
+  const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const unfenced = fenced ? fenced[1].trim() : raw;
+
+  try {
+    return JSON.parse(unfenced) as T;
+  } catch {
+    // Fallback: extract first JSON object from mixed text
+    const firstBrace = unfenced.indexOf("{");
+    const lastBrace = unfenced.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const slice = unfenced.slice(firstBrace, lastBrace + 1);
+      return JSON.parse(slice) as T;
+    }
+    throw new Error(`Invalid JSON from LLM: ${raw.slice(0, 160)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // System prompt for intent classification
 // ---------------------------------------------------------------------------
@@ -215,11 +236,11 @@ async function classifyWithLLM(
 
     const raw = response.text;
 
-    const parsed = JSON.parse(raw) as {
+    const parsed = parseLlmJson<{
       type?: string;
       confidence?: number;
       entities?: Record<string, unknown>;
-    };
+    }>(raw);
 
     const type = INTENT_TYPES.includes(parsed.type as IntentType)
       ? (parsed.type as IntentType)
@@ -312,6 +333,15 @@ const QUICK_INTENT_MAP: Record<string, { type: string; confidence: number }> = {
 // Regex patterns for common phrases
 const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b.*\b(?:zalo|telegram|discord|slack|messages|imessage)\b/i, "app-control"],
+  [/\b(?:email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i, "app-control"],
+  [/\b(?:calendar|schedule|meeting|appointment|event|lịch|lịch\s*hẹn|cuộc\s*họp)\b/i, "app-control"],
+  [/\b(?:reminder|nhắc\s*nhở|alarm|báo\s*thức|timer|hẹn\s*giờ|đếm\s*ngược)\b/i, "app-control"],
+  [/\b(?:split|tile|snap|arrange)\b.*\b(?:window|windows)\b/i, "app-control"],
+  [/\b(?:data\s*entry|nh[ậa]p\s*li[ệe]u|đi[ềe]n\s*d[ữu]\s*li[ệe]u)\b/i, "multi-step"],
+  [/\b(?:fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i, "ui-interaction"],
+  [/\b(?:password|vault|bitwarden|1password|autofill\s+password|điền\s+mật\s+khẩu)\b/i, "security-management"],
+  [/\b(?:encrypt|decrypt|lock\s*folder|unlock\s*folder|secure\s*delete|secure\s*shred|shred\s*file|mã\s*hóa|giải\s*mã|khóa\s*thư\s*mục|xóa\s*an\s*toàn)\b/i, "security-management"],
+  [/\b(?:webcam|camera|microphone|mic)\b.*\b(?:lock|unlock|block|allow|permission|quyền)\b/i, "security-management"],
   [/\b(?:wifi|wi-fi|wireless)\b/i, "network-control"],
   [/\b(?:battery|charging|power\s*level)\b/i, "power-management"],
   [/\b(?:disk|storage|space|drive)\b.*\b(?:usage|free|full|left|check)\b/i, "disk-management"],
@@ -321,17 +351,27 @@ const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:brew|homebrew|package|uninstall|upgrade)\b/i, "package-management"],
   [/\b(?:service|daemon|launchd|systemctl)\b/i, "service-management"],
   [/\b(?:network|internet|connection|bandwidth|ping|traceroute|dns)\b/i, "network-control"],
+  [/\b(?:do\s*not\s*disturb|dnd|focus\s*mode|focus\s*status|turn\s*on\s*focus|turn\s*off\s*focus|bật\s*chế\s*độ\s*tập\s*trung|tắt\s*chế\s*độ\s*tập\s*trung)\b/i, "os-config"],
   [/\b(?:thermal|temperature|fan|cooling|heat)\b/i, "thermal-management"],
   [/\b(?:memory|ram|swap|heap)\b.*\b(?:usage|leak)\b/i, "memory-management"],
   [/\b(?:screenshot|screen\s*capture|screen\s*shot)\b/i, "ui-interaction"],
+  [/\b(?:translate\s*(?:screen|this|selection|text)|dịch\s*(?:màn\s*hình|đoạn\s*này|văn\s*bản|nội\s*dung))\b/i, "ui-interaction"],
   [/\b(?:modal|popup|dialog|captcha|table|grid|accessibility|a11y|ui\s*language|screen\s*language|ocr)\b/i, "ui-interaction"],
   [/\b(?:clipboard|pasteboard|pbcopy|pbpaste)\b/i, "clipboard-management"],
   [/\b(?:display|monitor|screen|resolution|brightness)\b/i, "display-management"],
   [/\b(?:bluetooth|bt|pair|unpair)\b/i, "peripheral-management"],
   [/\b(?:docker|container|pod)\b/i, "container-management"],
   [/\b(?:firewall|security|malware)\b/i, "security-management"],
+  [/\b(?:install|uninstall|remove\s+app|startup\s*apps?|login\s*items?|brew\s+install|brew\s+uninstall|software\s*update)\b/i, "update-management"],
   [/\b(?:update|upgrade|patch)\b/i, "update-management"],
   [/\b(?:backup|time\s*machine|snapshot)\b/i, "backup-restore"],
+  [/\b(?:repair\s*(?:my\s*)?(?:network|internet)|fix\s*(?:network|internet)|flush\s*dns|renew\s*dhcp|optimi[sz]e\s*(?:system\s*)?performance|memory\s*leak|high\s*cpu|high\s*memory)\b/i, "self-healing"],
+  [/\b(?:defrag|trimforce|trim\s*ssd|ssd\s*trim|disk\s*optimization|optimi[sz]e\s*disk|lên\s*lịch\s*tối\s*ưu\s*đĩa)\b/i, "disk-cleanup"],
+  [/\b(?:summari[sz]e\s*(?:my\s*)?(?:context|workspace|work)|context\s*summary|t[oó]m\s*tắt\s*(?:ng[ữu]\s*cảnh|màn\s*hình|công\s*việc))\b/i, "system-query"],
+  [/\b(?:zip|unzip|compress|extract\s+archive|giải\s*nén|nén\s*file)\b/i, "file-operation"],
+  [/\b(?:git\s+status|git\s+add|git\s+commit|git\s+push|git\s+pull|checkout\s+branch|create\s+branch|merge\s+branch|rebase\s+branch|stash\b|commit\s+changes?)\b/i, "shell-command"],
+  [/\b(?:organize\s*(?:desktop|workspace|downloads|files)|cleanup\s*(?:desktop|workspace)|sắp\s*xếp\s*(?:màn\s*hình|desktop|thư\s*mục|workspace)|dọn\s*dẹp\s*(?:desktop|workspace))\b/i, "file-organization"],
+  [/\b(?:analy[sz]e\s*(?:error|logs?)|summari[sz]e\s*(?:error|logs?)|debug\s*log|crash\s*log|stack\s*trace|log\s*error\s*analysis|phân\s*tích\s*log\s*lỗi|t[oó]m\s*tắt\s*lỗi)\b/i, "debug-assist"],
 ];
 
 // ---------------------------------------------------------------------------
@@ -344,6 +384,36 @@ const HEURISTIC_RULES: Array<{
   entityExtractor?: (m: RegExpMatchArray) => Record<string, Entity>;
 }> = [
   {
+    pattern: /\b(email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({ app: { type: "app", value: "Mail" } }),
+  },
+  {
+    pattern: /\b(calendar|schedule|meeting|appointment|event|lịch|lịch\s*hẹn|cuộc\s*họp)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({ app: { type: "app", value: "Calendar" } }),
+  },
+  {
+    pattern: /\b(reminder|nhắc\s*nhở|alarm|báo\s*thức|timer|hẹn\s*giờ|đếm\s*ngược)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({ app: { type: "app", value: "Reminders" } }),
+  },
+  {
+    pattern: /\b(split|tile|snap|arrange)\b.{0,30}\b(window|windows)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(data\s*entry|nh[ậa]p\s*li[ệe]u|đi[ềe]n\s*d[ữu]\s*li[ệe]u)\b/i,
+    type: "multi-step",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i,
+    type: "ui-interaction",
+    entityExtractor: () => ({}),
+  },
+  {
     // Shell commands: run, execute, bash, npm, git, python, etc.
     pattern:
       /\b(run|execute|bash|sh|npm|yarn|pnpm|git|python|node|make|cargo)\b/i,
@@ -353,12 +423,27 @@ const HEURISTIC_RULES: Array<{
     }),
   },
   {
+    pattern: /\b(commit\s+changes?|push\s+changes?|pull\s+latest|create\s+branch|checkout\s+branch|merge\s+branch|rebase\s+branch|git\s+status|stash\b)\b/i,
+    type: "shell-command",
+    entityExtractor: () => ({
+      command: { type: "command", value: "git" },
+    }),
+  },
+  {
     // Bare shell commands that users might type directly
     pattern:
       /^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|whoami|hostname|pwd|uptime|date|which|env|printenv|uname|id|ifconfig|ping|traceroute|dig|nslookup)\b/i,
     type: "shell-command",
     entityExtractor: (m) => ({
       command: { type: "command", value: m.input ?? m[0] },
+    }),
+  },
+  {
+    // Dev scaffolding request should route to shell-command.
+    pattern: /\bcreate\b.*\b(project|app)\b.*\b(vite|react)\b/i,
+    type: "shell-command",
+    entityExtractor: () => ({
+      command: { type: "command", value: "scaffold-project" },
     }),
   },
   {
@@ -383,6 +468,26 @@ const HEURISTIC_RULES: Array<{
     pattern:
       /\b(message|send\s+message|chat\s+with|text\s+to|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b/i,
     type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    // Browser media intent: "open <query> on youtube" should route to browser control
+    pattern: /\bopen\s+(.+?)\s+on\s+youtube\b/i,
+    type: "app-control",
+    entityExtractor: (m) => ({
+      action: { type: "command", value: "open" },
+      app: { type: "app", value: "safari" },
+      query: { type: "text", value: m[1]?.trim() ?? "" },
+    }),
+  },
+  {
+    pattern: /\b(password|vault|bitwarden|1password|autofill\s+password|điền\s+mật\s+khẩu)\b/i,
+    type: "security-management",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(webcam|camera|microphone|mic)\b.{0,40}\b(lock|unlock|block|allow|permission|quyền)\b/i,
+    type: "security-management",
     entityExtractor: () => ({}),
   },
   {
@@ -453,6 +558,7 @@ function classifyWithHeuristics(text: string): LLMClassificationResult {
  * API key is absent or the call fails.
  */
 export async function classifyIntent(text: string): Promise<Intent> {
+  const forceUiInteraction = /\b(mouse|cursor|click|double\s*click|right\s*click|drag|drop|scroll|move\s+mouse|click\s+at|x\s*\d+\s*y\s*\d+|k[ée]o|nh[aá]p|chu[ộo]t|cu[ộo]n)\b/i.test(text);
   const strictLlm = isLlmRequired();
 
   // Quick match for single-word commands
@@ -473,6 +579,14 @@ export async function classifyIntent(text: string): Promise<Intent> {
     if (!llmResult) {
       throw new Error("LLM API is required but no classification result was returned.");
     }
+    if (forceUiInteraction && llmResult.type !== "ui-interaction") {
+      return {
+        type: "ui-interaction",
+        entities: llmResult.entities,
+        confidence: Math.max(llmResult.confidence, 0.92),
+        rawText: text,
+      };
+    }
     return {
       type: llmResult.type,
       entities: llmResult.entities,
@@ -492,6 +606,15 @@ export async function classifyIntent(text: string): Promise<Intent> {
         return { type: intentType, confidence: 0.85, entities: {}, rawText: text };
       }
     }
+  }
+
+  if (forceUiInteraction && result.type !== "ui-interaction") {
+    return {
+      type: "ui-interaction",
+      entities: result.entities,
+      confidence: Math.max(result.confidence, 0.92),
+      rawText: text,
+    };
   }
 
   return {
@@ -537,7 +660,7 @@ async function decomposeMultiStep(
 
     const raw = response.text;
 
-    const parsed = JSON.parse(raw) as { steps?: unknown[] };
+    const parsed = parseLlmJson<{ steps?: unknown[] }>(raw);
     if (!Array.isArray(parsed.steps)) return null;
 
     return parsed.steps
@@ -616,6 +739,14 @@ function verifyNode(
 // ---------------------------------------------------------------------------
 
 const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatchArray) => string) }> = [
+  {
+    pattern: /\bcreate\b.*\breact\b.*\bvite\b.*\bprojects\b/i,
+    command: 'cd "$HOME/Projects" && npm create vite@latest react-vite-app -- --template react',
+  },
+  {
+    pattern: /\bcreate\b.*\breact\b.*\bvite\b/i,
+    command: "npm create vite@latest react-vite-app -- --template react",
+  },
   { pattern: /\blist (?:all )?files?\b/i, command: "ls -la" },
   { pattern: /\blist (?:all )?director(?:y|ies)\b/i, command: "ls -d */" },
   { pattern: /\bdisk ?(?:space|usage)\b/i, command: "df -h /" },
@@ -633,6 +764,83 @@ const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatch
   { pattern: /\bip addr/i, command: "ifconfig | grep 'inet ' | grep -v 127.0.0.1" },
   { pattern: /\bdate\b.*\btime\b|\bwhat time\b|\bcurrent date\b/i, command: "date" },
   { pattern: /\bshow (?:all )?env/i, command: "env | head -30" },
+  {
+    pattern: /\b(?:unzip|extract)\b(?:\s+(?:file|archive))?\s+([a-zA-Z0-9._~\/-]+\.zip)(?:\s+(?:to|into)\s+([a-zA-Z0-9._~\/-]+))?/i,
+    command: (m) => {
+      const zipFile = (m[1] ?? "").replace(/[^a-zA-Z0-9._~\/-]/g, "");
+      const dest = (m[2] ?? "").replace(/[^a-zA-Z0-9._~\/-]/g, "");
+      return dest ? `unzip -o "${zipFile}" -d "${dest}"` : `unzip -o "${zipFile}"`;
+    },
+  },
+  {
+    pattern: /\b(?:(?<!un)zip|compress)\b(?:\s+(?:folder|directory|dir|file))?\s+([a-zA-Z0-9._~\/-]+)(?:\s+(?:to|into|as)\s+([a-zA-Z0-9._-]+(?:\.zip)?))?/i,
+    command: (m) => {
+      const source = (m[1] ?? "").replace(/[^a-zA-Z0-9._~\/-]/g, "");
+      const sourceBase = source.split("/").filter(Boolean).pop() || "archive";
+      const archiveRaw = (m[2] ?? "").replace(/[^a-zA-Z0-9._-]/g, "");
+      const archive = archiveRaw
+        ? (archiveRaw.endsWith(".zip") ? archiveRaw : `${archiveRaw}.zip`)
+        : `${sourceBase}.zip`;
+      return `zip -r "${archive}" "${source}"`;
+    },
+  },
+  { pattern: /\b(?:git\s+)?status\b/i, command: "git status --short --branch" },
+  {
+    pattern: /\bcommit\b(?:\s+all\s+changes?)?(?:.*\bmessage\s*[:=]\s*["']?([^"']+)["']?)?/i,
+    command: (m) => {
+      const msg = (m[1] ?? "update from omnistate").replace(/"/g, '\\"').trim();
+      return `git add -A && git commit -m "${msg || "update from omnistate"}"`;
+    },
+  },
+  {
+    pattern: /\b(?:git\s+)?push\b(?:\s+to\s+([a-zA-Z0-9._/-]+))?(?:\s+branch\s+([a-zA-Z0-9._/-]+))?/i,
+    command: (m) => {
+      const remote = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      const branch = (m[2] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      if (remote && branch) return `git push ${remote} ${branch}`;
+      if (branch) return `git push origin ${branch}`;
+      return "git push";
+    },
+  },
+  {
+    pattern: /\b(?:git\s+)?pull\b(?:\s+from\s+([a-zA-Z0-9._/-]+))?(?:\s+branch\s+([a-zA-Z0-9._/-]+))?/i,
+    command: (m) => {
+      const remote = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      const branch = (m[2] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      if (remote && branch) return `git pull ${remote} ${branch}`;
+      if (branch) return `git pull origin ${branch}`;
+      return "git pull --rebase";
+    },
+  },
+  {
+    pattern: /\b(?:create|new)\s+branch\s+([a-zA-Z0-9._/-]+)\b/i,
+    command: (m) => {
+      const branch = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      return `git checkout -b ${branch}`;
+    },
+  },
+  {
+    pattern: /\b(?:checkout|switch\s+to)\s+branch\s+([a-zA-Z0-9._/-]+)\b/i,
+    command: (m) => {
+      const branch = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      return `git checkout ${branch}`;
+    },
+  },
+  {
+    pattern: /\bmerge\s+branch\s+([a-zA-Z0-9._/-]+)\b/i,
+    command: (m) => {
+      const branch = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      return `git merge ${branch}`;
+    },
+  },
+  {
+    pattern: /\brebase\s+branch\s+([a-zA-Z0-9._/-]+)\b/i,
+    command: (m) => {
+      const branch = (m[1] ?? "").replace(/[^a-zA-Z0-9._/-]/g, "");
+      return `git rebase ${branch}`;
+    },
+  },
+  { pattern: /\bstash\b/i, command: "git stash push -m 'omnistate-stash'" },
 ];
 
 /**
@@ -719,8 +927,23 @@ const KNOWN_APPS = [
 function extractAppName(intent: Intent): string | null {
   const raw = intent.rawText;
 
-  // Prefer explicit "on/in/from <app>" context anywhere in the sentence.
   const contextMatch = raw.match(/\b(?:on|in|from)\s+([a-zA-Z][\w\s.-]{1,40}?)(?=\s+(?:and|then|to|for)\b|$)/i);
+  const contextCandidate = contextMatch?.[1]?.trim();
+  const contextBrowser = contextCandidate
+    ? BROWSERS.find((b) => contextCandidate.toLowerCase().includes(b))
+    : null;
+
+  // Prefer explicit app entity, except when sentence has explicit browser context
+  // like "... on safari" and entity points to a media target like "youtube".
+  const appEntity = Object.values(intent.entities).find(e => e.type === "app");
+  if (appEntity?.value) {
+    const entityLower = appEntity.value.toLowerCase();
+    const entityIsBrowser = BROWSERS.some((b) => entityLower.includes(b));
+    if (!entityIsBrowser && contextBrowser) return contextBrowser;
+    return appEntity.value;
+  }
+
+  // Prefer explicit "on/in/from <app>" context anywhere in the sentence.
   if (contextMatch?.[1]) {
     const candidate = contextMatch[1].trim();
     const candidateLower = candidate.toLowerCase();
@@ -739,10 +962,6 @@ function extractAppName(intent: Intent): string | null {
       if (candidateLower.includes(app)) return app;
     }
   }
-
-  // From entities
-  const appEntity = Object.values(intent.entities).find(e => e.type === "app");
-  if (appEntity?.value) return appEntity.value;
 
   // From "X on/in Y" pattern
   const match = intent.rawText.match(/\b(?:on|in|from)\s+(\w+)\s*$/i);
@@ -815,6 +1034,184 @@ function extractTarget(intent: Intent): string | null {
   return null;
 }
 
+interface FormField {
+  key: string;
+  value: string;
+}
+
+function extractFormFields(raw: string): FormField[] {
+  const out: FormField[] = [];
+  const re = /([\p{L}\p{N}_\s-]{2,30})\s*[:=]\s*("[^"]+"|'[^']+'|[^,;\n]+)/gu;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    const key = m[1]?.trim().toLowerCase();
+    const valueRaw = (m[2] ?? "").trim();
+    const value = valueRaw.replace(/^['\"]|['\"]$/g, "").trim();
+    if (key && value) out.push({ key, value });
+  }
+  return out;
+}
+
+function buildWebFormFillScript(intent: Intent): string | null {
+  const appRaw = extractAppName(intent);
+  const app = appRaw ? normalizeAppName(appRaw) : "Safari";
+  const isBrowser = BROWSERS.some((b) => app.toLowerCase().includes(b));
+  if (!isBrowser) return null;
+
+  const fields = extractFormFields(intent.rawText);
+  if (fields.length === 0) return null;
+
+  const payload = JSON.stringify(fields).replace(/\\/g, "\\\\").replace(/\"/g, '\\\"');
+
+  const js = [
+    "(function(){",
+    `const fields = JSON.parse(\"${payload}\");`,
+    "const inputs = Array.from(document.querySelectorAll('input, textarea, select'))",
+    "  .filter(el => el && !el.disabled && el.type !== 'hidden');",
+    "let cursor = 0;",
+    "const norm = (s) => (s || '').toLowerCase().trim();",
+    "const labelTextFor = (el) => {",
+    "  try {",
+    "    const id = el.id ? document.querySelector(`label[for=\\\"${el.id}\\\"]`) : null;",
+    "    const parent = el.closest('label');",
+    "    return norm((id && id.innerText) || (parent && parent.innerText) || '');",
+    "  } catch { return ''; }",
+    "};",
+    "const setValue = (el, value) => {",
+    "  if (!el) return false;",
+    "  try {",
+    "    el.focus();",
+    "    if (el.tagName === 'SELECT') {",
+    "      const opt = Array.from(el.options).find(o => norm(o.textContent).includes(norm(value)) || norm(o.value) === norm(value));",
+    "      if (opt) el.value = opt.value;",
+    "    } else {",
+    "      el.value = value;",
+    "    }",
+    "    el.dispatchEvent(new Event('input', { bubbles: true }));",
+    "    el.dispatchEvent(new Event('change', { bubbles: true }));",
+    "    return true;",
+    "  } catch { return false; }",
+    "};",
+    "for (const f of fields) {",
+    "  const k = norm(f.key);",
+    "  const candidates = inputs.map((el, i) => ({ el, i, score: [",
+    "    norm(el.name).includes(k) ? 5 : 0,",
+    "    norm(el.id).includes(k) ? 5 : 0,",
+    "    norm(el.placeholder).includes(k) ? 4 : 0,",
+    "    norm(el.getAttribute('aria-label')).includes(k) ? 4 : 0,",
+    "    labelTextFor(el).includes(k) ? 6 : 0,",
+    "  ].reduce((a,b) => a+b, 0) }))",
+    "  .sort((a,b) => b.score - a.score);",
+    "  const pick = candidates.find(c => c.score > 0)?.el || inputs[cursor++] || null;",
+    "  setValue(pick, f.value);",
+    "}",
+    "return true;",
+    "})();",
+  ].join("");
+
+  const safeJs = escapeAppleScriptString(js);
+  if (app === "Safari") {
+    return `tell application \"Safari\"\nactivate\nif (count of windows) = 0 then make new document\ndo JavaScript \"${safeJs}\" in current tab of front window\nend tell`;
+  }
+  const safeApp = escapeAppleScriptString(app);
+  return `tell application \"${safeApp}\"\nactivate\nexecute front window's active tab javascript \"${safeJs}\"\nend tell`;
+}
+
+function isDataEntryWorkflowText(text: string): boolean {
+  return /\b(data\s*entry|nh[ậa]p\s*li[ệe]u|đi[ềe]n\s*d[ữu]\s*li[ệe]u)\b/i.test(text);
+}
+
+function buildDataEntryWorkflowNodes(intent: Intent): StateNode[] {
+  const nodes: StateNode[] = [];
+  const appRaw = extractAppName(intent);
+  const app = appRaw ? normalizeAppName(appRaw) : null;
+  const fields = extractFormFields(intent.rawText);
+
+  if (app) {
+    nodes.push(
+      actionNode(
+        "data-entry-activate",
+        `Activate ${app}`,
+        "app.activate",
+        "deep",
+        { name: app },
+      ),
+    );
+  }
+
+  if (fields.length > 0) {
+    // Sequential keyboard data entry with explicit verify+retry for each field.
+    let prevId = app ? "data-entry-activate" : null;
+    fields.forEach((field, idx) => {
+      const typeId = `data-entry-type-${idx}`;
+      const verifyId = `data-entry-verify-${idx}`;
+      nodes.push(
+        actionNode(
+          typeId,
+          `Type ${field.key}`,
+          "ui.type",
+          "surface",
+          { text: field.value },
+          prevId ? [prevId] : [],
+        ),
+      );
+
+      nodes.push({
+        id: verifyId,
+        type: "verify",
+        layer: "surface",
+        action: {
+          description: `Verify field ${field.key}`,
+          tool: "verify.screenshot",
+          params: { field: field.key, expectedValue: field.value },
+        },
+        verify: {
+          strategy: "screenshot",
+          expected: `${field.key}:${field.value}`,
+          timeoutMs: 10000,
+        },
+        dependencies: [typeId],
+        onSuccess: null,
+        onFailure: { strategy: "retry", maxRetries: 2 },
+        estimatedDurationMs: 2500,
+        priority: "normal",
+      });
+
+      prevId = verifyId;
+      if (idx < fields.length - 1) {
+        const tabId = `data-entry-tab-${idx}`;
+        nodes.push(
+          actionNode(
+            tabId,
+            "Move to next form field",
+            "ui.key",
+            "surface",
+            { key: "Tab", modifiers: {} },
+            [prevId],
+          ),
+        );
+        prevId = tabId;
+      }
+    });
+    return nodes;
+  }
+
+  // Fallback: type a quoted payload or the raw intent text.
+  const payload = extractQuotedText(intent.rawText) ?? intent.rawText;
+  nodes.push(
+    actionNode(
+      "data-entry-type",
+      "Type provided data payload",
+      "ui.type",
+      "surface",
+      { text: payload },
+      app ? ["data-entry-activate"] : [],
+    ),
+  );
+
+  return nodes;
+}
+
 function isMessagingIntentText(text: string): boolean {
   return /\b(message|send\s+message|chat\s+with|text\s+to|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b/i.test(text);
 }
@@ -850,7 +1247,7 @@ Rules:
 
     const raw = response.text.trim();
 
-    const parsed = JSON.parse(raw) as { script?: string };
+    const parsed = parseLlmJson<{ script?: string }>(raw);
     const script = parsed.script?.trim();
     if (!script) {
       throw new Error("LLM did not return a valid AppleScript for messaging task");
@@ -874,11 +1271,176 @@ function buildAppControlScript(intent: Intent): string | null {
   const safeTarget = target ? escapeAppleScriptString(target) : null;
   const isBrowser = app ? BROWSERS.includes(app.toLowerCase()) || BROWSERS.some(b => app.toLowerCase().includes(b)) : false;
 
+  // ── Quick email compose/send (UC6.2) ──
+  if (/\b(email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i.test(text)) {
+    const toMatch = intent.rawText.match(/\bto\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i)
+      ?? intent.rawText.match(/\b(?:cho|tới)\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i);
+    const subjectMatch = intent.rawText.match(/\bsubject\s*[:=]\s*(.+?)(?=\b(?:body|content|message)\b|$)/i)
+      ?? intent.rawText.match(/\btiêu\s*đề\s*[:=]\s*(.+?)(?=\b(?:nội\s*dung|body|message)\b|$)/i);
+    const bodyMatch = intent.rawText.match(/\b(?:body|content|message|nội\s*dung)\s*[:=]\s*(.+)$/i);
+    const quoted = extractQuotedText(intent.rawText);
+    const recipient = toMatch?.[1]?.trim();
+    const subject = (subjectMatch?.[1] ?? "Quick note from OmniState").trim();
+    const body = (bodyMatch?.[1] ?? quoted ?? "Sent from OmniState automation.").trim();
+    const sendNow = /\b(send\s+now|send\b|g[iử]i\s*ngay|g[iử]i\b)\b/i.test(text);
+
+    const safeSubject = escapeAppleScriptString(subject);
+    const safeBody = escapeAppleScriptString(`${body}\n`);
+    const recipientScript = recipient
+      ? `make new to recipient at end of to recipients with properties {address:\"${escapeAppleScriptString(recipient)}\"}`
+      : "";
+    const sendScript = sendNow ? "send" : "";
+
+    return [
+      'tell application "Mail"',
+      'activate',
+      `set newMessage to make new outgoing message with properties {subject:\"${safeSubject}\", content:\"${safeBody}\", visible:true}`,
+      'tell newMessage',
+      recipientScript,
+      sendScript,
+      'end tell',
+      'end tell',
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── Calendar scheduling (UC6.3) ──
+  if (/\b(calendar|schedule|meeting|appointment|event|lịch|lịch\s*hẹn|cuộc\s*họp)\b/i.test(text)) {
+    const title = extractQuotedText(intent.rawText)
+      ?? intent.rawText.match(/\b(?:schedule|create|add|book)\s+(?:an?\s+)?(?:event|meeting)\s+(.+?)(?=\b(?:at|on|for|tomorrow|today)\b|$)/i)?.[1]?.trim()
+      ?? intent.rawText.match(/\b(?:tạo|đặt)\s*(?:lịch|cuộc\s*họp|sự\s*kiện)\s+(.+?)(?=\b(?:lúc|vào|ngày\s*mai|hôm\s*nay|trong)\b|$)/i)?.[1]?.trim()
+      ?? "OmniState Event";
+
+    const hm = intent.rawText.match(/\b(?:at|lúc|vào)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+    let hour = hm ? parseInt(hm[1], 10) : 9;
+    const minute = hm?.[2] ? parseInt(hm[2], 10) : 0;
+    const ampm = hm?.[3]?.toLowerCase();
+    if (ampm === "pm" && hour < 12) hour += 12;
+    if (ampm === "am" && hour === 12) hour = 0;
+
+    const durationMatch = intent.rawText.match(/\bfor\s+(\d{1,3})\s*(?:m|min|minutes?)\b/i)
+      ?? intent.rawText.match(/\bfor\s+(\d{1,2})\s*(?:h|hours?)\b/i)
+      ?? intent.rawText.match(/\btrong\s+(\d{1,3})\s*(?:phút|p)\b/i)
+      ?? intent.rawText.match(/\btrong\s+(\d{1,2})\s*(?:giờ|h)\b/i);
+    let durationMin = 60;
+    if (durationMatch) {
+      const v = parseInt(durationMatch[1], 10);
+      durationMin = /h|hours?|giờ/i.test(durationMatch[0]) ? v * 60 : v;
+    }
+
+    const offsetDays = /\b(tomorrow|ngày\s*mai|mai)\b/i.test(text)
+      ? 1
+      : /\b(next\s+week|tuần\s*sau)\b/i.test(text)
+        ? 7
+        : 0;
+
+    const safeTitle = escapeAppleScriptString(title);
+    return [
+      'set startDate to (current date)',
+      offsetDays > 0 ? `set day of startDate to (day of startDate) + ${offsetDays}` : '',
+      `set hours of startDate to ${Math.max(0, Math.min(23, hour))}`,
+      `set minutes of startDate to ${Math.max(0, Math.min(59, minute))}`,
+      `set endDate to startDate + ${Math.max(15, durationMin) * 60}`,
+      'tell application "Calendar"',
+      'activate',
+      'tell calendar 1',
+      `make new event with properties {summary:\"${safeTitle}\", start date:startDate, end date:endDate}`,
+      'end tell',
+      'end tell',
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── Reminder / alarm / timer (UC6.4) ──
+  if (/\b(reminder|nhắc\s*nhở|alarm|báo\s*thức|timer|hẹn\s*giờ|đếm\s*ngược)\b/i.test(text)) {
+    const title = extractQuotedText(intent.rawText)
+      ?? intent.rawText.match(/\b(?:remind|reminder|nhắc\s*nhở)\s+(?:me\s+)?(?:to\s+)?(.+?)(?=\b(?:at|in|lúc|trong|on|vào)\b|$)/i)?.[1]?.trim()
+      ?? "OmniState reminder";
+
+    const inMinutesMatch = intent.rawText.match(/\b(?:in|trong)\s*(\d{1,3})\s*(?:m|min|minutes?|phút)\b/i);
+    const inHoursMatch = intent.rawText.match(/\b(?:in|trong)\s*(\d{1,2})\s*(?:h|hours?|giờ)\b/i);
+    const hm = intent.rawText.match(/\b(?:at|lúc|vào)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+
+    if (/\b(timer|đếm\s*ngược)\b/i.test(text)) {
+      const delaySeconds = inMinutesMatch
+        ? parseInt(inMinutesMatch[1], 10) * 60
+        : inHoursMatch
+          ? parseInt(inHoursMatch[1], 10) * 3600
+          : 300;
+      const notifyMsg = escapeAppleScriptString(title);
+      return [
+        `do shell script \"nohup /bin/sh -c 'sleep ${Math.max(5, delaySeconds)}; osascript -e \\\"display notification \\\\\\\"${notifyMsg}\\\\\\\" with title \\\\\\\"OmniState Timer\\\\\\\"\\\"; afplay /System/Library/Sounds/Glass.aiff' >/dev/null 2>&1 &\"`,
+        'display notification "Timer started" with title "OmniState"',
+      ].join("\n");
+    }
+
+    let hour = hm ? parseInt(hm[1], 10) : 9;
+    const minute = hm?.[2] ? parseInt(hm[2], 10) : 0;
+    const ampm = hm?.[3]?.toLowerCase();
+    if (ampm === "pm" && hour < 12) hour += 12;
+    if (ampm === "am" && hour === 12) hour = 0;
+    const offsetSec = inMinutesMatch
+      ? parseInt(inMinutesMatch[1], 10) * 60
+      : inHoursMatch
+        ? parseInt(inHoursMatch[1], 10) * 3600
+        : 0;
+
+    const safeTitle = escapeAppleScriptString(title);
+    return [
+      'set dueDate to (current date)',
+      offsetSec > 0 ? `set dueDate to dueDate + ${offsetSec}` : '',
+      offsetSec === 0 ? `set hours of dueDate to ${Math.max(0, Math.min(23, hour))}` : '',
+      offsetSec === 0 ? `set minutes of dueDate to ${Math.max(0, Math.min(59, minute))}` : '',
+      'tell application "Reminders"',
+      'activate',
+      'tell list "Reminders"',
+      `set r to make new reminder with properties {name:\"${safeTitle}\"}`,
+      'set due date of r to dueDate',
+      'end tell',
+      'end tell',
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── Auto-fill web form ──
+  if (/\b(fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i.test(text)) {
+    const formScript = buildWebFormFillScript(intent);
+    if (formScript) return formScript;
+  }
+
+  // ── Browser history/cache management (UC4.7) ──
+  if (/\b(clear|delete|x[oó]a|d[ọo]n)\b.*\b(history|cache|cookies|browsing data)\b/i.test(text) && isBrowser && app) {
+    if (app === "Safari") {
+      return [
+        'tell application "Safari" to activate',
+        'tell application "System Events"',
+        'tell process "Safari"',
+        'click menu item "Clear History..." of menu "History" of menu bar 1',
+        'delay 0.2',
+        'keystroke return',
+        'end tell',
+        'end tell',
+      ].join("\n");
+    }
+
+    const safeBrowser = escapeAppleScriptString(app);
+    return [
+      `tell application "${safeBrowser}" to activate`,
+      'tell application "System Events" to key code 51 using {command down, shift down}',
+    ].join("\n");
+  }
+
+  if (/\b(open|show|view)\b.*\b(history)\b/i.test(text) && isBrowser && app) {
+    const safeBrowser = escapeAppleScriptString(app);
+    return [
+      `tell application "${safeBrowser}" to activate`,
+      'tell application "System Events" to keystroke "y" using {command down}',
+    ].join("\n");
+  }
+
   // ── Browser + YouTube search flow ──
   // Example: "open youtube on safari and play video first in search '...'
   if (isBrowser && /\byoutube\b/i.test(text)) {
     const searchMatch = intent.rawText.match(/\bsearch\s+["'“”]?(.+?)["'“”]?$/i);
-    const query = searchMatch?.[1]?.trim();
+    const openOnYoutubeMatch = intent.rawText.match(/\bopen\s+(.+?)\s+on\s+youtube\b/i);
+    const query = searchMatch?.[1]?.trim() ?? openOnYoutubeMatch?.[1]?.trim();
     const url = query
       ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
       : "https://www.youtube.com";
@@ -958,6 +1520,12 @@ function buildAppControlScript(intent: Intent): string | null {
     return `tell application "System Events" to set miniaturized of front window of process "${safeApp}" to true`;
   }
 
+  // ── Split/tile window left/right ──
+  if (/\b(split|tile|snap|arrange)\b/i.test(text) && /\b(left|right)\b/i.test(text)) {
+    const sideKey = /\bleft\b/i.test(text) ? "left arrow" : "right arrow";
+    return `tell application "System Events" to keystroke ${sideKey} using {control down, option down, command down}`;
+  }
+
   // ── Volume ──
   if (/\bvolume\s*(up|down)\b/i.test(text)) {
     const dir = /\bup\b/i.test(text) ? "output volume of (get volume settings) + 10" : "output volume of (get volume settings) - 10";
@@ -973,6 +1541,24 @@ function buildAppControlScript(intent: Intent): string | null {
  */
 function buildKeyboardAction(intent: Intent): Record<string, unknown> | null {
   const text = intent.rawText.toLowerCase();
+
+  // Bookmark current page (UC4.6)
+  if (/\b(bookmark|save\s+page|lưu\s+trang\s+dấu|d[ấa]u\s+trang)\b/i.test(text)) {
+    return { key: "d", modifiers: { meta: true } };
+  }
+
+  // Open bookmarks view/manager (UC4.6)
+  if (/\b(open|show|view)\b.*\b(bookmark|bookmarks)\b/i.test(text)) {
+    return { key: "b", modifiers: { meta: true, shift: true } };
+  }
+
+  // History/cache management (UC4.7)
+  if (/\b(open|show|view)\b.*\b(history)\b/i.test(text)) {
+    return { key: "y", modifiers: { meta: true } };
+  }
+  if (/\b(clear|delete|x[oó]a|d[ọo]n)\b.*\b(history|cache|cookies|browsing data)\b/i.test(text)) {
+    return { key: "backspace", modifiers: { meta: true, shift: true } };
+  }
 
   // Refresh → Cmd+R
   if (/\b(refresh|reload)\b/i.test(text)) {
@@ -1002,6 +1588,14 @@ function buildKeyboardAction(intent: Intent): Record<string, unknown> | null {
   // Full screen → Ctrl+Cmd+F
   if (/\bfull ?screen\b/i.test(text)) {
     return { key: "f", modifiers: { meta: true, control: true } };
+  }
+
+  // Split/tile window left/right → Ctrl+Option+Cmd+Arrow
+  if (/\b(split|tile|snap|arrange)\b/i.test(text) && /\bleft\b/i.test(text)) {
+    return { key: "left", modifiers: { meta: true, control: true, alt: true } };
+  }
+  if (/\b(split|tile|snap|arrange)\b/i.test(text) && /\bright\b/i.test(text)) {
+    return { key: "right", modifiers: { meta: true, control: true, alt: true } };
   }
 
   // Pause/play media → Space (for video players in browser)
@@ -1034,6 +1628,46 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
   switch (type) {
     // ── Network ─────────────────────────────────────────────────────────
     case "network-control": {
+      if (/airplane/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "networksetup -setairportpower en0 off && if command -v blueutil >/dev/null 2>&1; then blueutil --power 0; else echo 'Install blueutil to toggle Bluetooth from CLI'; fi && echo 'Airplane-like mode applied (Wi-Fi off, Bluetooth off if available). '",
+          },
+        };
+      }
+
+      if (/(turn\s*on|enable|bật).*(wifi|wi-fi|wireless)/.test(text)) {
+        return { name: "shell.exec", params: { command: "networksetup -setairportpower en0 on && networksetup -getairportpower en0" } };
+      }
+      if (/(turn\s*off|disable|tắt).*(wifi|wi-fi|wireless)/.test(text)) {
+        return { name: "shell.exec", params: { command: "networksetup -setairportpower en0 off && networksetup -getairportpower en0" } };
+      }
+
+      if (/(connect|join|kết\s*nối).*(wifi|wi-fi|wireless)/.test(text)) {
+        const ssidMatch = intent.rawText.match(/\b(?:ssid|wifi|network)\s*[:=]\s*['\"]?([^'\"]+)['\"]?/i)
+          ?? intent.rawText.match(/\b(?:to|vào)\s+['\"]([^'\"]+)['\"]/i);
+        const passMatch = intent.rawText.match(/\b(?:password|pass|mật\s*khẩu)\s*[:=]\s*['\"]?([^'\"]+)['\"]?/i);
+        const ssid = ssidMatch?.[1]?.trim();
+        const password = passMatch?.[1]?.trim();
+
+        if (ssid) {
+          const escapedSsid = ssid.replace(/"/g, '\\"');
+          const escapedPass = (password ?? "").replace(/"/g, '\\"');
+          const command = password
+            ? `networksetup -setairportnetwork en0 \"${escapedSsid}\" \"${escapedPass}\" && echo 'Connected to ${escapedSsid}'`
+            : `networksetup -setairportnetwork en0 \"${escapedSsid}\" && echo 'Connected to ${escapedSsid}'`;
+          return { name: "shell.exec", params: { command } };
+        }
+
+        return { name: "shell.exec", params: { command: "echo 'Specify SSID with: wifi: <name> (and optional password).'; networksetup -listpreferredwirelessnetworks en0 2>/dev/null | head -20" } };
+      }
+
+      if (/(disconnect|ngắt\s*kết\s*nối).*(wifi|wi-fi|wireless)/.test(text)) {
+        return { name: "shell.exec", params: { command: "networksetup -setairportpower en0 off && sleep 1 && networksetup -setairportpower en0 on && echo 'Wi-Fi disconnected/recycled.'" } };
+      }
+
       if (/wifi|wi-fi|wireless|ssid/.test(text)) return { name: "network.wifi", params: {} };
       if (/ping\b/.test(text)) {
         const hostMatch = text.match(/ping\s+(\S+)/);
@@ -1084,20 +1718,58 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Package management ──────────────────────────────────────────────
     case "package-management": {
+      if (/startup\s*apps?|login\s*items?/.test(text)) {
+        if (/list|show/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "osascript -e 'tell application \"System Events\" to get name of every login item' && echo '---' && ls ~/Library/LaunchAgents 2>/dev/null | head -30",
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "open 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension' && echo 'Open Login Items settings for startup app management.'",
+          },
+        };
+      }
+
       if (/list|installed|show/.test(text)) return { name: "package.list", params: {} };
       if (/search\b/.test(text)) {
         const q = text.match(/search\s+(\S+)/);
         const query = sanitizeToken(q?.[1], SAFE_NAME_PATTERN) ?? "";
         return { name: "package.search", params: { query } };
       }
-      if (/install\b/.test(text)) {
+      if (/\binstall\b/.test(text)) {
         const pkg = text.match(/install\s+(\S+)/);
         const name = sanitizeToken(pkg?.[1], SAFE_NAME_PATTERN) ?? "";
+        if (/(brew|cask|homebrew)/.test(text) && name) {
+          const normalizedName = name === "vscode" ? "visual-studio-code" : name;
+          const asCask = /cask|chrome|firefox|slack|notion|docker|visual-studio-code/.test(text + " " + normalizedName);
+          return {
+            name: "shell.exec",
+            params: {
+              command: asCask ? `brew install --cask ${normalizedName}` : `brew install ${normalizedName}`,
+            },
+          };
+        }
         return { name: "package.install", params: { name } };
       }
-      if (/(?:remove|uninstall)\b/.test(text)) {
+      if (/\b(?:remove|uninstall)\b/.test(text)) {
         const pkg = text.match(/(?:remove|uninstall)\s+(\S+)/);
         const name = sanitizeToken(pkg?.[1], SAFE_NAME_PATTERN) ?? "";
+        if (name && /clean|leftover|residue|gỡ\s*cài\s*đặt|xóa\s*sạch/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                `brew uninstall --zap --cask ${name} 2>/dev/null || brew uninstall ${name} 2>/dev/null || true; rm -rf ~/Library/Application\\ Support/${name} ~/Library/Preferences/*${name}* 2>/dev/null || true; echo 'Uninstall cleanup attempted for ${name}'`,
+            },
+          };
+        }
         return { name: "package.remove", params: { name } };
       }
       if (/upgrade\s+all/.test(text)) return { name: "package.upgradeAll", params: {} };
@@ -1155,6 +1827,27 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Disk cleanup ────────────────────────────────────────────────────
     case "disk-cleanup": {
+      if (/defrag|trimforce|trim\s*ssd|ssd\s*trim|optimi[sz]e\s*disk/.test(text)) {
+        if (/schedule|weekly|daily|cron|lên\s*lịch/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "(crontab -l 2>/dev/null; echo '0 3 * * 0 /usr/sbin/diskutil verifyVolume / >/tmp/omnistate-disk-verify.log 2>&1') | crontab - && echo 'Scheduled weekly disk verify at 03:00 Sunday.'",
+            },
+          };
+        }
+        if (/enable|bật/.test(text) && /trim/.test(text)) {
+          return { name: "shell.exec", params: { command: "sudo trimforce enable" } };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "echo 'Checking APFS/SSD TRIM status and disk health...' && system_profiler SPNVMeDataType SPSerialATADataType 2>/dev/null | grep -i TRIM -A1 && echo '---' && diskutil verifyVolume /",
+          },
+        };
+      }
       return { name: "health.diskRescue", params: {} };
     }
 
@@ -1178,6 +1871,36 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Display management ──────────────────────────────────────────────
     case "display-management": {
+      if (/switch|external|monitor|display\s*mode|mirror|extend/.test(text)) {
+        if (/mirror/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "if command -v displayplacer >/dev/null 2>&1; then displayplacer list && echo 'Use displayplacer profile for mirroring.'; else open 'x-apple.systempreferences:com.apple.Displays-Settings.extension' && echo 'displayplacer not installed: opening Displays settings for mirror mode.'; fi",
+            },
+          };
+        }
+
+        if (/extend/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "if command -v displayplacer >/dev/null 2>&1; then displayplacer list && echo 'Use displayplacer profile for extended desktop.'; else open 'x-apple.systempreferences:com.apple.Displays-Settings.extension' && echo 'displayplacer not installed: opening Displays settings for extend mode.'; fi",
+            },
+          };
+        }
+
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "open 'x-apple.systempreferences:com.apple.Displays-Settings.extension' && echo 'Use Displays settings or displayplacer profile to switch physical displays.'",
+          },
+        };
+      }
+
       if (/brightness/.test(text)) {
         const levelMatch = text.match(/(\d+)/);
         if (levelMatch) return { name: "display.brightness", params: { level: parseInt(levelMatch[1]) } };
@@ -1189,6 +1912,33 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Container management ────────────────────────────────────────────
     case "container-management": {
+      if (/(docker\s*compose|compose\s*up|start\s*compose)/.test(text)) {
+        return { name: "shell.exec", params: { command: "docker compose up -d" } };
+      }
+      if (/(compose\s*down|stop\s*compose)/.test(text)) {
+        return { name: "shell.exec", params: { command: "docker compose down" } };
+      }
+      if (/(compose\s*restart|restart\s*compose)/.test(text)) {
+        return { name: "shell.exec", params: { command: "docker compose restart" } };
+      }
+      if (/(create|setup|init).*(venv|virtual\s*env|python\s*env)/.test(text)) {
+        const dirMatch = intent.rawText.match(/(?:in|at|path)\s+([~/\w./-]+)/i);
+        const targetDir = (dirMatch?.[1] ?? ".").replace(/"/g, '\\"');
+        return {
+          name: "shell.exec",
+          params: {
+            command: `cd "${targetDir}" && python3 -m venv .venv && echo 'Virtual environment created at ${targetDir}/.venv'`,
+          },
+        };
+      }
+      if (/(activate|use).*(venv|virtual\s*env|python\s*env)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command: "if [ -f .venv/bin/activate ]; then source .venv/bin/activate && python --version; else echo '.venv not found in current directory'; fi",
+          },
+        };
+      }
       if (/list|running|ps/.test(text)) return { name: "shell.exec", params: { command: "docker ps" } };
       if (/image/.test(text)) return { name: "shell.exec", params: { command: "docker images" } };
       if (/stop\b/.test(text)) {
@@ -1202,6 +1952,142 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
     // ── Security management ─────────────────────────────────────────────
     case "security-management": {
       if (/firewall/.test(text)) return { name: "network.firewall", params: {} };
+
+      // UC9.3: webcam/microphone privacy permission control
+      if (/(camera|webcam|microphone|mic)/.test(text)) {
+        if (/(lock|block|disable|revoke|deny|off|kh[oó]a|ch[ặa]n|t[ắa]t)/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "tccutil reset Camera && tccutil reset Microphone && echo 'Camera/Microphone permissions reset. Apps must request permission again.'",
+            },
+          };
+        }
+        if (/(unlock|allow|enable|on|m[ởo])/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera' && open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'",
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "sqlite3 \"$HOME/Library/Application Support/com.apple.TCC/TCC.db\" \"select service,client,auth_value from access where service in ('kTCCServiceCamera','kTCCServiceMicrophone') order by service,client limit 60;\"",
+          },
+        };
+      }
+
+      // UC10.3: password vault / autofill via CLI tools
+      if (/(password|vault|bitwarden|1password|autofill\s+password|điền\s*mật\s*khẩu)/.test(text)) {
+        const itemMatch = text.match(/(?:for|item|entry|cho)\s+['\"]?([^'\"]+)['\"]?/i);
+        const item = (itemMatch?.[1] ?? "").trim();
+        const safeItem = item.replace(/[^a-zA-Z0-9 _.:@+-]/g, "").trim();
+
+        if (/(bitwarden|\bbw\b)/.test(text)) {
+          if (safeItem) {
+            return {
+              name: "shell.exec",
+              params: {
+                command: `bw get password \"${safeItem}\" | pbcopy && echo 'Password copied to clipboard from Bitwarden item: ${safeItem}'`,
+              },
+            };
+          }
+          return {
+            name: "shell.exec",
+            params: { command: "bw list items | head -20" },
+          };
+        }
+
+        if (/(1password|\bop\b)/.test(text)) {
+          if (safeItem) {
+            return {
+              name: "shell.exec",
+              params: {
+                command: `op item get \"${safeItem}\" --fields password | pbcopy && echo 'Password copied to clipboard from 1Password item: ${safeItem}'`,
+              },
+            };
+          }
+          return {
+            name: "shell.exec",
+            params: { command: "op item list | head -20" },
+          };
+        }
+
+        return {
+          name: "shell.exec",
+          params: {
+            command: "echo 'Specify vault provider and item name, e.g. bitwarden for github or 1password for aws'",
+          },
+        };
+      }
+
+      // UC10.4: folder encryption/decryption + secure shred
+      if (/(encrypt|decrypt|lock\s*folder|unlock\s*folder|mã\s*hóa|giải\s*mã|khóa\s*thư\s*mục|mở\s*khóa\s*thư\s*mục)/.test(text)) {
+        const pathMatch = intent.rawText.match(/(?:folder|dir|directory|thư\s*mục|path)\s*[:=]?\s*["']?([^"'\n]+)["']?/i);
+        const folder = (pathMatch?.[1] ?? "").trim().replace(/"/g, '\\"');
+
+        if (/decrypt|unlock|giải\s*mã|mở\s*khóa/.test(text)) {
+          if (folder) {
+            return {
+              name: "shell.exec",
+              params: {
+                command: `hdiutil attach "${folder}" && echo 'Mounted encrypted volume: ${folder}'`,
+              },
+            };
+          }
+          return {
+            name: "shell.exec",
+            params: {
+              command: "echo 'Provide encrypted dmg path, e.g. unlock folder path: ~/Secure/Docs.dmg'",
+            },
+          };
+        }
+
+        if (folder) {
+          const base = folder.split("/").filter(Boolean).pop() || "secure-data";
+          const dmg = `${base}.encrypted.dmg`;
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                `echo 'You will be prompted for encryption password'; hdiutil create -encryption -stdinpass -srcfolder "${folder}" "${dmg}"`,
+            },
+          };
+        }
+
+        return {
+          name: "shell.exec",
+          params: {
+            command: "echo 'Provide folder path to encrypt, e.g. encrypt folder path: ~/Documents/Secret'",
+          },
+        };
+      }
+
+      if (/(secure\s*delete|secure\s*shred|shred\s*file|xóa\s*an\s*toàn)/.test(text)) {
+        const targetMatch = intent.rawText.match(/(?:file|folder|path|tệp|thư\s*mục)\s*[:=]?\s*["']?([^"'\n]+)["']?/i);
+        const target = (targetMatch?.[1] ?? "").trim().replace(/"/g, '\\"');
+        if (target) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                `if command -v srm >/dev/null 2>&1; then srm -vz "${target}"; else rm -P "${target}" 2>/dev/null || rm -rf "${target}"; fi && echo 'Secure delete attempted for ${target}'`,
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command: "echo 'Provide file/folder path for secure delete, e.g. secure shred file path: ~/Desktop/secret.txt'",
+          },
+        };
+      }
+
       if (/cert/.test(text)) return { name: "shell.exec", params: { command: "security find-certificate -a /Library/Keychains/System.keychain | grep 'labl' | head -20" } };
       return { name: "shell.exec", params: { command: "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate" } };
     }
@@ -1213,6 +2099,43 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Peripheral management ───────────────────────────────────────────
     case "peripheral-management": {
+      if (/(safe\s*eject|eject\s*(usb|drive|disk)|unmount\s*(usb|drive|disk)|th[aá]o\s*(usb|ổ\s*cứng))/i.test(text)) {
+        const diskMatch = intent.rawText.match(/(?:disk|drive|usb)\s*[:=]?\s*(disk\d+)/i);
+        const diskId = (diskMatch?.[1] ?? "").toLowerCase();
+        if (diskId) {
+          return {
+            name: "shell.exec",
+            params: {
+              command: `diskutil unmountDisk /dev/${diskId} && echo 'Safely ejected /dev/${diskId}'`,
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command: "diskutil list external && echo 'Specify target disk like: safe eject disk: disk2'",
+          },
+        };
+      }
+
+      if (/(turn\s*on|enable|bật).*(bluetooth|bt)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "if command -v blueutil >/dev/null 2>&1; then blueutil --power 1 && echo 'Bluetooth enabled'; else open 'x-apple.systempreferences:com.apple.BluetoothSettings' && echo 'Install blueutil for CLI toggle.'; fi",
+          },
+        };
+      }
+      if (/(turn\s*off|disable|tắt).*(bluetooth|bt)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "if command -v blueutil >/dev/null 2>&1; then blueutil --power 0 && echo 'Bluetooth disabled'; else open 'x-apple.systempreferences:com.apple.BluetoothSettings' && echo 'Install blueutil for CLI toggle.'; fi",
+          },
+        };
+      }
       if (/bluetooth|bt/.test(text)) return { name: "shell.exec", params: { command: "system_profiler SPBluetoothDataType 2>/dev/null | head -30" } };
       if (/usb/.test(text)) return { name: "shell.exec", params: { command: "system_profiler SPUSBDataType | head -40" } };
       return { name: "shell.exec", params: { command: "system_profiler SPBluetoothDataType SPUSBDataType 2>/dev/null | head -40" } };
@@ -1226,6 +2149,27 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Printer management ─────────────────────────────────────────────
     case "printer-management": {
+      if (/(scanner|scan|máy\s*quét)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command: "system_profiler SPPrintersDataType | sed -n '1,120p' && echo 'Use Image Capture/ICA-compatible tools for scan operations.'",
+          },
+        };
+      }
+      if (/(cancel|clear).*(print|job|queue)/.test(text)) {
+        return { name: "shell.exec", params: { command: "cancel -a && lpstat -o" } };
+      }
+      if (/(print\s*queue|jobs?)/.test(text)) {
+        return { name: "shell.exec", params: { command: "lpstat -o" } };
+      }
+      if (/(set|switch).*(default\s*printer|printer\s*default)/.test(text)) {
+        const pMatch = intent.rawText.match(/(?:printer|to)\s*[:=]?\s*['\"]?([a-zA-Z0-9._ -]+)['\"]?/i);
+        const printer = (pMatch?.[1] ?? "").trim().replace(/"/g, '\\"');
+        if (printer) {
+          return { name: "shell.exec", params: { command: `lpoptions -d "${printer}" && lpstat -d` } };
+        }
+      }
       if (/default/.test(text)) return { name: "shell.exec", params: { command: "lpstat -d" } };
       return { name: "shell.exec", params: { command: "lpstat -p -d" } };
     }
@@ -1239,6 +2183,33 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
     // ── OS config ───────────────────────────────────────────────────────
     case "os-config": {
       if (/dark\s*mode/.test(text)) return { name: "os.darkMode", params: {} };
+      if (/(do\s*not\s*disturb|\bdnd\b|focus\s*mode|chế\s*độ\s*tập\s*trung)/.test(text)) {
+        if (/(turn\s*on|enable|bật)/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "shortcuts run 'Turn On Do Not Disturb' 2>/dev/null || open 'x-apple.systempreferences:com.apple.Focus-Settings.extension' && echo 'Requested Focus/DND ON (opened settings if shortcut unavailable). '",
+            },
+          };
+        }
+        if (/(turn\s*off|disable|tắt)/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "shortcuts run 'Turn Off Do Not Disturb' 2>/dev/null || open 'x-apple.systempreferences:com.apple.Focus-Settings.extension' && echo 'Requested Focus/DND OFF (opened settings if shortcut unavailable). '",
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "defaults -currentHost read com.apple.controlcenter FocusModes 2>/dev/null || echo 'Focus status unavailable via defaults; open settings for details.'",
+          },
+        };
+      }
       if (/dns/.test(text)) return { name: "os.dns", params: {} };
       if (/proxy/.test(text)) return { name: "os.proxy", params: {} };
       return { name: "system.info", params: {} };
@@ -1264,6 +2235,26 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Self-healing ────────────────────────────────────────────────────
     case "self-healing": {
+      if (/repair\s*(?:my\s*)?(?:network|internet)|fix\s*(?:network|internet)|flush\s*dns|renew\s*dhcp/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "echo 'Running automatic network repair...' && networksetup -setairportpower en0 off && sleep 1 && networksetup -setairportpower en0 on && dscacheutil -flushcache && sudo killall -HUP mDNSResponder 2>/dev/null || true && ipconfig set en0 DHCP && ping -c 2 8.8.8.8",
+          },
+        };
+      }
+
+      if (/optimi[sz]e\s*(?:system\s*)?performance|memory\s*leak|high\s*cpu|high\s*memory/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "echo 'Collecting performance diagnostics...' && top -l 1 -o cpu | head -20 && echo '---' && vm_stat && echo '---' && ps aux --sort=-%mem | head -20 && echo '---' && memory_pressure",
+          },
+        };
+      }
+
       if (/network|dns|internet|connect/.test(text)) return { name: "health.networkDiagnose", params: {} };
       if (/fsck|filesystem|file\s*system|integrity|chkdsk/.test(text)) {
         return { name: "health.filesystem", params: { volume: "/", autoRepair: false } };
@@ -1292,6 +2283,66 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Update management ───────────────────────────────────────────────
     case "update-management": {
+      if (/install|cask|brew\s+install/.test(text)) {
+        const pkgMatch = intent.rawText.match(/(?:install|cài\s*đặt)\s+([a-zA-Z0-9@._+-]+)/i)
+          ?? intent.rawText.match(/\b(?:app|package|gói)\s*[:=]\s*([a-zA-Z0-9@._+-]+)/i);
+        const pkg = (pkgMatch?.[1] ?? "").trim();
+        if (pkg) {
+          const asCask = /(chrome|firefox|slack|notion|visual\s*studio\s*code|vscode|docker)/i.test(pkg);
+          const normalizedPkg = pkg.toLowerCase() === "vscode" ? "visual-studio-code" : pkg;
+          return {
+            name: "shell.exec",
+            params: { command: asCask ? `brew install --cask ${normalizedPkg}` : `brew install ${normalizedPkg}` },
+          };
+        }
+        return { name: "shell.exec", params: { command: "brew search | head -30" } };
+      }
+
+      if (/uninstall|remove\s+app|gỡ\s*cài\s*đặt|brew\s+uninstall/.test(text)) {
+        const pkgMatch = intent.rawText.match(/(?:uninstall|remove|gỡ\s*cài\s*đặt)\s+([a-zA-Z0-9@._+-]+)/i)
+          ?? intent.rawText.match(/\b(?:app|package|gói)\s*[:=]\s*([a-zA-Z0-9@._+-]+)/i);
+        const pkg = (pkgMatch?.[1] ?? "").trim();
+        if (pkg) {
+          const normalizedPkg = pkg.toLowerCase() === "vscode" ? "visual-studio-code" : pkg;
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                `brew uninstall --zap --cask ${normalizedPkg} 2>/dev/null || brew uninstall ${normalizedPkg} 2>/dev/null || true; rm -rf ~/Library/Application\\ Support/${normalizedPkg} ~/Library/Preferences/*${normalizedPkg}* 2>/dev/null || true; echo 'Uninstall cleanup attempted for ${normalizedPkg}'`,
+            },
+          };
+        }
+        return { name: "shell.exec", params: { command: "brew list --cask && echo '---' && brew list --formula" } };
+      }
+
+      if (/startup\s*apps?|login\s*items?|launch\s*at\s*startup/.test(text)) {
+        if (/list|show/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: {
+              command:
+                "osascript -e 'tell application \"System Events\" to get name of every login item' && echo '---' && ls ~/Library/LaunchAgents 2>/dev/null | head -30",
+            },
+          };
+        }
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "open 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension' && echo 'Open Login Items settings for startup app management.'",
+          },
+        };
+      }
+
+      if (/update|upgrade|patch|software\s*update/.test(text)) {
+        if (/all|everything|toàn\s*bộ/.test(text)) {
+          return {
+            name: "shell.exec",
+            params: { command: "softwareupdate -l && echo '---' && brew update && brew upgrade" },
+          };
+        }
+      }
+
       if (/brew/.test(text)) return { name: "shell.exec", params: { command: "brew outdated" } };
       return { name: "shell.exec", params: { command: "softwareupdate -l 2>&1 | head -20" } };
     }
@@ -1327,9 +2378,30 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
       return { name: "hybrid.templates", params: {} };
     }
     case "file-organization": {
-      return { name: "hybrid.organizeFiles", params: { dirPath: process.cwd() } };
+      if (/desktop/.test(text)) {
+        return {
+          name: "hybrid.organizeFiles",
+          params: { dirPath: `${process.env.HOME ?? "~"}/Desktop`, strategy: "group-by-extension" },
+        };
+      }
+      if (/downloads?/.test(text)) {
+        return {
+          name: "hybrid.organizeFiles",
+          params: { dirPath: `${process.env.HOME ?? "~"}/Downloads`, strategy: "group-by-date" },
+        };
+      }
+      return { name: "hybrid.organizeFiles", params: { dirPath: process.cwd(), strategy: "smart-workspace" } };
     }
     case "debug-assist": {
+      if (/(log|error|crash|stack\s*trace|traceback|summari[sz]e\s*logs?|analy[sz]e\s*logs?)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "echo '=== Recent Errors (24h) ===' && log show --last 24h --predicate 'eventMessage CONTAINS[c] \"error\" OR eventMessage CONTAINS[c] \"exception\" OR eventMessage CONTAINS[c] \"crash\"' --style compact 2>/dev/null | head -80 && echo '---' && echo '=== Error Summary ===' && log show --last 24h --style compact 2>/dev/null | grep -Ei 'error|exception|crash' | awk '{print tolower($0)}' | sed -E 's/.*(error|exception|crash).*/\\1/' | sort | uniq -c | sort -nr | head -10",
+          },
+        };
+      }
       return { name: "hybrid.analyzeError", params: { error: { message: intent.rawText } } };
     }
     case "compliance-check": {
@@ -1531,6 +2603,44 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     case "ui-interaction": {
       const raw = intent.rawText;
       const coords = extractCoordinatePairs(intent.rawText);
+
+      if (/\b(translate\s*(?:screen|this|selection|text)|dịch\s*(?:màn\s*hình|đoạn\s*này|văn\s*bản|nội\s*dung))\b/i.test(raw)) {
+        nodes.push(
+          actionNode(
+            "interact",
+            raw,
+            "shell.exec",
+            "deep",
+            {
+              command:
+                "TMP_IMG=/tmp/omnistate-screen-translate.png; screencapture -x \"$TMP_IMG\" && if command -v tesseract >/dev/null 2>&1; then OCR_TEXT=$(tesseract \"$TMP_IMG\" stdout 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | cut -c1-400); URL=\"https://translate.google.com/?sl=auto&tl=vi&text=$(python3 - <<'PY'\nimport os, urllib.parse\nprint(urllib.parse.quote(os.environ.get('OCR_TEXT','')))\nPY\n)&op=translate\"; open \"$URL\"; echo \"Opened translation overlay in browser\"; else echo 'Install tesseract first: brew install tesseract'; fi",
+              entities: intent.entities,
+            },
+          ),
+        );
+        break;
+      }
+
+      if (/\b(fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i.test(raw)) {
+        const script = buildWebFormFillScript(intent);
+        if (script) {
+          nodes.push(
+            actionNode(
+              "interact",
+              raw,
+              "app.script",
+              "deep",
+              { script, entities: intent.entities },
+            ),
+          );
+          break;
+        }
+      }
+
+      if (isDataEntryWorkflowText(raw)) {
+        nodes.push(...buildDataEntryWorkflowNodes(intent));
+        break;
+      }
 
       if (/\b(modal|popup|dialog)\b/i.test(raw)) {
         if (/\b(dismiss|close|cancel|escape)\b/i.test(raw)) {
@@ -1753,7 +2863,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           intent.rawText,
           "ui.click",
           "surface",
-          { entities: intent.entities },
+          { query: intent.rawText, entities: intent.entities, button: "left" },
           ["find-element"],
           "verify-ui",
         ),
@@ -1769,6 +2879,23 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
 
     // ── system-query ─────────────────────────────────────────────────────────
     case "system-query": {
+      if (/\b(summari[sz]e\s*(?:my\s*)?(?:context|workspace|work)|context\s*summary|t[oó]m\s*tắt\s*(?:ng[ữu]\s*cảnh|màn\s*hình|công\s*việc))\b/i.test(intent.rawText.toLowerCase())) {
+        nodes.push(
+          actionNode(
+            "query",
+            intent.rawText,
+            "shell.exec",
+            "deep",
+            {
+              command:
+                "echo '=== ACTIVE APP ===' && osascript -e 'tell application \"System Events\" to get name of first process whose frontmost is true' && echo '=== OPEN WINDOWS ===' && osascript -e 'tell application \"System Events\" to tell (name of first process whose frontmost is true) to get name of every window' && echo '=== TOP CPU ===' && ps aux --sort=-%cpu | head -6 && echo '=== TOP MEMORY ===' && ps aux --sort=-%mem | head -6 && echo '=== RECENT DOWNLOADS ===' && ls -lt ~/Downloads | head -6",
+              entities: intent.entities,
+            },
+          ),
+        );
+        break;
+      }
+
       const cmd = extractShellCommand(intent);
       // If we extracted a real command, use shell.exec; otherwise use system.info
       const tool = cmd !== intent.rawText ? "shell.exec" : "system.info";
@@ -1786,6 +2913,11 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
 
     // ── multi-step ───────────────────────────────────────────────────────────
     case "multi-step": {
+      if (isDataEntryWorkflowText(intent.rawText)) {
+        nodes.push(...buildDataEntryWorkflowNodes(intent));
+        break;
+      }
+
       const steps = await decomposeMultiStep(intent.rawText);
 
       if (steps && steps.length > 0) {

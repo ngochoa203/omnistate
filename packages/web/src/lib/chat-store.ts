@@ -18,8 +18,20 @@ export interface StepInfo {
   data?: Record<string, unknown>;
 }
 
+export interface Conversation {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
 interface ChatStore {
+  appLanguage: "vi" | "en";
   messages: ChatMessage[];
+  conversations: Conversation[];
+  currentConversationId: string;
+  messagesByConversation: Record<string, ChatMessage[]>;
   connectionState: "connecting" | "connected" | "disconnected";
   health: null | {
     overall: string;
@@ -47,7 +59,18 @@ interface ChatStore {
     model?: string;
     checkedAt: string;
   };
-
+  runtimeConfig: null | Record<string, unknown>;
+  runtimeConfigAck: null | {
+    ok: boolean;
+    key: string;
+    message: string;
+    at: number;
+  };
+  setAppLanguage: (lang: "vi" | "en") => void;
+  createConversation: (name?: string) => string;
+  switchConversation: (id: string) => void;
+  deleteConversation: (id: string) => void;
+  renameConversation: (id: string, name: string) => void;
   setConnectionState: (state: ChatStore["connectionState"]) => void;
   addUserMessage: (content: string) => string; // returns id
   addSystemMessage: (content: string, taskId?: string) => string;
@@ -61,10 +84,38 @@ interface ChatStore {
   setTtsEnabled: (enabled: boolean) => void;
   setSystemInfo: (info: ChatStore["systemInfo"]) => void;
   setLlmPreflight: (info: ChatStore["llmPreflight"]) => void;
+  setRuntimeConfig: (config: ChatStore["runtimeConfig"]) => void;
+  setRuntimeConfigAck: (ack: ChatStore["runtimeConfigAck"]) => void;
 }
 
 let _id = 0;
 const nextId = () => `msg-${++_id}-${Date.now()}`;
+
+function getInitialAppLanguage(): "vi" | "en" {
+  if (typeof window === "undefined") return "vi";
+  const saved = window.localStorage.getItem("omnistate.appLanguage");
+  return saved === "en" ? "en" : "vi";
+}
+
+function newConversation(name?: string): Conversation {
+  const now = Date.now();
+  const id = `conv-${now}-${Math.random().toString(36).slice(2, 7)}`;
+  return {
+    id,
+    name: name?.trim() || `Conversation ${new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+    createdAt: now,
+    updatedAt: now,
+    messageCount: 0,
+  };
+}
+
+function updateConversationStats(conversations: Conversation[], id: string, count: number): Conversation[] {
+  return conversations.map((conv) =>
+    conv.id === id
+      ? { ...conv, updatedAt: Date.now(), messageCount: count }
+      : conv,
+  );
+}
 
 function extractReadableContent(result: Record<string, unknown>): string {
   if (typeof result.message === "string") return result.message;
@@ -83,13 +134,82 @@ function extractReadableContent(result: Record<string, unknown>): string {
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
+  appLanguage: getInitialAppLanguage(),
   messages: [],
+  conversations: [{
+    id: "conv-default",
+    name: "Main",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messageCount: 0,
+  }],
+  currentConversationId: "conv-default",
+  messagesByConversation: { "conv-default": [] },
   connectionState: "disconnected",
   health: null,
   voiceState: "idle",
   ttsEnabled: false,
   systemInfo: null,
   llmPreflight: null,
+  runtimeConfig: null,
+  runtimeConfigAck: null,
+
+  setAppLanguage: (appLanguage) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("omnistate.appLanguage", appLanguage);
+    }
+    set({ appLanguage });
+  },
+
+  createConversation: (name) => {
+    const conv = newConversation(name);
+    set((s) => ({
+      conversations: [conv, ...s.conversations],
+      currentConversationId: conv.id,
+      messages: [],
+      messagesByConversation: { ...s.messagesByConversation, [conv.id]: [] },
+    }));
+    return conv.id;
+  },
+
+  switchConversation: (id) => {
+    set((s) => {
+      if (!s.conversations.some((conv) => conv.id === id)) return s;
+      return {
+        currentConversationId: id,
+        messages: s.messagesByConversation[id] ?? [],
+      };
+    });
+  },
+
+  deleteConversation: (id) => {
+    set((s) => {
+      if (s.conversations.length <= 1 || !s.conversations.some((conv) => conv.id === id)) {
+        return s;
+      }
+      const nextConversations = s.conversations.filter((conv) => conv.id !== id);
+      const nextMessagesByConversation = { ...s.messagesByConversation };
+      delete nextMessagesByConversation[id];
+      const fallbackConversation = nextConversations[0];
+      const nextCurrentId = s.currentConversationId === id ? fallbackConversation.id : s.currentConversationId;
+      return {
+        conversations: nextConversations,
+        currentConversationId: nextCurrentId,
+        messagesByConversation: nextMessagesByConversation,
+        messages: nextMessagesByConversation[nextCurrentId] ?? [],
+      };
+    });
+  },
+
+  renameConversation: (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      conversations: s.conversations.map((conv) =>
+        conv.id === id ? { ...conv, name: trimmed, updatedAt: Date.now() } : conv,
+      ),
+    }));
+  },
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
@@ -99,6 +219,18 @@ export const useChatStore = create<ChatStore>((set) => ({
       messages: [...s.messages, {
         id, role: "user", content, timestamp: Date.now(),
       }],
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: [
+          ...(s.messagesByConversation[s.currentConversationId] ?? []),
+          { id, role: "user", content, timestamp: Date.now() },
+        ],
+      },
+      conversations: updateConversationStats(
+        s.conversations,
+        s.currentConversationId,
+        (s.messagesByConversation[s.currentConversationId] ?? []).length + 1,
+      ),
     }));
     return id;
   },
@@ -109,8 +241,22 @@ export const useChatStore = create<ChatStore>((set) => ({
       messages: [...s.messages, {
         id, role: "system", content, timestamp: Date.now(),
         taskId, status: taskId ? "pending" : "complete",
-        steps: [],
       }],
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: [
+          ...(s.messagesByConversation[s.currentConversationId] ?? []),
+          {
+            id, role: "system", content, timestamp: Date.now(),
+            taskId, status: taskId ? "pending" : "complete",
+          },
+        ],
+      },
+      conversations: updateConversationStats(
+        s.conversations,
+        s.currentConversationId,
+        (s.messagesByConversation[s.currentConversationId] ?? []).length + 1,
+      ),
     }));
     return id;
   },
@@ -118,16 +264,29 @@ export const useChatStore = create<ChatStore>((set) => ({
   updateMessage: (id, updates) =>
     set((s) => ({
       messages: s.messages.map((m) => m.id === id ? { ...m, ...updates } : m),
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
+          m.id === id ? { ...m, ...updates } : m,
+        ),
+      },
     })),
 
-  addStep: (taskId, step) =>
+  addStep: (taskId, _step) => {
     set((s) => ({
       messages: s.messages.map((m) =>
         m.taskId === taskId
-          ? { ...m, status: "streaming" as const, steps: [...(m.steps ?? []), step] }
+          ? { ...m, status: "streaming" as const }
           : m
       ),
-    })),
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
+          m.taskId === taskId ? { ...m, status: "streaming" as const } : m,
+        ),
+      },
+    }));
+  },
 
   completeTask: (taskId, result) =>
     set((s) => ({
@@ -143,6 +302,21 @@ export const useChatStore = create<ChatStore>((set) => ({
             }
           : m
       ),
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
+          m.taskId === taskId
+            ? {
+                ...m,
+                status: "complete" as const,
+                data: result,
+                content: typeof result.output === "string"
+                  ? result.output
+                  : extractReadableContent(result) || m.content,
+              }
+            : m,
+        ),
+      },
     })),
 
   failTask: (taskId, error) =>
@@ -152,12 +326,24 @@ export const useChatStore = create<ChatStore>((set) => ({
           ? { ...m, status: "failed" as const, content: error }
           : m
       ),
+      messagesByConversation: {
+        ...s.messagesByConversation,
+        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
+          m.taskId === taskId ? { ...m, status: "failed" as const, content: error } : m,
+        ),
+      },
     })),
 
   setHealth: (health) => set({ health }),
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () => set((s) => ({
+    messages: [],
+    messagesByConversation: { ...s.messagesByConversation, [s.currentConversationId]: [] },
+    conversations: updateConversationStats(s.conversations, s.currentConversationId, 0),
+  })),
   setVoiceState: (voiceState) => set({ voiceState }),
   setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
   setSystemInfo: (systemInfo) => set({ systemInfo }),
   setLlmPreflight: (llmPreflight) => set({ llmPreflight }),
+  setRuntimeConfig: (runtimeConfig) => set({ runtimeConfig }),
+  setRuntimeConfigAck: (runtimeConfigAck) => set({ runtimeConfigAck }),
 }));

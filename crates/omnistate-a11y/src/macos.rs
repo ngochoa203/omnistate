@@ -182,6 +182,14 @@ fn get_string_attribute(element: AXUIElementRef, attr: &str) -> Option<String> {
     if value.is_null() {
         return None;
     }
+
+    let string_type_id = unsafe { core_foundation_sys::string::CFStringGetTypeID() };
+    let value_type_id = unsafe { core_foundation_sys::base::CFGetTypeID(value) };
+    if value_type_id != string_type_id {
+        unsafe { core_foundation_sys::base::CFRelease(value as *const _) };
+        return None;
+    }
+
     let cf_str: CFString = unsafe { CFString::wrap_under_get_rule(value as *const _) };
     Some(cf_str.to_string())
 }
@@ -192,8 +200,17 @@ fn get_bool_attribute(element: AXUIElementRef, attr: &str) -> bool {
         if v.is_null() {
             return false;
         }
+
+        let bool_type_id = unsafe { core_foundation_sys::number::CFBooleanGetTypeID() };
+        let value_type_id = unsafe { core_foundation_sys::base::CFGetTypeID(v) };
+        if value_type_id != bool_type_id {
+            unsafe { core_foundation_sys::base::CFRelease(v as *const _) };
+            return false;
+        }
+
         // CFBoolean: true = CFBooleanTrue (non-zero)
         let cf_bool = unsafe { core_foundation_sys::number::CFBooleanGetValue(v as *const _) };
+        unsafe { core_foundation_sys::base::CFRelease(v as *const _) };
         return cf_bool;
     }
     false

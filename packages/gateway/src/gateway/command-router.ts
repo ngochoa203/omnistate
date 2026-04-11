@@ -8,7 +8,11 @@ import {
   setActiveModel,
   setActiveProvider,
   setFallbackOrder,
+  setSiriField,
+  setWakeField,
   setTokenBudgetField,
+  setVoiceField,
+  setVoiceProviderChain,
   switchSession,
   updateCurrentSessionMeta,
   updateActiveProviderField,
@@ -46,6 +50,21 @@ function formatConfig(config: LlmRuntimeConfig): string {
     `token.intent_max_tokens=${config.tokenBudget.intentMaxTokens}`,
     `token.decompose_max_tokens=${config.tokenBudget.decomposeMaxTokens}`,
     `token.max_input_chars=${config.tokenBudget.maxInputChars}`,
+    `voice.low_latency=${config.voice.lowLatency}`,
+    `voice.auto_execute_transcript=${config.voice.autoExecuteTranscript}`,
+    `voice.provider_chain=${[
+      config.voice.primaryProvider,
+      ...config.voice.fallbackProviders,
+    ].join(",")}`,
+    `voice.chunk_ms=${config.voice.chunkMs}`,
+    `siri.enabled=${config.voice.siri.enabled}`,
+    `siri.mode=${config.voice.siri.mode}`,
+    `siri.shortcut=${config.voice.siri.shortcutName}`,
+    `siri.endpoint=${config.voice.siri.endpoint}`,
+    `wake.enabled=${config.voice.wake.enabled}`,
+    `wake.phrase=${config.voice.wake.phrase}`,
+    `wake.cooldown_ms=${config.voice.wake.cooldownMs}`,
+    `wake.command_window_sec=${config.voice.wake.commandWindowSec}`,
     `session.current=${currentSession?.id ?? "default"}`,
     `session.messages=${currentSession?.messageCount ?? 0}`,
     `config_path=${getLlmRuntimeConfigPath()}`,
@@ -66,9 +85,119 @@ function commandHelpText(): string {
     "/think [low|medium|high]",
     "/fast [on|off]",
     "/verbose [on|off]",
+    "/voice [show|providers <p1,p2,...>|siri <on|off>]",
+    "/wake [show|on|off|phrase <text>]",
     "/config ...",
     "omnistate config ...",
   ].join("\n");
+}
+
+function handleWakeCommand(args: string[]): CommandOutput {
+  const cfg = loadLlmRuntimeConfig();
+  const sub = (args[0] ?? "show").toLowerCase();
+
+  if (sub === "show") {
+    return {
+      handled: true,
+      output: [
+        `enabled=${cfg.voice.wake.enabled}`,
+        `phrase=${cfg.voice.wake.phrase}`,
+        `cooldown_ms=${cfg.voice.wake.cooldownMs}`,
+        `command_window_sec=${cfg.voice.wake.commandWindowSec}`,
+      ].join("\n"),
+      data: { wake: cfg.voice.wake },
+    };
+  }
+
+  if (sub === "on" || sub === "off") {
+    const next = setWakeField("enabled", sub === "on");
+    return {
+      handled: true,
+      output: `wake.enabled=${next.voice.wake.enabled}`,
+      data: { wake: next.voice.wake },
+    };
+  }
+
+  if (sub === "phrase") {
+    const phrase = args.slice(1).join(" ").trim();
+    if (!phrase) return { handled: true, output: "Usage: /wake phrase <text>" };
+    const next = setWakeField("phrase", phrase);
+    return {
+      handled: true,
+      output: `wake.phrase=${next.voice.wake.phrase}`,
+      data: { wake: next.voice.wake },
+    };
+  }
+
+  return { handled: true, output: "Usage: /wake [show|on|off|phrase <text>]" };
+}
+
+function handleVoiceCommand(args: string[]): CommandOutput {
+  const config = loadLlmRuntimeConfig();
+  const sub = (args[0] ?? "show").toLowerCase();
+
+  if (sub === "show") {
+    return {
+      handled: true,
+      output: [
+        `low_latency=${config.voice.lowLatency}`,
+        `auto_execute_transcript=${config.voice.autoExecuteTranscript}`,
+        `provider_chain=${[
+          config.voice.primaryProvider,
+          ...config.voice.fallbackProviders,
+        ].join(",")}`,
+        `chunk_ms=${config.voice.chunkMs}`,
+        `siri.enabled=${config.voice.siri.enabled}`,
+        `siri.mode=${config.voice.siri.mode}`,
+        `siri.shortcut=${config.voice.siri.shortcutName}`,
+        `siri.endpoint=${config.voice.siri.endpoint}`,
+      ].join("\n"),
+      data: { voice: config.voice },
+    };
+  }
+
+  if (sub === "providers") {
+    const chain = args
+      .slice(1)
+      .join(" ")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .filter((x) => ["native", "whisper-local", "whisper-cloud"].includes(x));
+    if (chain.length === 0) {
+      return {
+        handled: true,
+        output: "Usage: /voice providers <native,whisper-local,whisper-cloud>",
+      };
+    }
+    const [primary, ...fallback] = chain as Array<
+      "native" | "whisper-local" | "whisper-cloud"
+    >;
+    const next = setVoiceProviderChain(primary, fallback);
+    return {
+      handled: true,
+      output: `voice provider chain=${[
+        next.voice.primaryProvider,
+        ...next.voice.fallbackProviders,
+      ].join(",")}`,
+      data: { voice: next.voice },
+    };
+  }
+
+  if (sub === "siri") {
+    const flag = parseOnOff(args[1]);
+    if (flag === null) {
+      return { handled: true, output: "Usage: /voice siri <on|off>" };
+    }
+    const next = setSiriField("enabled", flag);
+    return {
+      handled: true,
+      output: `siri.enabled=${next.voice.siri.enabled}`,
+      data: { siri: next.voice.siri },
+    };
+  }
+
+  return { handled: true, output: "Usage: /voice [show|providers <p1,p2,...>|siri <on|off>]" };
 }
 
 function handleModelCommand(args: string[]): CommandOutput {
@@ -245,7 +374,7 @@ function handleConfigCommand(args: string[]): CommandOutput {
     if (!key || !value) {
       return {
         handled: true,
-        output: "Usage: omnistate config set <api_key|base_url|model|provider|intent_max_tokens|decompose_max_tokens|max_input_chars|compact_prompt> <value>",
+        output: "Usage: omnistate config set <api_key|base_url|model|provider|intent_max_tokens|decompose_max_tokens|max_input_chars|compact_prompt|voice_low_latency|voice_auto_execute|voice_chunk_ms|voice_providers|siri_enabled|siri_mode|siri_shortcut|siri_endpoint|siri_token> <value>",
       };
     }
 
@@ -303,6 +432,101 @@ function handleConfigCommand(args: string[]): CommandOutput {
       const boolValue = /^(1|true|yes|on)$/i.test(value);
       const config = setTokenBudgetField("compactPrompt", boolValue);
       return { handled: true, output: `compact_prompt=${config.tokenBudget.compactPrompt}` };
+    }
+
+    if (key === "voice_low_latency") {
+      const boolValue = /^(1|true|yes|on)$/i.test(value);
+      const config = setVoiceField("lowLatency", boolValue);
+      return { handled: true, output: `voice_low_latency=${config.voice.lowLatency}` };
+    }
+
+    if (key === "voice_auto_execute") {
+      const boolValue = /^(1|true|yes|on)$/i.test(value);
+      const config = setVoiceField("autoExecuteTranscript", boolValue);
+      return {
+        handled: true,
+        output: `voice_auto_execute=${config.voice.autoExecuteTranscript}`,
+      };
+    }
+
+    if (key === "voice_chunk_ms") {
+      const config = setVoiceField("chunkMs", Number(value));
+      return { handled: true, output: `voice_chunk_ms=${config.voice.chunkMs}` };
+    }
+
+    if (key === "voice_providers") {
+      const chain = value
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .filter((x) => ["native", "whisper-local", "whisper-cloud"].includes(x));
+      if (chain.length === 0) {
+        return {
+          handled: true,
+          output: "voice_providers expects comma list from native|whisper-local|whisper-cloud",
+        };
+      }
+      const [primary, ...fallback] = chain as Array<
+        "native" | "whisper-local" | "whisper-cloud"
+      >;
+      const config = setVoiceProviderChain(primary, fallback);
+      return {
+        handled: true,
+        output: `voice_providers=${[
+          config.voice.primaryProvider,
+          ...config.voice.fallbackProviders,
+        ].join(",")}`,
+      };
+    }
+
+    if (key === "siri_enabled") {
+      const boolValue = /^(1|true|yes|on)$/i.test(value);
+      const config = setSiriField("enabled", boolValue);
+      return { handled: true, output: `siri_enabled=${config.voice.siri.enabled}` };
+    }
+
+    if (key === "siri_mode") {
+      const config = setSiriField("mode", value === "command" ? "command" : "handoff");
+      return { handled: true, output: `siri_mode=${config.voice.siri.mode}` };
+    }
+
+    if (key === "siri_shortcut") {
+      const config = setSiriField("shortcutName", value);
+      return { handled: true, output: `siri_shortcut=${config.voice.siri.shortcutName}` };
+    }
+
+    if (key === "siri_endpoint") {
+      const config = setSiriField("endpoint", value);
+      return { handled: true, output: `siri_endpoint=${config.voice.siri.endpoint}` };
+    }
+
+    if (key === "siri_token") {
+      setSiriField("token", value);
+      return { handled: true, output: "siri_token=updated" };
+    }
+
+    if (key === "wake_enabled") {
+      const boolValue = /^(1|true|yes|on)$/i.test(value);
+      const config = setWakeField("enabled", boolValue);
+      return { handled: true, output: `wake_enabled=${config.voice.wake.enabled}` };
+    }
+
+    if (key === "wake_phrase") {
+      const config = setWakeField("phrase", value);
+      return { handled: true, output: `wake_phrase=${config.voice.wake.phrase}` };
+    }
+
+    if (key === "wake_cooldown_ms") {
+      const config = setWakeField("cooldownMs", Number(value));
+      return { handled: true, output: `wake_cooldown_ms=${config.voice.wake.cooldownMs}` };
+    }
+
+    if (key === "wake_command_window_sec") {
+      const config = setWakeField("commandWindowSec", Number(value));
+      return {
+        handled: true,
+        output: `wake_command_window_sec=${config.voice.wake.commandWindowSec}`,
+      };
     }
 
     return {
@@ -440,6 +664,14 @@ export function tryHandleGatewayCommand(
     return handleVerboseCommand(parts.slice(1));
   }
 
+  if (first === "/voice") {
+    return handleVoiceCommand(parts.slice(1));
+  }
+
+  if (first === "/wake") {
+    return handleWakeCommand(parts.slice(1));
+  }
+
   if (first === "/new") {
     return handleSessionCommand(["new", ...parts.slice(1)]);
   }
@@ -511,6 +743,14 @@ export function tryHandleGatewayCommand(
 
   if (first === "omnistate" && parts[1]?.toLowerCase() === "verbose") {
     return handleVerboseCommand(parts.slice(2));
+  }
+
+  if (first === "omnistate" && parts[1]?.toLowerCase() === "voice") {
+    return handleVoiceCommand(parts.slice(2));
+  }
+
+  if (first === "omnistate" && parts[1]?.toLowerCase() === "wake") {
+    return handleWakeCommand(parts.slice(2));
   }
 
   if (first === "omnistate" && parts[1]?.toLowerCase() === "new") {
