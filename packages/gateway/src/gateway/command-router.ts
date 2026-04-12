@@ -9,6 +9,7 @@ import {
   setActiveProvider,
   setFallbackOrder,
   setSiriField,
+  setWakeField,
   setTokenBudgetField,
   setVoiceField,
   setVoiceProviderChain,
@@ -60,6 +61,10 @@ function formatConfig(config: LlmRuntimeConfig): string {
     `siri.mode=${config.voice.siri.mode}`,
     `siri.shortcut=${config.voice.siri.shortcutName}`,
     `siri.endpoint=${config.voice.siri.endpoint}`,
+    `wake.enabled=${config.voice.wake.enabled}`,
+    `wake.phrase=${config.voice.wake.phrase}`,
+    `wake.cooldown_ms=${config.voice.wake.cooldownMs}`,
+    `wake.command_window_sec=${config.voice.wake.commandWindowSec}`,
     `session.current=${currentSession?.id ?? "default"}`,
     `session.messages=${currentSession?.messageCount ?? 0}`,
     `config_path=${getLlmRuntimeConfigPath()}`,
@@ -81,9 +86,50 @@ function commandHelpText(): string {
     "/fast [on|off]",
     "/verbose [on|off]",
     "/voice [show|providers <p1,p2,...>|siri <on|off>]",
+    "/wake [show|on|off|phrase <text>]",
     "/config ...",
     "omnistate config ...",
   ].join("\n");
+}
+
+function handleWakeCommand(args: string[]): CommandOutput {
+  const cfg = loadLlmRuntimeConfig();
+  const sub = (args[0] ?? "show").toLowerCase();
+
+  if (sub === "show") {
+    return {
+      handled: true,
+      output: [
+        `enabled=${cfg.voice.wake.enabled}`,
+        `phrase=${cfg.voice.wake.phrase}`,
+        `cooldown_ms=${cfg.voice.wake.cooldownMs}`,
+        `command_window_sec=${cfg.voice.wake.commandWindowSec}`,
+      ].join("\n"),
+      data: { wake: cfg.voice.wake },
+    };
+  }
+
+  if (sub === "on" || sub === "off") {
+    const next = setWakeField("enabled", sub === "on");
+    return {
+      handled: true,
+      output: `wake.enabled=${next.voice.wake.enabled}`,
+      data: { wake: next.voice.wake },
+    };
+  }
+
+  if (sub === "phrase") {
+    const phrase = args.slice(1).join(" ").trim();
+    if (!phrase) return { handled: true, output: "Usage: /wake phrase <text>" };
+    const next = setWakeField("phrase", phrase);
+    return {
+      handled: true,
+      output: `wake.phrase=${next.voice.wake.phrase}`,
+      data: { wake: next.voice.wake },
+    };
+  }
+
+  return { handled: true, output: "Usage: /wake [show|on|off|phrase <text>]" };
 }
 
 function handleVoiceCommand(args: string[]): CommandOutput {
@@ -459,6 +505,30 @@ function handleConfigCommand(args: string[]): CommandOutput {
       return { handled: true, output: "siri_token=updated" };
     }
 
+    if (key === "wake_enabled") {
+      const boolValue = /^(1|true|yes|on)$/i.test(value);
+      const config = setWakeField("enabled", boolValue);
+      return { handled: true, output: `wake_enabled=${config.voice.wake.enabled}` };
+    }
+
+    if (key === "wake_phrase") {
+      const config = setWakeField("phrase", value);
+      return { handled: true, output: `wake_phrase=${config.voice.wake.phrase}` };
+    }
+
+    if (key === "wake_cooldown_ms") {
+      const config = setWakeField("cooldownMs", Number(value));
+      return { handled: true, output: `wake_cooldown_ms=${config.voice.wake.cooldownMs}` };
+    }
+
+    if (key === "wake_command_window_sec") {
+      const config = setWakeField("commandWindowSec", Number(value));
+      return {
+        handled: true,
+        output: `wake_command_window_sec=${config.voice.wake.commandWindowSec}`,
+      };
+    }
+
     return {
       handled: true,
       output: `Unsupported config key: ${key}`,
@@ -598,6 +668,10 @@ export function tryHandleGatewayCommand(
     return handleVoiceCommand(parts.slice(1));
   }
 
+  if (first === "/wake") {
+    return handleWakeCommand(parts.slice(1));
+  }
+
   if (first === "/new") {
     return handleSessionCommand(["new", ...parts.slice(1)]);
   }
@@ -673,6 +747,10 @@ export function tryHandleGatewayCommand(
 
   if (first === "omnistate" && parts[1]?.toLowerCase() === "voice") {
     return handleVoiceCommand(parts.slice(2));
+  }
+
+  if (first === "omnistate" && parts[1]?.toLowerCase() === "wake") {
+    return handleWakeCommand(parts.slice(2));
   }
 
   if (first === "omnistate" && parts[1]?.toLowerCase() === "new") {

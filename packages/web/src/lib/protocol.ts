@@ -6,6 +6,9 @@ export type ClientMessage =
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
+  | RuntimeConfigGetMessage
+  | RuntimeConfigSetMessage
+  | RuntimeConfigUpsertProviderMessage
   | StatusQueryMessage
   | VoiceTranscribeMessage
   | VibeVoiceStartMessage
@@ -67,6 +70,37 @@ export interface LlmPreflightQueryMessage {
   type: "llm.preflight.query";
 }
 
+export interface RuntimeConfigGetMessage {
+  type: "runtime.config.get";
+}
+
+export interface RuntimeConfigSetMessage {
+  type: "runtime.config.set";
+  key:
+    | "provider"
+    | "model"
+    | "baseURL"
+    | "apiKey"
+    | "voice.lowLatency"
+    | "voice.autoExecuteTranscript";
+  value: string | boolean;
+}
+
+export interface RuntimeConfigUpsertProviderMessage {
+  type: "runtime.config.upsertProvider";
+  provider: {
+    id: string;
+    kind: "anthropic" | "openai-compatible";
+    baseURL: string;
+    apiKey: string;
+    model: string;
+    enabled?: boolean;
+    models?: string[];
+  };
+  activate?: boolean;
+  addToFallback?: boolean;
+}
+
 export interface StatusQueryMessage {
   type: "status.query";
 }
@@ -115,6 +149,8 @@ export type ServerMessage =
   | HistoryResultMessage
   | HealthReportMessage
   | LlmPreflightReportMessage
+  | RuntimeConfigReportMessage
+  | RuntimeConfigAckMessage
   | StatusReplyMessage
   | GatewayShutdownMessage
   | ErrorMessage
@@ -144,6 +180,14 @@ export interface LlmPreflightReportMessage {
   providerId?: string;
   model?: string;
   checkedAt: string;
+}
+export interface RuntimeConfigReportMessage { type: "runtime.config.report"; config: Record<string, unknown> }
+export interface RuntimeConfigAckMessage {
+  type: "runtime.config.ack";
+  ok: boolean;
+  key: RuntimeConfigSetMessage["key"];
+  message: string;
+  config: Record<string, unknown>;
 }
 export interface StatusReplyMessage { type: "status.reply"; connectedClients: number; queueDepth: number; uptime: number }
 export interface GatewayShutdownMessage { type: "gateway.shutdown"; reason: string }

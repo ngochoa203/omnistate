@@ -1,107 +1,341 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useGateway } from "./hooks/useGateway";
 import { useChatStore } from "./lib/chat-store";
 import { ChatView } from "./components/ChatView";
 import { HealthDashboard } from "./components/HealthDashboard";
 import { SystemPanel } from "./components/SystemPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { VoicePage } from "./components/VoicePage";
+import { DashboardOverview } from "./components/DashboardOverview";
+import { LiveClock } from "./components/LiveClock";
+import { LanguageSwitch } from "./components/LanguageSwitch";
+import { getCopy } from "./lib/i18n";
+import { ConfigPage } from "./components/ConfigPage";
+import { ScreenTreePage } from "./components/ScreenTreePage";
 
-type View = "chat" | "health" | "system" | "settings";
+type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree";
+
+const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree"; icon: React.ReactNode; badge?: string }> = [
+  {
+    id: "dashboard",
+    labelKey: "dashboard",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <rect x="2" y="2" width="9" height="9" rx="2" />
+        <rect x="13" y="2" width="9" height="9" rx="2" />
+        <rect x="2" y="13" width="9" height="9" rx="2" />
+        <rect x="13" y="13" width="9" height="9" rx="2" />
+      </svg>
+    ),
+  },
+  {
+    id: "chat",
+    labelKey: "chat",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: "voice",
+    labelKey: "voice",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 10a7 7 0 0 0 14 0" />
+        <line x1="12" y1="17" x2="12" y2="22" />
+        <line x1="8" y1="22" x2="16" y2="22" />
+      </svg>
+    ),
+  },
+  {
+    id: "health",
+    labelKey: "health",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+      </svg>
+    ),
+  },
+  {
+    id: "system",
+    labelKey: "system",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <line x1="8" y1="21" x2="16" y2="21" />
+        <line x1="12" y1="17" x2="12" y2="21" />
+      </svg>
+    ),
+  },
+  {
+    id: "settings",
+    labelKey: "settings",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    ),
+  },
+  {
+    id: "config",
+    labelKey: "config",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M4 7h10" />
+        <path d="M4 17h16" />
+        <circle cx="17" cy="7" r="3" />
+        <circle cx="7" cy="17" r="3" />
+      </svg>
+    ),
+  },
+  {
+    id: "screenTree",
+    labelKey: "screenTree",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="5" r="2" />
+        <circle cx="6" cy="13" r="2" />
+        <circle cx="18" cy="13" r="2" />
+        <circle cx="12" cy="20" r="2" />
+        <path d="M12 7v3" />
+        <path d="M12 10h6" />
+        <path d="M12 10H6" />
+        <path d="M6 15v3" />
+        <path d="M18 15v3" />
+      </svg>
+    ),
+  },
+];
 
 export function App() {
-  const [view, setView] = useState<View>("chat");
+  const [view, setView] = useState<View>("dashboard");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   useGateway();
+  const appLanguage = useChatStore((s) => s.appLanguage);
+  const setAppLanguage = useChatStore((s) => s.setAppLanguage);
   const connectionState = useChatStore((s) => s.connectionState);
   const llmPreflight = useChatStore((s) => s.llmPreflight);
+  const messages = useChatStore((s) => s.messages);
+  const copy = getCopy(appLanguage);
 
-  const statusColor =
-    connectionState === "connected" ? "bg-success" :
-    connectionState === "connecting" ? "bg-warning" : "bg-error";
+  const unreadCount = useMemo(
+    () => messages.reduce((acc, m) => acc + (m.role === "system" && m.status === "pending" ? 1 : 0), 0),
+    [messages],
+  );
 
-  const statusText =
-    connectionState === "connected" ? "Connected" :
-    connectionState === "connecting" ? "Connecting..." : "Disconnected";
+  const activeNavLabel = useMemo(
+    () => copy.nav[NAV_ITEMS.find((n) => n.id === view)?.labelKey ?? "dashboard"],
+    [view, copy],
+  );
 
-  const llmStatusColor =
-    !llmPreflight ? "bg-bg-hover" :
-    llmPreflight.ok ? "bg-success" :
-    llmPreflight.status === "insufficient_credits" ? "bg-warning" : "bg-error";
+  const connColor =
+    connectionState === "connected" ? "connected" :
+    connectionState === "connecting" ? "connecting" : "disconnected";
 
-  const llmStatusText =
-    !llmPreflight ? "Not checked" :
-    llmPreflight.ok ? "Ready" :
-    llmPreflight.status === "insufficient_credits" ? "No credits" :
-    llmPreflight.status === "auth_error" ? "Auth failed" :
-    llmPreflight.status === "missing_key" ? "Missing key" : "API error";
-
-  const navItems: Array<{ id: View; label: string; icon: string }> = [
-    { id: "chat", label: "Chat", icon: "💬" },
-    { id: "system", label: "System", icon: "🖥️" },
-    { id: "health", label: "Health", icon: "🩺" },
-    { id: "settings", label: "Settings", icon: "⚙️" },
-  ];
+  const connText =
+    connectionState === "connected" ? copy.status.live :
+    connectionState === "connecting" ? copy.status.connecting : copy.status.offline;
 
   return (
-    <div className="flex h-screen bg-bg-primary text-text-primary">
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden", position: "relative" }}>
+      {/* Background Orbs */}
+      <div className="bg-orb" style={{ width: 600, height: 600, top: -200, left: -200, background: "radial-gradient(circle, #6366f1, transparent)" }} />
+      <div className="bg-orb" style={{ width: 500, height: 500, bottom: -150, right: -100, background: "radial-gradient(circle, #7c3aed, transparent)", opacity: 0.08 }} />
+      <div className="bg-orb" style={{ width: 300, height: 300, top: "40%", right: "30%", background: "radial-gradient(circle, #22d3ee, transparent)", opacity: 0.05 }} />
+
       {/* Sidebar */}
-      <aside className="w-64 bg-bg-secondary border-r border-border flex flex-col">
-        <div className="p-4 border-b border-border">
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <span className="text-2xl">🧠</span> OmniState
-          </h1>
-          <p className="text-xs text-text-muted mt-1">Shadow OS for macOS</p>
+      <aside
+        style={{
+          width: sidebarCollapsed ? 64 : 240,
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          borderRight: "1px solid rgba(255,255,255,0.06)",
+          background: "rgba(5,5,8,0.85)",
+          backdropFilter: "blur(20px)",
+          transition: "width 0.3s cubic-bezier(0.16,1,0.3,1)",
+          overflow: "hidden",
+          position: "relative",
+          zIndex: 10,
+        }}
+      >
+        {/* Logo */}
+        <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+              background: "linear-gradient(135deg, #6366f1, #7c3aed)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 4px 16px rgba(99,102,241,0.4)",
+              fontSize: 18,
+            }}>
+              🧠
+            </div>
+            {!sidebarCollapsed && (
+              <div className="animate-fade-in">
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "white", lineHeight: 1.2 }}>OmniState</div>
+                <div style={{ fontSize: "0.65rem", color: "var(--color-text-muted)", letterSpacing: "0.05em" }}>SHADOW OS</div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <nav className="flex-1 p-2">
-          {navItems.map((item) => (
+        {/* Nav */}
+        <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
+          {NAV_ITEMS.map((item) => (
             <button
               key={item.id}
               onClick={() => setView(item.id)}
-              className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-colors flex items-center gap-2 ${
-                view === item.id ? "bg-accent text-white" : "hover:bg-bg-hover text-text-secondary"
-              }`}
+              className={`sidebar-item ${view === item.id ? "active" : ""}`}
+              style={{ marginBottom: 4, justifyContent: sidebarCollapsed ? "center" : "flex-start", animationDelay: `${NAV_ITEMS.findIndex((n) => n.id === item.id) * 0.04}s` }}
+              title={sidebarCollapsed ? copy.nav[item.labelKey] : undefined}
             >
-              <span>{item.icon}</span>
-              <span>{item.label}</span>
+              <span style={{ flexShrink: 0, opacity: view === item.id ? 1 : 0.7 }}>{item.icon}</span>
+              {!sidebarCollapsed && (
+                <span className="animate-fade-in" style={{ flex: 1 }}>{copy.nav[item.labelKey]}</span>
+              )}
+              {!sidebarCollapsed && item.id === "chat" && unreadCount > 0 && (
+                <span style={{
+                  background: "linear-gradient(135deg, #6366f1, #7c3aed)",
+                  color: "white", borderRadius: "20px",
+                  padding: "1px 7px", fontSize: "0.65rem", fontWeight: 700,
+                }}>
+                  {unreadCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
 
-        {/* Status */}
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center gap-2 text-sm text-text-muted">
-            <span className={`w-2 h-2 rounded-full ${statusColor}`} />
-            {statusText}
-          </div>
+        {/* Bottom Status */}
+        <div style={{ padding: "12px 8px 16px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          {!sidebarCollapsed ? (
+            <div className="animate-fade-in" style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>{copy.status.gateway}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div className={`status-dot ${connColor}`}></div>
+                  <span style={{ fontSize: "0.7rem", color: connColor === "connected" ? "#22c55e" : connColor === "connecting" ? "#f59e0b" : "#ef4444", fontWeight: 600 }}>{connText}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>{copy.status.llmApi}</span>
+                <span style={{
+                  fontSize: "0.7rem", fontWeight: 600,
+                  color: !llmPreflight ? "#5a5a7a" : llmPreflight.ok ? "#22c55e" : "#ef4444"
+                }}>
+                  {!llmPreflight ? copy.status.unchecked : llmPreflight.ok ? copy.status.ready : copy.status.error}
+                </span>
+              </div>
+              <div style={{ marginTop: 8, fontSize: "0.68rem", color: "var(--color-text-muted)", fontFamily: "monospace" }}>
+                <LiveClock />
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div className={`status-dot ${connColor}`} style={{ width: 10, height: 10 }}></div>
+            </div>
+          )}
+
+          {/* Collapse toggle */}
+          <button
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: "100%", marginTop: 8, padding: "7px",
+              borderRadius: 8, background: "none", border: "1px solid rgba(255,255,255,0.06)",
+              color: "var(--color-text-muted)", cursor: "pointer",
+              transition: "all 0.2s", fontSize: "0.75rem",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              style={{ transform: sidebarCollapsed ? "rotate(180deg)" : "none", transition: "transform 0.3s" }}>
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 flex flex-col">
-        <header className="h-14 border-b border-border bg-bg-secondary px-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-medium text-text-primary">OmniState Console</h2>
+      {/* Main Content */}
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
+        {/* Topbar */}
+        <header style={{
+          height: 56, flexShrink: 0,
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          background: "rgba(5,5,8,0.7)",
+          backdropFilter: "blur(16px)",
+          display: "flex", alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 24px",
+          position: "relative", zIndex: 5,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <h2 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "white" }}>
+              {activeNavLabel}
+            </h2>
+            <span style={{
+              padding: "2px 8px", borderRadius: "20px", fontSize: "0.65rem",
+              background: "rgba(99,102,241,0.12)", color: "#a78bfa",
+              border: "1px solid rgba(99,102,241,0.25)", fontWeight: 600, letterSpacing: "0.04em"
+            }}>
+              v0.1.0
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-bg-tertiary text-xs text-text-secondary">
-              <span className={`w-2 h-2 rounded-full ${statusColor}`} />
-              <span>{statusText}</span>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <LanguageSwitch value={appLanguage} onChange={setAppLanguage} />
+
+            {/* Connection badge */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "6px 12px", borderRadius: "20px",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              fontSize: "0.75rem", color: "var(--color-text-secondary)",
+            }}>
+              <div className={`status-dot ${connColor}`} style={{ width: 6, height: 6 }}></div>
+              <span>{connText}</span>
             </div>
-            <div
-              className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-bg-tertiary text-xs text-text-secondary"
-              title={llmPreflight?.message ?? "No preflight result yet"}
-            >
-              <span className={`w-2 h-2 rounded-full ${llmStatusColor}`} />
-              <span>LLM {llmStatusText}</span>
+
+            {/* LLM badge */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "6px 12px", borderRadius: "20px",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              fontSize: "0.75rem", color: "var(--color-text-secondary)",
+            }}>
+              <span>🤖</span>
+              <span>{!llmPreflight ? copy.status.unchecked : llmPreflight.ok ? `${llmPreflight.model ?? "LLM"} ✓` : copy.status.error}</span>
+            </div>
+
+            {/* Time */}
+            <div style={{
+              padding: "6px 12px", borderRadius: "20px",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              fontSize: "0.75rem", fontFamily: "monospace",
+              color: "var(--color-text-muted)",
+            }}>
+              <LiveClock />
             </div>
           </div>
         </header>
 
-        <div className="flex-1 min-h-0">
+        {/* Page Content */}
+        <div key={view} className="view-transition" style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          {view === "dashboard" && <DashboardOverview onNavigate={setView} />}
           {view === "chat" && <ChatView />}
-          {view === "system" && <SystemPanel />}
+          {view === "voice" && <VoicePage />}
           {view === "health" && <HealthDashboard />}
+          {view === "system" && <SystemPanel />}
           {view === "settings" && <SettingsPanel />}
+          {view === "config" && <ConfigPage />}
+          {view === "screenTree" && <ScreenTreePage />}
         </div>
       </main>
     </div>

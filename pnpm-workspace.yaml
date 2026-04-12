@@ -1,22 +1,5 @@
 packages:
   - "packages/*"
-allowBuilds:
-  ' ': true
-  "'": true
-  ',': true
-  .: true
-  '[': true
-  ']': true
-  a: true
-  b: true
-  c: true
-  d: true
-  e: true
-  esbuild: false
-  i: true
-  j: true
-  l: true
-  r: true
-  s: true
-  t: true
-  u: true
+
+onlyBuiltDependencies:
+  - better-sqlite3

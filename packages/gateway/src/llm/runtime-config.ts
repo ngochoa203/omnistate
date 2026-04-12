@@ -10,6 +10,7 @@ export interface LlmProviderConfig {
   baseURL: string;
   apiKey: string;
   model: string;
+  models?: string[];
   enabled: boolean;
 }
 
@@ -37,6 +38,12 @@ export interface VoiceRuntimeConfig {
   fallbackProviders: VoiceProvider[];
   chunkMs: number;
   siri: SiriBridgeConfig;
+  wake: {
+    enabled: boolean;
+    phrase: string;
+    cooldownMs: number;
+    commandWindowSec: number;
+  };
 }
 
 export interface SessionMeta {
@@ -89,7 +96,8 @@ function defaultConfig(): LlmRuntimeConfig {
     kind: "anthropic",
     baseURL: process.env.ANTHROPIC_BASE_URL ?? "https://chat.trollllm.xyz",
     apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-    model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
+    model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4.5",
+    models: ["claude-haiku-4.5", "claude-sonnet-4.6", "claude-opus-4.6"],
     enabled: true,
   };
 
@@ -99,6 +107,7 @@ function defaultConfig(): LlmRuntimeConfig {
     baseURL: process.env.OMNISTATE_ROUTER9_BASE_URL ?? "http://localhost:20128/v1",
     apiKey: process.env.OMNISTATE_ROUTER9_API_KEY ?? "",
     model: process.env.OMNISTATE_ROUTER9_MODEL ?? "cx/gpt-5.4",
+    models: ["cx/gpt-5.4", "kr/deepseek-3.2"],
     enabled: true,
   };
 
@@ -128,6 +137,12 @@ function defaultConfig(): LlmRuntimeConfig {
         endpoint: "http://127.0.0.1:19801/siri/command",
         token: process.env.OMNISTATE_SIRI_TOKEN ?? "",
       },
+      wake: {
+        enabled: false,
+        phrase: "hey omni",
+        cooldownMs: 2500,
+        commandWindowSec: 7,
+      },
     },
     session: {
       currentSessionId: session.id,
@@ -145,6 +160,9 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
         baseURL: p.baseURL ?? def.providers[0]!.baseURL,
         apiKey: p.apiKey ?? "",
         model: p.model ?? def.providers[0]!.model,
+        models: Array.isArray(p.models)
+          ? p.models.map((m) => String(m).trim()).filter(Boolean)
+          : undefined,
         enabled: p.enabled !== false,
       }))
     : def.providers;
@@ -224,6 +242,19 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
         endpoint: raw.voice?.siri?.endpoint ?? def.voice.siri.endpoint,
         token: raw.voice?.siri?.token ?? def.voice.siri.token,
       },
+      wake: {
+        enabled: raw.voice?.wake?.enabled ?? def.voice.wake.enabled,
+        phrase: raw.voice?.wake?.phrase?.trim() || def.voice.wake.phrase,
+        cooldownMs:
+          typeof raw.voice?.wake?.cooldownMs === "number" && raw.voice.wake.cooldownMs >= 500
+            ? Math.round(raw.voice.wake.cooldownMs)
+            : def.voice.wake.cooldownMs,
+        commandWindowSec:
+          typeof raw.voice?.wake?.commandWindowSec === "number" &&
+          raw.voice.wake.commandWindowSec >= 2
+            ? Math.round(raw.voice.wake.commandWindowSec)
+            : def.voice.wake.commandWindowSec,
+      },
     },
     session: {
       currentSessionId,
@@ -277,7 +308,7 @@ export function setActiveProvider(providerId: string): LlmRuntimeConfig {
   const provider = conf.providers.find((p) => p.id === providerId);
   if (!provider) return conf;
   conf.activeProviderId = providerId;
-  conf.activeModel = provider.model;
+  conf.activeModel = provider.model || provider.models?.[0] || conf.activeModel;
   saveLlmRuntimeConfig(conf);
   return conf;
 }
@@ -340,7 +371,7 @@ export function setTokenBudgetField(
 }
 
 export function setVoiceField(
-  key: keyof Omit<VoiceRuntimeConfig, "siri" | "fallbackProviders" | "primaryProvider">,
+  key: keyof Omit<VoiceRuntimeConfig, "siri" | "fallbackProviders" | "primaryProvider" | "wake">,
   value: number | boolean,
 ): LlmRuntimeConfig {
   const conf = loadLlmRuntimeConfig();
@@ -350,6 +381,31 @@ export function setVoiceField(
     const num = Number(value);
     if (!Number.isNaN(num) && Number.isFinite(num) && num >= 80) {
       conf.voice.chunkMs = Math.round(num);
+    }
+  }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setWakeField(
+  key: "enabled" | "phrase" | "cooldownMs" | "commandWindowSec",
+  value: string | number | boolean,
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  if (key === "enabled") {
+    conf.voice.wake.enabled = Boolean(value);
+  } else if (key === "phrase") {
+    const phrase = String(value).trim();
+    if (phrase.length >= 3) conf.voice.wake.phrase = phrase;
+  } else if (key === "cooldownMs") {
+    const n = Number(value);
+    if (!Number.isNaN(n) && Number.isFinite(n) && n >= 500) {
+      conf.voice.wake.cooldownMs = Math.round(n);
+    }
+  } else if (key === "commandWindowSec") {
+    const n = Number(value);
+    if (!Number.isNaN(n) && Number.isFinite(n) && n >= 2) {
+      conf.voice.wake.commandWindowSec = Math.round(n);
     }
   }
   saveLlmRuntimeConfig(conf);

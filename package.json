@@ -18,7 +18,11 @@
     "clean": "pnpm -r clean && cargo clean",
     "repl": "node packages/gateway/scripts/test-repl.mjs",
     "start": "node packages/gateway/dist/index.js",
-    "web": "cd packages/web && pnpm dev"
+    "web": "cd packages/web && pnpm dev",
+    "run:all": "node scripts/run-all.mjs",
+    "run:all:one-port": "node scripts/run-all.mjs",
+    "usecase:report": "node scripts/usecase-report.mjs",
+    "test:planner": "pnpm --filter @omnistate/gateway test:planner"
   },
   "devDependencies": {
     "tsx": "^4.21.0"
