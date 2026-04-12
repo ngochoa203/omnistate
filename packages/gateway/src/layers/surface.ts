@@ -13,6 +13,8 @@
  */
 
 import * as bridge from "../platform/bridge.js";
+import { fingerprintTree } from "../vision/fingerprint.js";
+import { detectByFingerprint as _detectByFingerprint } from "../vision/detect.js";
 
 export class SurfaceLayer {
   /** Check if the native bridge is available. */
@@ -117,11 +119,34 @@ export class SurfaceLayer {
    * Find a UI element by description.
    *
    * Priority:
-   * 1. Accessibility API (fast, accurate, free)
-   * 2. Vision model (slower, costs API call, but understands semantics)
+   * 1. Fingerprint store — structural identity match (survives colour/theme changes)
+   * 2. Accessibility API (fast, accurate, free)
+   * 3. Vision model (slower, costs API call, but understands semantics)
+   *
+   * Before searching, the accessibility tree is re-walked and all component
+   * fingerprints are refreshed so subsequent calls benefit from the latest
+   * structural snapshot.
    */
   async findElement(description: string): Promise<DetectedElement | null> {
-    // Try accessibility API first
+    // ── Step 1: Refresh the accessibility tree and re-fingerprint ────────────
+    try {
+      if (bridge.isNativeAvailable()) {
+        const rawTree = bridge.getUiTree() as Record<string, unknown> | null | undefined;
+        if (rawTree) {
+          fingerprintTree(rawTree);
+        }
+      }
+    } catch {
+      // Fingerprint refresh failed — continue with stale store or empty store.
+    }
+
+    // ── Step 2: Fingerprint-based detection (structural, most reliable) ───────
+    const fpResult = _detectByFingerprint(description);
+    if (fpResult && fpResult.confidence > 0.5) {
+      return fpResult;
+    }
+
+    // ── Step 3: Accessibility API direct lookup ───────────────────────────────
     try {
       const element = bridge.findElement(description) as Record<
         string,
@@ -143,7 +168,38 @@ export class SurfaceLayer {
         };
       }
     } catch {
-      // Accessibility not available — fall through to vision
+      // Accessibility not available — fall through to vision.
+    }
+
+    // ── Step 4: Accessibility tree scan (broader text/role match) ────────────
+    try {
+      if (bridge.isNativeAvailable()) {
+        const allElements = bridge.getUiElements() as Array<Record<string, unknown>>;
+        const queryLower = description.toLowerCase();
+        const matched = allElements.find((el) => {
+          const title = String(el.title ?? "").toLowerCase();
+          const role = String(el.role ?? "").toLowerCase();
+          const isBoundsValid =
+            typeof el.bounds === "object" &&
+            el.bounds !== null &&
+            ["x", "y", "width", "height"].every(
+              (k) => typeof (el.bounds as Record<string, unknown>)[k] === "number"
+            );
+          return (title.includes(queryLower) || role.includes(queryLower)) && isBoundsValid;
+        });
+        if (matched) {
+          return {
+            id: String(matched.title ?? ""),
+            type: String(matched.role ?? "unknown"),
+            bounds: matched.bounds as { x: number; y: number; width: number; height: number },
+            text: matched.title as string | undefined,
+            confidence: 0.85,
+            detectionMethod: "accessibility",
+          };
+        }
+      }
+    } catch {
+      // Fall through.
     }
 
     // TODO: Vision model fallback (Sprint 3)
@@ -176,6 +232,18 @@ export class SurfaceLayer {
 
   /** Click on a detected element. */
   async clickElement(element: DetectedElement): Promise<void> {
+    // Refresh fingerprints so the store reflects the latest UI state.
+    try {
+      if (bridge.isNativeAvailable()) {
+        const rawTree = bridge.getUiTree() as Record<string, unknown> | null | undefined;
+        if (rawTree) {
+          fingerprintTree(rawTree);
+        }
+      }
+    } catch {
+      /* continue with existing state */
+    }
+
     const centerX = element.bounds.x + element.bounds.width / 2;
     const centerY = element.bounds.y + element.bounds.height / 2;
 

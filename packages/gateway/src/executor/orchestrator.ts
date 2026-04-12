@@ -1139,6 +1139,882 @@ export class Orchestrator {
         const plugins = await this.hybridTools.listIDEPlugins(params.ide as string | undefined);
         return { plugins };
       }
+
+      // ── UC2.2: Search for apps/files (Spotlight/mdfind) ──────────────
+      case "search.spotlight":
+      case "search.files": {
+        const query = String(params.query ?? "");
+        const type = String(params.type ?? "all"); // "app" | "file" | "all"
+        let cmd: string;
+        if (type === "app") {
+          cmd = `mdfind 'kMDItemContentTypeTree == "com.apple.application-bundle" && kMDItemDisplayName == "*${query}*"c' | head -20`;
+        } else if (type === "file") {
+          cmd = `mdfind -name "${query}" | head -20`;
+        } else {
+          cmd = `mdfind "${query}" | head -20`;
+        }
+        const { stdout: searchOut } = await this.deep.execAsync(cmd, 10000);
+        const files = (searchOut ?? "").split("\n").filter(Boolean);
+        return { success: true, query, results: files, count: files.length };
+      }
+
+      // ── UC2.3: Window state management ───────────────────────────────
+      case "window.minimize": {
+        const app = String(params.app ?? params.target ?? "");
+        await this.deep.runAppleScript(`tell application "System Events" to set miniaturized of (first window of (first process whose name contains "${app}")) to true`);
+        return { success: true, action: "minimized", app };
+      }
+      case "window.maximize":
+      case "window.fullscreen": {
+        const app = String(params.app ?? params.target ?? "");
+        await this.deep.runAppleScript(`tell application "System Events" to set value of attribute "AXFullScreen" of (first window of (first process whose name contains "${app}")) to true`);
+        return { success: true, action: "maximized", app };
+      }
+      case "window.restore": {
+        const app = String(params.app ?? params.target ?? "");
+        await this.deep.runAppleScript(`tell application "System Events"
+  set miniaturized of (first window of (first process whose name contains "${app}")) to false
+  set value of attribute "AXFullScreen" of (first window of (first process whose name contains "${app}")) to false
+end tell`);
+        return { success: true, action: "restored", app };
+      }
+
+      // ── UC2.4: Split/Snap windows ─────────────────────────────────────
+      case "window.split":
+      case "window.snap": {
+        const position = String(params.position ?? "left"); // "left" | "right" | "top" | "bottom"
+        const app = String(params.app ?? params.target ?? "");
+        let script: string;
+        if (position === "left") {
+          script = `tell application "System Events" to tell process "${app}" to set position of window 1 to {0, 25}\ntell application "System Events" to tell process "${app}" to set size of window 1 to {960, 1050}`;
+        } else if (position === "right") {
+          script = `tell application "System Events" to tell process "${app}" to set position of window 1 to {960, 25}\ntell application "System Events" to tell process "${app}" to set size of window 1 to {960, 1050}`;
+        } else {
+          script = `tell application "System Events" to tell process "${app}" to set position of window 1 to {0, 25}\ntell application "System Events" to tell process "${app}" to set size of window 1 to {1920, 525}`;
+        }
+        await this.deep.runAppleScript(script);
+        return { success: true, position, app };
+      }
+
+      // ── UC2.6: Focus specific window ──────────────────────────────────
+      case "window.focus": {
+        const app = String(params.app ?? params.target ?? "");
+        await this.deep.runAppleScript(`tell application "${app}" to activate`);
+        return { success: true, action: "focused", app };
+      }
+
+      // ── UC3.1: Create file/directory ──────────────────────────────────
+      case "file.create": {
+        const path = String(params.path ?? "");
+        const type = String(params.type ?? "file"); // "file" | "directory"
+        const content = String(params.content ?? "");
+        if (type === "directory") {
+          await this.deep.execAsync(`mkdir -p "${path}"`, 5000);
+        } else {
+          await this.deep.execAsync(`mkdir -p "$(dirname "${path}")" && printf '%s' ${JSON.stringify(content)} > "${path}"`, 5000);
+        }
+        return { success: true, path, type };
+      }
+
+      // ── UC3.2: Copy/Move files ────────────────────────────────────────
+      case "file.copy": {
+        const src = String(params.source ?? params.src ?? "");
+        const dest = String(params.destination ?? params.dest ?? "");
+        const recursive = params.recursive !== false;
+        const flag = recursive ? "-R" : "";
+        await this.deep.execAsync(`cp ${flag} "${src}" "${dest}"`, 30000);
+        return { success: true, source: src, destination: dest };
+      }
+      case "file.move": {
+        const src = String(params.source ?? params.src ?? "");
+        const dest = String(params.destination ?? params.dest ?? "");
+        await this.deep.execAsync(`mv "${src}" "${dest}"`, 30000);
+        return { success: true, source: src, destination: dest };
+      }
+
+      // ── UC3.3: Batch rename ───────────────────────────────────────────
+      case "file.rename.batch": {
+        const dir = String(params.directory ?? params.dir ?? ".");
+        const pattern = String(params.pattern ?? "");
+        const replacement = String(params.replacement ?? "");
+        const { stdout: renameOut } = await this.deep.execAsync(
+          `cd "${dir}" && for f in *${pattern}*; do mv "$f" "$(echo "$f" | sed "s/${pattern}/${replacement}/g")"; done 2>&1`,
+          30000
+        );
+        return { success: true, directory: dir, pattern, replacement, output: renameOut };
+      }
+
+      // ── UC3.4: Delete files ───────────────────────────────────────────
+      case "file.delete": {
+        const path = String(params.path ?? "");
+        const permanent = Boolean(params.permanent ?? false);
+        if (permanent) {
+          await this.deep.execAsync(`rm -rf "${path}"`, 10000);
+        } else {
+          await this.deep.runAppleScript(`tell application "Finder" to delete POSIX file "${path}"`);
+        }
+        return { success: true, path, permanent };
+      }
+
+      // ── UC3.5: Search files ───────────────────────────────────────────
+      case "file.search": {
+        const name = String(params.name ?? params.query ?? "");
+        const content = String(params.content ?? "");
+        const dir = String(params.directory ?? params.dir ?? "~");
+        let fsCmd: string;
+        if (content) {
+          fsCmd = `grep -rl "${content}" "${dir}" 2>/dev/null | head -20`;
+        } else {
+          fsCmd = `find "${dir}" -name "*${name}*" -maxdepth 5 2>/dev/null | head -20`;
+        }
+        const { stdout: fsOut } = await this.deep.execAsync(fsCmd, 15000);
+        const fsFiles = (fsOut ?? "").split("\n").filter(Boolean);
+        return { success: true, results: fsFiles, count: fsFiles.length };
+      }
+
+      // ── UC3.7: Zip/Unzip ──────────────────────────────────────────────
+      case "file.zip": {
+        const source = String(params.source ?? params.path ?? "");
+        const output = String(params.output ?? `${source}.zip`);
+        await this.deep.execAsync(`zip -r "${output}" "${source}"`, 60000);
+        return { success: true, source, output };
+      }
+      case "file.unzip": {
+        const source = String(params.source ?? params.path ?? "");
+        const dest = String(params.destination ?? params.dest ?? ".");
+        await this.deep.execAsync(`unzip -o "${source}" -d "${dest}"`, 60000);
+        return { success: true, source, destination: dest };
+      }
+
+      // UC13.4 (deep route): Auto-organize desktop
+      case "file.organizeDesktop": {
+        const desktop = String(params.path ?? "~/Desktop");
+        const orgScript = `
+          cd "${desktop}" && \
+          mkdir -p Documents Images Videos Music Archives Code Other && \
+          mv -n *.{pdf,doc,docx,txt,pages,xlsx,csv,pptx} Documents/ 2>/dev/null; \
+          mv -n *.{jpg,jpeg,png,gif,svg,ico,webp,heic,raw,tiff} Images/ 2>/dev/null; \
+          mv -n *.{mp4,mov,avi,mkv,wmv,flv,webm} Videos/ 2>/dev/null; \
+          mv -n *.{mp3,wav,flac,aac,ogg,m4a} Music/ 2>/dev/null; \
+          mv -n *.{zip,rar,7z,tar,gz,dmg,iso} Archives/ 2>/dev/null; \
+          mv -n *.{js,ts,py,rs,go,java,c,cpp,h,rb,php,swift,kt} Code/ 2>/dev/null; \
+          echo "Desktop organized"
+        `;
+        const { stdout: orgOut } = await this.deep.execAsync(orgScript, 30000);
+        return { success: true, path: desktop, output: orgOut };
+      }
+
+      // ── UC4.1: Open URL / Tab management ─────────────────────────────
+      case "browser.open": {
+        const url = String(params.url ?? "");
+        const browser = String(params.browser ?? "default");
+        if (browser === "default") {
+          await this.deep.execAsync(`open "${url}"`, 5000);
+        } else {
+          await this.deep.execAsync(`open -a "${browser}" "${url}"`, 5000);
+        }
+        return { success: true, url, browser };
+      }
+      case "browser.newTab": {
+        const url = String(params.url ?? "about:blank");
+        await this.deep.runAppleScript(`
+tell application "Google Chrome"
+  activate
+  make new tab at end of tabs of front window with properties {URL:"${url}"}
+end tell`);
+        return { success: true, url };
+      }
+      case "browser.closeTab": {
+        await this.deep.runAppleScript(`
+tell application "Google Chrome"
+  close active tab of front window
+end tell`);
+        return { success: true, action: "tab closed" };
+      }
+
+      // ── UC4.2: Fill form via JavaScript injection ─────────────────────
+      case "browser.fillForm":
+      case "form.fill": {
+        const fields = (params.fields as Record<string, string>) ?? {};
+        const filled: string[] = [];
+        for (const [selector, value] of Object.entries(fields)) {
+          const safeSelector = selector.replace(/'/g, "\\'").replace(/"/g, '\\"');
+          const safeValue = value.replace(/'/g, "\\'").replace(/"/g, '\\"');
+          await this.deep.runAppleScript(`
+tell application "Google Chrome"
+  execute front window's active tab javascript "var el = document.querySelector('${safeSelector}') || document.querySelector('[name=\\"${safeSelector}\\"]') || document.querySelector('[placeholder*=\\"${safeSelector}\\"]'); if (el) { el.value = '${safeValue}'; el.dispatchEvent(new Event('input', {bubbles:true})); }"
+end tell`);
+          filled.push(`${selector}: filled`);
+        }
+        return { success: true, filled };
+      }
+
+      // ── UC4.3: Web scraping ───────────────────────────────────────────
+      case "browser.scrape":
+      case "web.scrape": {
+        const selector = String(params.selector ?? "body");
+        const attribute = String(params.attribute ?? "textContent");
+        const scrapeResult = await this.deep.runAppleScript(`
+tell application "Google Chrome"
+  set jsResult to execute front window's active tab javascript "JSON.stringify(Array.from(document.querySelectorAll('${selector}')).map(el => el.${attribute}).slice(0, 50))"
+  return jsResult
+end tell`);
+        return { success: true, data: scrapeResult, selector };
+      }
+
+      // ── UC4.4: Download file ──────────────────────────────────────────
+      case "browser.download":
+      case "web.download": {
+        const dlUrl = String(params.url ?? "");
+        const output = String(params.output ?? params.path ?? "~/Downloads/");
+        await this.deep.execAsync(`curl -L -o "${output}" "${dlUrl}"`, 120000);
+        return { success: true, url: dlUrl, output };
+      }
+
+      // ── UC4.5: Bookmark current tab ───────────────────────────────────
+      case "browser.bookmark": {
+        const bookmarkResult = await this.deep.runAppleScript(`
+tell application "Google Chrome"
+  set bookmarkURL to URL of active tab of front window
+  set bookmarkTitle to title of active tab of front window
+  return bookmarkTitle & "|" & bookmarkURL
+end tell`);
+        const [title, url] = (bookmarkResult ?? "").split("|");
+        return { success: true, url: url ?? params.url, title: title ?? params.title, action: "bookmarked" };
+      }
+
+      // ── UC5.1: WiFi toggle ────────────────────────────────────────────
+      case "wifi.toggle": {
+        const wifiEnabled = Boolean(params.enabled ?? true);
+        const wifiCmd = wifiEnabled
+          ? "networksetup -setairportpower en0 on"
+          : "networksetup -setairportpower en0 off";
+        await this.deep.execAsync(wifiCmd, 5000);
+        return { success: true, wifi: wifiEnabled };
+      }
+
+      // ── UC5.3: Lock screen ────────────────────────────────────────────
+      case "system.lock": {
+        await this.deep.execAsync(
+          "/System/Library/CoreServices/Menu\\ Extras/User.menu/Contents/Resources/CGSession -suspend",
+          5000
+        );
+        return { success: true, action: "screen locked" };
+      }
+
+      // ── UC5.4: Night Shift alias ──────────────────────────────────────
+      case "display.nightshift": {
+        if (params.enabled !== undefined) {
+          const success = await this.deepSystem.setNightShift(params.enabled as boolean);
+          return { success };
+        }
+        const enabled = await this.deepSystem.getNightShiftStatus();
+        return { enabled };
+      }
+
+      // ── UC5.5: Focus / Do Not Disturb mode ───────────────────────────
+      case "system.dnd":
+      case "system.focus": {
+        const dndEnabled = Boolean(params.enabled ?? true);
+        const dndVal = dndEnabled ? "true" : "false";
+        await this.deep.execAsync(
+          `defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean ${dndVal} && killall NotificationCenter 2>/dev/null || true`,
+          5000
+        );
+        return { success: true, dnd: dndEnabled };
+      }
+
+      // ── UC11: Developer & CLI ────────────────────────────────────────
+      // UC11.1: Natural language to shell command
+      case "nl.toCommand":
+      case "shell.fromNL": {
+        const text = String(params.text ?? params.query ?? "");
+        const { classifyIntent } = await import("../planner/intent.js");
+        const intent = await classifyIntent(text);
+        // Extract shell command from intent entities if present
+        const cmdEntity = Object.values(intent.entities ?? {}).find(e => e.type === "command");
+        const nlCmd = cmdEntity?.value ?? intent.rawText ?? "";
+        if (nlCmd && /^[.\/~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|python3|node|make|brew|docker|kubectl|tmutil|osascript)\b/i.test(nlCmd.trim())) {
+          const { stdout: nlOut } = await this.deep.execAsync(nlCmd, 30000);
+          return { success: true, originalText: text, command: nlCmd, output: nlOut };
+        }
+        return { success: false, error: "Could not convert to shell command", text };
+      }
+
+      // UC11.2: Git operations
+      case "git.status": {
+        const dir = String(params.dir ?? params.directory ?? ".");
+        const { stdout: gitStatusOut } = await this.deep.execAsync(`cd "${dir}" && git status --short --branch`, 10000);
+        return { success: true, output: gitStatusOut };
+      }
+      case "git.commit": {
+        const dir = String(params.dir ?? ".");
+        const message = String(params.message ?? "Auto-commit by OmniState");
+        const addAll = params.addAll !== false;
+        if (addAll) {
+          await this.deep.execAsync(`cd "${dir}" && git add -A`, 10000);
+        }
+        const { stdout: gitCommitOut } = await this.deep.execAsync(`cd "${dir}" && git commit -m "${message}"`, 10000);
+        return { success: true, message, output: gitCommitOut };
+      }
+      case "git.push": {
+        const dir = String(params.dir ?? ".");
+        const branch = String(params.branch ?? "");
+        const gitPushCmd = branch ? `cd "${dir}" && git push origin "${branch}"` : `cd "${dir}" && git push`;
+        const { stdout: gitPushOut } = await this.deep.execAsync(gitPushCmd, 30000);
+        return { success: true, output: gitPushOut };
+      }
+      case "git.pull": {
+        const dir = String(params.dir ?? ".");
+        const { stdout: gitPullOut } = await this.deep.execAsync(`cd "${dir}" && git pull`, 30000);
+        return { success: true, output: gitPullOut };
+      }
+      case "git.branch": {
+        const dir = String(params.dir ?? ".");
+        const name = String(params.name ?? "");
+        const action = String(params.action ?? "create"); // create | switch | delete | list
+        let branchCmd: string;
+        switch (action) {
+          case "create": branchCmd = `cd "${dir}" && git checkout -b "${name}"`; break;
+          case "switch": branchCmd = `cd "${dir}" && git checkout "${name}"`; break;
+          case "delete": branchCmd = `cd "${dir}" && git branch -d "${name}"`; break;
+          default: branchCmd = `cd "${dir}" && git branch -a`; break;
+        }
+        const { stdout: gitBranchOut } = await this.deep.execAsync(branchCmd, 10000);
+        return { success: true, action, name, output: gitBranchOut };
+      }
+
+      // UC11.3: Docker shortcuts
+      case "docker.ps": {
+        const containers = await this.deepSystem.listContainers();
+        return { success: true, containers };
+      }
+      case "docker.start": {
+        const name = String(params.name ?? params.container ?? "");
+        const success = await this.deepSystem.startContainer(name);
+        return { success, name, action: "started" };
+      }
+      case "docker.stop": {
+        const name = String(params.name ?? params.container ?? "");
+        const success = await this.deepSystem.stopContainer(name);
+        return { success, name, action: "stopped" };
+      }
+      case "docker.compose": {
+        const dir = String(params.dir ?? ".");
+        const action = String(params.action ?? "up"); // up | down | restart
+        const detach = action === "up" ? "-d" : "";
+        const { stdout: composeOut } = await this.deep.execAsync(
+          `cd "${dir}" && docker compose ${action} ${detach}`,
+          60000
+        );
+        return { success: true, action, output: composeOut };
+      }
+
+      // UC11.4: Log analysis
+      case "log.analyze": {
+        const logPath = String(params.path ?? "");
+        const filter = String(params.filter ?? "error|warning|fatal|exception");
+        const lines = Number(params.lines ?? 100);
+        let logOut: string;
+        if (logPath) {
+          const r = await this.deep.execAsync(
+            `grep -iE "${filter}" "${logPath}" | tail -${lines}`,
+            15000
+          );
+          logOut = r.stdout ?? "";
+        } else {
+          const r = await this.deep.execAsync(
+            `log show --last 1h --predicate 'messageType == error' | tail -${lines}`,
+            15000
+          );
+          logOut = r.stdout ?? "";
+        }
+        const logLines = logOut.split("\n").filter(Boolean);
+        return { success: true, path: logPath, filter, count: logLines.length, logs: logLines.slice(-20) };
+      }
+
+      // ── UC12: System Maintenance ─────────────────────────────────────
+      // UC12.1: Disk cleanup
+      case "maintenance.diskCleanup": {
+        const cleanResults: string[] = [];
+
+        const { stdout: cacheOut } = await this.deep.execAsync(
+          "rm -rf ~/Library/Caches/* 2>/dev/null; du -sh ~/Library/Caches/",
+          30000
+        );
+        cleanResults.push(`Caches: ${cacheOut?.trim()}`);
+
+        await this.deep.execAsync(
+          "rm -rf /tmp/com.apple.* 2>/dev/null; rm -rf $TMPDIR/* 2>/dev/null; echo 'Temp cleaned'",
+          30000
+        );
+        cleanResults.push("Temp files cleared");
+
+        await this.deep.execAsync(
+          "rm -rf ~/.Trash/* 2>/dev/null; echo 'Trash emptied'",
+          30000
+        );
+        cleanResults.push("Trash emptied");
+
+        await this.deep.execAsync(
+          "rm -rf ~/Library/Developer/Xcode/DerivedData/* 2>/dev/null; echo 'ok'",
+          30000
+        );
+        cleanResults.push("Xcode DerivedData cleaned");
+
+        const { stdout: spaceOut } = await this.deep.execAsync("df -h / | tail -1", 5000);
+        cleanResults.push(`Disk: ${spaceOut?.trim()}`);
+
+        return { success: true, actions: cleanResults };
+      }
+
+      // UC12.2: Network troubleshooting
+      case "maintenance.networkFix": {
+        const netResults: string[] = [];
+
+        const { stdout: dnsOut } = await this.deep.execAsync(
+          "sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder && echo 'DNS flushed'",
+          10000
+        );
+        netResults.push(dnsOut?.trim() ?? "DNS flush attempted");
+
+        const { stdout: wifiOut } = await this.deep.execAsync(
+          "networksetup -setairportpower en0 off && sleep 2 && networksetup -setairportpower en0 on && echo 'WiFi reset'",
+          15000
+        );
+        netResults.push(wifiOut?.trim() ?? "WiFi reset attempted");
+
+        const { stdout: pingOut } = await this.deep.execAsync("ping -c 3 8.8.8.8 2>&1 | tail -3", 10000);
+        netResults.push(`Ping: ${pingOut?.trim()}`);
+
+        return { success: true, actions: netResults };
+      }
+
+      // UC12.3: Kill memory leaks
+      case "maintenance.killMemoryLeaks": {
+        const threshold = Number(params.threshold ?? 500); // MB
+        const topProcs = await this.deepSystem.getTopMemoryProcesses(20);
+        const killed: string[] = [];
+
+        for (const proc of topProcs) {
+          const memMB = Math.round(parseInt(proc.memRSS, 10) / 1024);
+          if (memMB > threshold) {
+            try {
+              await this.deep.execAsync(`kill -TERM ${proc.pid}`, 5000);
+              killed.push(`${proc.name} (PID ${proc.pid}, ${memMB}MB)`);
+            } catch {}
+          }
+        }
+
+        return { success: true, threshold: `${threshold}MB`, killed, count: killed.length };
+      }
+
+      // ── UC14: Proactive Learning & Personalization ───────────────────
+      // UC14.1: Habit detection
+      case "learning.detectHabits": {
+        const history = await this.deepSystem.getShellHistory(500);
+
+        const cmdFreq: Record<string, number> = {};
+        for (const line of history) {
+          const habitCmd = line.split(" ")[0];
+          if (habitCmd) cmdFreq[habitCmd] = (cmdFreq[habitCmd] || 0) + 1;
+        }
+
+        const topCmds = Object.entries(cmdFreq)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([cmd, count]) => ({ command: cmd, count }));
+
+        const { stdout: appHistOut } = await this.deep.execAsync(
+          "log show --last 24h --predicate 'process == \"launchd\" && messageType == info' 2>/dev/null | grep -i 'launch' | head -20",
+          10000
+        );
+
+        return {
+          success: true,
+          topCommands: topCmds,
+          recentApps: appHistOut?.split("\n").filter(Boolean).slice(0, 10) ?? [],
+          suggestion: topCmds.length > 0
+            ? `Your most used commands: ${topCmds.slice(0, 5).map(c => c.command).join(", ")}`
+            : "Not enough data yet",
+        };
+      }
+
+      // UC14.2: Macro suggestion — delegates to hybridAuto with empty sequence
+      case "learning.suggestMacro": {
+        const macro = await this.hybridAuto.inferMacro({ actions: [], sessionId: "" } as any);
+        return { success: true, macro };
+      }
+
+      // UC14.3: Health reminder (eye break, posture, etc.)
+      case "learning.healthReminder": {
+        const type = String(params.type ?? "break"); // "break" | "posture" | "hydrate" | "eyerest"
+        const intervalMinutes = Number(params.interval ?? 30);
+
+        await this.deep.execAsync(
+          `(while true; do sleep ${intervalMinutes * 60}; osascript -e 'display notification "Time for a ${type} break! Stand up and stretch." with title "OmniState Health" sound name "Purr"'; done) &`,
+          5000
+        );
+
+        const hour = new Date().getHours();
+        if (hour >= 22 || hour < 6) {
+          await (this.deepOS as any).setNightShift?.(true);
+          return { success: true, type, interval: intervalMinutes, nightShiftEnabled: true, lateHour: true };
+        }
+
+        return { success: true, type, interval: intervalMinutes };
+      }
+
+      // UC14.4: Pre-fetch resources for upcoming events
+      case "learning.prefetch": {
+        const calResult = await this.deep.runAppleScript(`
+          tell application "Calendar"
+            set now to current date
+            set later to now + (30 * 60) -- next 30 minutes
+            set upcomingEvents to {}
+            repeat with cal in calendars
+              repeat with evt in (events of cal whose start date > now and start date < later)
+                set end of upcomingEvents to {summary of evt, location of evt, start date of evt}
+              end repeat
+            end repeat
+            return upcomingEvents as text
+          end tell
+        `);
+
+        const events = calResult?.split(",").filter(Boolean) ?? [];
+        const prefetchActions: string[] = [];
+
+        for (const event of events) {
+          const lower = event.toLowerCase();
+          if (lower.includes("zoom") || lower.includes("meet") || lower.includes("call")) {
+            prefetchActions.push("Opening video call app");
+            await this.deep.execAsync("open -a Zoom", 5000).catch(() => {});
+          }
+          if (lower.includes("review") || lower.includes("code")) {
+            prefetchActions.push("Opening IDE");
+            await this.deep.execAsync("open -a 'Visual Studio Code'", 5000).catch(() => {});
+          }
+        }
+
+        return {
+          success: true,
+          upcomingEvents: events,
+          prefetchActions,
+          checkedWindow: "next 30 minutes",
+        };
+      }
+
+      // ── UC6: Communication & Media ───────────────────────────────────
+      case "media.play":
+      case "media.pause":
+      case "media.toggle": {
+        await this.surface.keyTap("space", { meta: false });
+        return { success: true, action: "media toggled" };
+      }
+      case "media.next": {
+        await this.deep.runAppleScript(`tell application "Music" to next track`);
+        return { success: true, action: "next track" };
+      }
+      case "media.previous": {
+        await this.deep.runAppleScript(`tell application "Music" to previous track`);
+        return { success: true, action: "previous track" };
+      }
+      case "media.info": {
+        const mediaInfoResult = await this.deep.runAppleScript(`
+          tell application "Music"
+            set trackName to name of current track
+            set trackArtist to artist of current track
+            set trackAlbum to album of current track
+            return trackName & " - " & trackArtist & " (" & trackAlbum & ")"
+          end tell
+        `);
+        return { success: true, nowPlaying: mediaInfoResult };
+      }
+      case "email.compose":
+      case "email.send": {
+        const emailTo = String(params.to ?? "");
+        const emailSubject = String(params.subject ?? "");
+        const emailBody = String(params.body ?? "");
+        await this.deep.runAppleScript(`
+          tell application "Mail"
+            activate
+            set newMsg to make new outgoing message with properties {subject:"${emailSubject}", content:"${emailBody}", visible:true}
+            tell newMsg
+              make new to recipient at end of to recipients with properties {address:"${emailTo}"}
+            end tell
+            ${params.send ? "send newMsg" : ""}
+          end tell
+        `);
+        return { success: true, to: emailTo, subject: emailSubject, sent: Boolean(params.send) };
+      }
+      case "calendar.create": {
+        const calTitle = String(params.title ?? params.event ?? "");
+        const calDate = String(params.date ?? new Date().toISOString().split("T")[0]);
+        const calTime = String(params.time ?? "09:00");
+        const calDuration = Number(params.duration ?? 60);
+        await this.deep.runAppleScript(`
+          tell application "Calendar"
+            activate
+            tell calendar "Home"
+              set startDate to current date
+              set hours of startDate to ${parseInt(calTime.split(":")[0])}
+              set minutes of startDate to ${parseInt(calTime.split(":")[1] || "0")}
+              set endDate to startDate + (${calDuration} * 60)
+              make new event with properties {summary:"${calTitle}", start date:startDate, end date:endDate}
+            end tell
+          end tell
+        `);
+        return { success: true, title: calTitle, date: calDate, time: calTime, duration: calDuration };
+      }
+      case "reminder.create": {
+        const reminderTitle = String(params.title ?? params.text ?? "");
+        const reminderDueDate = String(params.dueDate ?? "");
+        if (reminderDueDate) {
+          await this.deep.runAppleScript(`
+            tell application "Reminders"
+              activate
+              tell list "Reminders"
+                make new reminder with properties {name:"${reminderTitle}", due date:date "${reminderDueDate}"}
+              end tell
+            end tell
+          `);
+        } else {
+          await this.deep.runAppleScript(`
+            tell application "Reminders"
+              activate
+              tell list "Reminders"
+                make new reminder with properties {name:"${reminderTitle}"}
+              end tell
+            end tell
+          `);
+        }
+        return { success: true, title: reminderTitle, dueDate: reminderDueDate };
+      }
+      case "timer.set":
+      case "alarm.set": {
+        const timerSeconds = Number(params.seconds ?? (params.minutes ? Number(params.minutes) * 60 : 300));
+        const timerMessage = String(params.message ?? "Timer finished!");
+        await this.deep.execAsync(
+          `(sleep ${timerSeconds} && osascript -e 'display notification "${timerMessage}" with title "OmniState Timer" sound name "Glass"') &`,
+          5000
+        );
+        return { success: true, seconds: timerSeconds, message: timerMessage };
+      }
+
+      // ── UC7: Workflow Automation ─────────────────────────────────────
+      case "workflow.research": {
+        const researchTopic = String(params.topic ?? params.query ?? "");
+        const researchSteps = [
+          { tool: "browser.open", params: { url: `https://www.google.com/search?q=${encodeURIComponent(researchTopic)}` } },
+        ];
+        for (const step of researchSteps) {
+          await this.executeDeep(step.tool, step.params);
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        return { success: true, topic: researchTopic, action: "research workflow started" };
+      }
+      case "workflow.dataEntry": {
+        const dataSource = String(params.source ?? "");
+        const dataEntryResult = await this.deep.execAsync(`cat "${dataSource}" | head -50`, 5000);
+        return { success: true, source: dataSource, data: dataEntryResult.stdout, action: "data loaded for entry" };
+      }
+      case "workflow.meeting": {
+        const meetingApp = String(params.app ?? "zoom");
+        const meetingNotes = String(params.notes ?? "");
+        const meetingSlides = String(params.slides ?? "");
+        await this.executeDeep("app.launch", { name: meetingApp });
+        await new Promise(r => setTimeout(r, 2000));
+        if (meetingSlides) {
+          await this.deep.execAsync(`open "${meetingSlides}"`, 5000);
+        }
+        if (meetingNotes) {
+          await this.deep.execAsync(`open "${meetingNotes}"`, 5000);
+        }
+        return { success: true, app: meetingApp, action: "meeting setup complete" };
+      }
+      case "workflow.dev": {
+        const devIde = String(params.ide ?? "Visual Studio Code");
+        const devProject = String(params.project ?? ".");
+        const devServer = String(params.server ?? "");
+        await this.deep.execAsync(`code "${devProject}"`, 5000);
+        await new Promise(r => setTimeout(r, 2000));
+        if (devServer) {
+          await this.deep.execAsync(`cd "${devProject}" && ${devServer} &`, 5000);
+        }
+        await this.executeDeep("window.snap", { app: devIde, position: "left" });
+        return { success: true, ide: devIde, project: devProject, server: devServer, action: "dev environment ready" };
+      }
+
+      // ── UC8: Software & Environment ──────────────────────────────────
+      case "software.install": {
+        const swInstallName = String(params.name ?? params.package ?? "");
+        const swInstallManager = String(params.manager ?? "brew");
+        let swInstallCmd: string;
+        switch (swInstallManager) {
+          case "cask": swInstallCmd = `brew install --cask "${swInstallName}"`; break;
+          case "npm": swInstallCmd = `npm install -g "${swInstallName}"`; break;
+          case "pip": swInstallCmd = `pip3 install "${swInstallName}"`; break;
+          default: swInstallCmd = `brew install "${swInstallName}"`; break;
+        }
+        const swInstallResult = await this.deep.execAsync(swInstallCmd, 120000);
+        return { success: true, name: swInstallName, manager: swInstallManager, output: swInstallResult.stdout };
+      }
+      case "software.uninstall": {
+        const swUninstallName = String(params.name ?? params.package ?? "");
+        const swUninstallManager = String(params.manager ?? "brew");
+        let swUninstallCmd: string;
+        switch (swUninstallManager) {
+          case "cask": swUninstallCmd = `brew uninstall --cask "${swUninstallName}"`; break;
+          case "npm": swUninstallCmd = `npm uninstall -g "${swUninstallName}"`; break;
+          case "pip": swUninstallCmd = `pip3 uninstall -y "${swUninstallName}"`; break;
+          default: swUninstallCmd = `brew uninstall "${swUninstallName}"`; break;
+        }
+        const swUninstallResult = await this.deep.execAsync(swUninstallCmd, 60000);
+        if (swUninstallManager === "brew" || swUninstallManager === "cask") {
+          await this.deep.execAsync("brew cleanup", 30000);
+        }
+        return { success: true, name: swUninstallName, manager: swUninstallManager, output: swUninstallResult.stdout };
+      }
+      case "software.update": {
+        const swUpdates = await this.deepSystem.checkForUpdates();
+        return { success: true, updates: swUpdates };
+      }
+
+      // ── UC9: Hardware Control ────────────────────────────────────────
+      case "hardware.eject": {
+        const ejectVolume = String(params.volume ?? params.name ?? "");
+        if (ejectVolume) {
+          await this.deep.execAsync(`diskutil eject "${ejectVolume}"`, 10000);
+        } else {
+          await this.deep.execAsync("diskutil eject external", 10000);
+        }
+        return { success: true, volume: ejectVolume, action: "ejected" };
+      }
+      case "hardware.print": {
+        const hwPrintFile = String(params.file ?? params.path ?? "");
+        const hwPrinter = String(params.printer ?? "");
+        const hwCopies = Number(params.copies ?? 1);
+        const hwPrinterFlag = hwPrinter ? `-d "${hwPrinter}"` : "";
+        await this.deep.execAsync(`lpr ${hwPrinterFlag} -# ${hwCopies} "${hwPrintFile}"`, 10000);
+        return { success: true, file: hwPrintFile, printer: hwPrinter, copies: hwCopies };
+      }
+      case "hardware.webcam.lock": {
+        const webcamLocked = Boolean(params.locked ?? true);
+        if (webcamLocked) {
+          await this.deep.execAsync(
+            "sudo killall VDCAssistant 2>/dev/null; sudo killall AppleCameraAssistant 2>/dev/null",
+            5000
+          );
+        }
+        return { success: true, webcam: webcamLocked ? "locked" : "unlocked" };
+      }
+      case "hardware.mic.lock": {
+        const micLocked = Boolean(params.locked ?? true);
+        await this.deepSystem.toggleMute();
+        return { success: true, mic: micLocked ? "locked" : "unlocked" };
+      }
+      case "hardware.health": {
+        const hwBattery = await this.deepSystem.getBatteryInfo();
+        const hwMemory = await this.deepSystem.getMemoryPressure();
+        const hwSwap = await this.deepSystem.getSwapUsage();
+        const hwTopProcs = await this.deepSystem.getTopMemoryProcesses(5);
+
+        let hwCpuTemp = "N/A";
+        try {
+          const hwTempResult = await this.deep.execAsync(
+            "sudo powermetrics --samplers smc -n 1 -i 100 2>/dev/null | grep \'CPU die temperature\' | head -1",
+            5000
+          );
+          hwCpuTemp = hwTempResult.stdout?.trim() ?? "N/A";
+        } catch {}
+
+        let hwDiskHealth = "N/A";
+        try {
+          const hwDiskResult = await this.deep.execAsync(
+            "diskutil info disk0 | grep SMART",
+            5000
+          );
+          hwDiskHealth = hwDiskResult.stdout?.trim() ?? "N/A";
+        } catch {}
+
+        return {
+          success: true,
+          battery: hwBattery,
+          memory: hwMemory,
+          swap: hwSwap,
+          cpuTemp: hwCpuTemp,
+          diskHealth: hwDiskHealth,
+          topMemoryProcesses: hwTopProcs,
+        };
+      }
+
+      // ── UC10: Security & Privacy ─────────────────────────────────────
+      case "security.vpn.toggle": {
+        const vpnName = String(params.name ?? "");
+        const vpnEnabled = Boolean(params.enabled ?? true);
+        if (vpnEnabled) {
+          await this.deep.execAsync(
+            `scutil --nc start "${vpnName}" 2>/dev/null || networksetup -connectpppoeservice "${vpnName}"`,
+            10000
+          );
+        } else {
+          await this.deep.execAsync(
+            `scutil --nc stop "${vpnName}" 2>/dev/null || networksetup -disconnectpppoeservice "${vpnName}"`,
+            10000
+          );
+        }
+        return { success: true, vpn: vpnName, enabled: vpnEnabled };
+      }
+      case "security.dns.set": {
+        const secDns = String(params.dns ?? params.server ?? "1.1.1.1");
+        const secDnsIface = String(params.interface ?? "Wi-Fi");
+        await this.deep.execAsync(
+          `networksetup -setdnsservers "${secDnsIface}" ${secDns}`,
+          5000
+        );
+        return { success: true, dns: secDns, interface: secDnsIface };
+      }
+      case "security.proxy.set": {
+        const proxyHost = String(params.host ?? "");
+        const proxyPort = Number(params.port ?? 8080);
+        const proxyIface = String(params.interface ?? "Wi-Fi");
+        await this.deep.execAsync(
+          `networksetup -setwebproxy "${proxyIface}" "${proxyHost}" ${proxyPort}`,
+          5000
+        );
+        return { success: true, host: proxyHost, port: proxyPort };
+      }
+      case "security.scan": {
+        const scanPath = String(params.path ?? "/");
+        const scanResult = await this.deep.execAsync(
+          `clamscan -r "${scanPath}" --max-dir-recursion=3 2>&1 | tail -20`,
+          120000
+        );
+        return { success: true, path: scanPath, output: scanResult.stdout };
+      }
+      case "security.vault.get": {
+        const vaultName = String(params.name ?? params.search ?? "");
+        const vaultResult = await this.deep.execAsync(
+          `bw get item "${vaultName}" --pretty 2>/dev/null | head -20`,
+          10000
+        );
+        return { success: true, name: vaultName, data: vaultResult.stdout };
+      }
+      case "security.encrypt": {
+        const encryptPath = String(params.path ?? "");
+        const encryptPassword = String(params.password ?? "");
+        await this.deep.execAsync(
+          `hdiutil create -encryption -stdinpass -srcfolder "${encryptPath}" "${encryptPath}.dmg" <<< "${encryptPassword}"`,
+          60000
+        );
+        return { success: true, path: encryptPath, output: `${encryptPath}.dmg` };
+      }
+      case "security.shred": {
+        const shredPath = String(params.path ?? "");
+        await this.deep.execAsync(`rm -P "${shredPath}"`, 30000);
+        return { success: true, path: shredPath, action: "securely deleted" };
+      }
+
       default:
         throw new Error(`Unknown deep layer tool: ${tool}`);
     }
@@ -1252,7 +2128,6 @@ export class Orchestrator {
         }
 
         throw new Error("ui.click requires element, query, or x/y coordinates");
-        return {};
       }
       case "ui.clickAt": {
         await this.surface.moveMouse(params.x as number, params.y as number);
@@ -1297,6 +2172,44 @@ export class Orchestrator {
         await waitMs((params.ms as number | undefined) ?? 300);
         return {};
       }
+
+      // ── UC1.5: Highlight / Select text by mouse drag ─────────────────
+      case "ui.highlight":
+      case "ui.select": {
+        const fromX = Number(params.fromX ?? params.x1 ?? 0);
+        const fromY = Number(params.fromY ?? params.y1 ?? 0);
+        const toX = Number(params.toX ?? params.x2 ?? 0);
+        const toY = Number(params.toY ?? params.y2 ?? 0);
+        await this.surface.drag(fromX, fromY, toX, toY);
+        return { success: true, action: "text highlighted" };
+      }
+
+      // ── UC1.9: Switch virtual desktops ───────────────────────────────
+      case "ui.desktop.switch": {
+        const direction = String(params.direction ?? "right");
+        const modifiers = { control: true };
+        if (direction === "left") {
+          await this.surface.keyTap("left", modifiers);
+        } else {
+          await this.surface.keyTap("right", modifiers);
+        }
+        return { success: true, direction };
+      }
+
+      // ── UC1.10b: Screen recording ────────────────────────────────────
+      case "screen.record.start": {
+        const output = String(params.output ?? "~/Desktop/recording.mov");
+        await this.deep.execAsync(
+          `screencapture -v -C -T 0 "${output}" &`,
+          5000
+        );
+        return { success: true, output };
+      }
+      case "screen.record.stop": {
+        await this.deep.execAsync("pkill -f 'screencapture -v'", 5000);
+        return { success: true, action: "recording stopped" };
+      }
+
       case "vision.modal.detect": {
         const modal = await this.vision.detectModal();
         return { modal };
@@ -1342,6 +2255,86 @@ export class Orchestrator {
         const language = await this.vision.detectUILanguage();
         return { language };
       }
+
+      // ── UC13: Context-Aware & Vision ─────────────────────────────────
+      // UC13.1: On-screen translation (OCR + translate)
+      case "vision.translate": {
+        const capture = await this.surface.captureScreen();
+        if (!capture) return { success: false, error: "Screen capture failed" };
+
+        const { stdout: ocrOut } = await this.deep.execAsync(
+          "screencapture -x /tmp/omni_translate.png && shortcuts run 'Live Text' -i /tmp/omni_translate.png 2>/dev/null || echo 'OCR not available'",
+          15000
+        );
+        return { success: true, text: ocrOut, action: "text extracted for translation" };
+      }
+
+      // UC13.2: Smart OCR — extract data from screen
+      case "vision.ocr": {
+        const region = params.region as { x: number; y: number; width: number; height: number } | undefined;
+        if (region) {
+          await this.deep.execAsync(
+            `screencapture -x -R${region.x},${region.y},${region.width},${region.height} /tmp/omni_ocr.png`,
+            5000
+          );
+        } else {
+          await this.deep.execAsync("screencapture -x /tmp/omni_ocr.png", 5000);
+        }
+
+        const { stdout: tesseractOut } = await this.deep.execAsync(
+          "tesseract /tmp/omni_ocr.png stdout 2>/dev/null || echo 'Tesseract not installed. Install with: brew install tesseract'",
+          15000
+        );
+        return { success: true, text: tesseractOut?.trim(), region };
+      }
+
+      // UC13.3: Screen context summary
+      case "vision.context":
+      case "vision.summarize": {
+        const tree = bridge.getUiTree?.();
+        const activeApp = (tree as any)?.title ?? "Unknown";
+        const windowTitle = (tree as any)?.children?.[0]?.title ?? "";
+
+        const { stdout: appsListOut } = await this.deep.execAsync(
+          "osascript -e 'tell application \"System Events\" to get name of every process whose background only is false'",
+          5000
+        );
+
+        const doc = await this.deep.runAppleScript(`
+          tell application "System Events"
+            set frontApp to name of first application process whose frontmost is true
+            return frontApp
+          end tell
+        `);
+
+        return {
+          success: true,
+          activeApp,
+          windowTitle,
+          openApps: appsListOut?.split(", ") ?? [],
+          frontApp: doc,
+          context: `You are in ${activeApp}${windowTitle ? ` - "${windowTitle}"` : ""}`,
+        };
+      }
+
+      // UC13.4: Auto-organize desktop
+      case "vision.organizeDesktop": {
+        const desktop = String(params.path ?? "~/Desktop");
+        const orgScript = `
+          cd "${desktop}" && \
+          mkdir -p Documents Images Videos Music Archives Code Other && \
+          mv -n *.{pdf,doc,docx,txt,pages,xlsx,csv,pptx} Documents/ 2>/dev/null; \
+          mv -n *.{jpg,jpeg,png,gif,svg,ico,webp,heic,raw,tiff} Images/ 2>/dev/null; \
+          mv -n *.{mp4,mov,avi,mkv,wmv,flv,webm} Videos/ 2>/dev/null; \
+          mv -n *.{mp3,wav,flac,aac,ogg,m4a} Music/ 2>/dev/null; \
+          mv -n *.{zip,rar,7z,tar,gz,dmg,iso} Archives/ 2>/dev/null; \
+          mv -n *.{js,ts,py,rs,go,java,c,cpp,h,rb,php,swift,kt} Code/ 2>/dev/null; \
+          echo "Desktop organized"
+        `;
+        const { stdout: visionOrgOut } = await this.deep.execAsync(orgScript, 30000);
+        return { success: true, path: desktop, output: visionOrgOut };
+      }
+
       default:
         throw new Error(`Unknown surface layer tool: ${tool}`);
     }

@@ -12,6 +12,9 @@ pub mod android;
 use omnistate_core::error::OmniResult;
 use omnistate_core::UIElement;
 
+#[cfg(target_os = "macos")]
+pub use macos::UITreeNode;
+
 /// Get all UI elements visible on the focused window.
 pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     #[cfg(target_os = "macos")]
@@ -24,6 +27,18 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     return ios::get_ui_elements();
     #[cfg(target_os = "android")]
     return android::get_ui_elements();
+}
+
+/// Get the full hierarchical UI tree from the focused application.
+///
+/// Unlike `get_ui_elements` (flat Vec), this preserves parent→child structure.
+pub fn get_ui_tree() -> OmniResult<UITreeNode> {
+    #[cfg(target_os = "macos")]
+    return macos::get_ui_tree();
+    #[cfg(not(target_os = "macos"))]
+    return Err(omnistate_core::error::OmniError::AccessibilityError(
+        "get_ui_tree is only supported on macOS".to_string(),
+    ));
 }
 
 /// Find a specific UI element by its text content or role.

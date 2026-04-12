@@ -118,6 +118,7 @@ interface NativeBindings {
   isAccessibilityTrusted(): boolean;
   getUiElements(): unknown;
   findElement(query: string): unknown;
+  getUiTree(): unknown;
 }
 
 // ------------------------------------------------------------------
@@ -325,4 +326,10 @@ export function getUiElements() {
 
 export function findElement(query: string) {
   return getNative().findElement(query);
+}
+
+export function getUiTree() {
+  const native = loadNative();
+  if (!native?.getUiTree) return null;
+  return native.getUiTree();
 }

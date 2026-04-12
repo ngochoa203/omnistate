@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useGateway } from "./hooks/useGateway";
 import { useChatStore } from "./lib/chat-store";
 import { ChatView } from "./components/ChatView";
@@ -12,10 +12,15 @@ import { LanguageSwitch } from "./components/LanguageSwitch";
 import { getCopy } from "./lib/i18n";
 import { ConfigPage } from "./components/ConfigPage";
 import { ScreenTreePage } from "./components/ScreenTreePage";
+import { TriggerPage } from "./components/TriggerPage";
+import { AuthPage } from "./components/AuthPage";
+import { useAuthStore } from "./lib/auth-store";
+import { initAuth } from "./lib/auth-client";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
-type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree";
+type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers";
 
-const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree"; icon: React.ReactNode; badge?: string }> = [
+const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers"; icon: React.ReactNode; badge?: string }> = [
   {
     id: "dashboard",
     labelKey: "dashboard",
@@ -108,11 +113,26 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
       </svg>
     ),
   },
+  {
+    id: "triggers",
+    labelKey: "triggers",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+      </svg>
+    ),
+  },
 ];
 
 export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const currentProfile = useAuthStore((s) => s.currentProfile);
+
+  useEffect(() => {
+    initAuth();
+  }, []);
 
   useGateway();
   const appLanguage = useChatStore((s) => s.appLanguage);
@@ -139,6 +159,11 @@ export function App() {
   const connText =
     connectionState === "connected" ? copy.status.live :
     connectionState === "connecting" ? copy.status.connecting : copy.status.offline;
+
+  // Show enrollment wizard if no enrolled voice profile
+  if (!currentProfile || !currentProfile.isEnrolled) {
+    return <AuthPage />;
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", position: "relative" }}>
@@ -328,14 +353,15 @@ export function App() {
 
         {/* Page Content */}
         <div key={view} className="view-transition" style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-          {view === "dashboard" && <DashboardOverview onNavigate={setView} />}
-          {view === "chat" && <ChatView />}
-          {view === "voice" && <VoicePage />}
-          {view === "health" && <HealthDashboard />}
-          {view === "system" && <SystemPanel />}
-          {view === "settings" && <SettingsPanel />}
-          {view === "config" && <ConfigPage />}
-          {view === "screenTree" && <ScreenTreePage />}
+          {view === "dashboard" && <ErrorBoundary><DashboardOverview onNavigate={setView} /></ErrorBoundary>}
+          {view === "chat" && <ErrorBoundary><ChatView /></ErrorBoundary>}
+          {view === "voice" && <ErrorBoundary><VoicePage /></ErrorBoundary>}
+          {view === "health" && <ErrorBoundary><HealthDashboard /></ErrorBoundary>}
+          {view === "system" && <ErrorBoundary><SystemPanel /></ErrorBoundary>}
+          {view === "settings" && <ErrorBoundary><SettingsPanel /></ErrorBoundary>}
+          {view === "config" && <ErrorBoundary><ConfigPage /></ErrorBoundary>}
+          {view === "screenTree" && <ErrorBoundary><ScreenTreePage /></ErrorBoundary>}
+          {view === "triggers" && <ErrorBoundary><TriggerPage /></ErrorBoundary>}
         </div>
       </main>
     </div>

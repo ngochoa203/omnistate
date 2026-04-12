@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ChatMessage } from "../lib/chat-store";
 import { useChatStore } from "../lib/chat-store";
+import { ResourceReport } from "./ResourceReport";
 
 interface Props {
   message: ChatMessage;
@@ -70,6 +71,11 @@ export function MessageBubble({ message }: Props) {
 
               {/* Content */}
               {message.content && <OutputBlock content={message.content} data={message.data} />}
+
+              {/* Resource Impact Report */}
+              {message.data?.resourceImpact && (
+                <ResourceReport report={message.data.resourceImpact as any} />
+              )}
 
               {/* Error */}
               {message.status === "failed" && !message.content && (

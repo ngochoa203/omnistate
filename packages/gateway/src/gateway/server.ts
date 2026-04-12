@@ -3,12 +3,14 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ClientRole } from "./protocol.js";
 import { authenticateClient } from "./auth.js";
+import { createAuthRoutes, parseBody, jsonResponse } from "../http/auth-routes.js";
+import { createVoiceRoutes } from "../http/voice-routes.js";
 import { classifyIntent, planFromIntent } from "../planner/intent.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
@@ -20,6 +22,7 @@ import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-conf
 import { setActiveModel, setActiveProvider, setVoiceField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
+import { TriggerEngine } from "../triggers/index.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -98,6 +101,7 @@ interface ConnectedClient {
   id: string;
   role: ClientRole;
   authenticatedAt: number;
+  userId: string | null;
 }
 
 /**
@@ -110,6 +114,7 @@ export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
   private siriBridgeServer: HttpServer | null = null;
   private wakeManager: WakeManager = new WakeManager();
+  private triggerEngine: TriggerEngine = new TriggerEngine();
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -170,6 +175,10 @@ export class OmniStateGateway {
 
     this.startSiriBridge();
     this.startWakeListener();
+    this.triggerEngine.start(async (trigger) => {
+      const taskId = `trigger-${trigger.id}-${crypto.randomUUID()}`;
+      this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch(console.error);
+    });
   }
 
   /** Gracefully shut down the gateway. */
@@ -188,6 +197,7 @@ export class OmniStateGateway {
     this.siriBridgeServer?.close();
     this.siriBridgeServer = null;
     this.wakeManager.stop();
+    this.triggerEngine.stop();
     console.log("[OmniState] Gateway stopped");
   }
 
@@ -275,12 +285,93 @@ export class OmniStateGateway {
       remote === "::1" ||
       remote.startsWith("::ffff:127.0.0.1");
 
-    if (req.method === "GET" && requestPath === "/healthz") {
-      json(200, {
-        ok: true,
-        service: "omnistate-gateway",
-        uptimeMs: Date.now() - this.startedAt,
-        clients: this.clients.size,
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      });
+      res.end();
+      return;
+    }
+
+    // Auth REST routes
+    const authRoutes = createAuthRoutes();
+    const authHandler = authRoutes.match(req.method!, requestPath);
+    if (authHandler) {
+      try {
+        const body = await parseBody(req);
+        await authHandler(req, res, body);
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: err.message ?? "Bad request" });
+      }
+      return;
+    }
+
+    // Voice profile REST routes
+    const voiceRoutes = createVoiceRoutes();
+    const voiceHandler = voiceRoutes.match(req.method!, requestPath);
+    if (voiceHandler) {
+      try {
+        const body = await parseBody(req);
+        await voiceHandler(req, res, body);
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: err.message ?? "Bad request" });
+      }
+      return;
+    }
+
+    // POST /api/voice/enroll — direct HTTP enrollment via Resemblyzer service
+    if (req.method === "POST" && requestPath === "/api/voice/enroll") {
+      const body = await parseBody(req);
+      try {
+        const { enrollVoiceSample } = await import("../voice/voiceprint.js");
+        const result = await enrollVoiceSample(body.profileId, body.audio);
+        jsonResponse(res, 200, result);
+      } catch (err: any) {
+        // If voiceprint service is unavailable, still track sample count in DB
+        // so profile becomes "enrolled" after enough samples
+        try {
+          const { VoiceProfileRepository } = await import("../db/voice-profile-repository.js");
+          const { getDb } = await import("../db/database.js");
+          const repo = new VoiceProfileRepository(getDb());
+          const newCount = repo.incrementSamples(body.profileId);
+          const REQUIRED = 3;
+          if (newCount >= REQUIRED) {
+            repo.markEnrolled(body.profileId, newCount);
+          }
+          jsonResponse(res, 200, {
+            sampleCount: newCount,
+            isComplete: newCount >= REQUIRED,
+            fallback: true,
+            warning: "Voiceprint service unavailable — enrollment tracked without voice embedding.",
+          });
+        } catch {
+          jsonResponse(res, 500, { error: err.message });
+        }
+      }
+      return;
+    }
+
+    // POST /api/voice/verify — direct HTTP verification via Resemblyzer service
+    if (req.method === "POST" && requestPath === "/api/voice/verify") {
+      const body = await parseBody(req);
+      try {
+        const { verifySpeaker } = await import("../voice/voiceprint.js");
+        const result = await verifySpeaker(body.audio);
+        jsonResponse(res, 200, result);
+      } catch (err: any) {
+        jsonResponse(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && (requestPath === "/health" || requestPath === "/healthz")) {
+      jsonResponse(res, 200, {
+        status: "ok",
+        uptime: process.uptime(),
+        connections: this.clients.size,
+        timestamp: new Date().toISOString(),
       });
       return;
     }
@@ -294,16 +385,104 @@ export class OmniStateGateway {
       return;
     }
 
+    if (req.method === "GET" && requestPath === "/session/logs") {
+      if (!isLocalRequest) {
+        json(403, { ok: false, error: "Only local requests are allowed" });
+        return;
+      }
+
+      try {
+        const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        const source = (urlObj.searchParams.get("source") ?? "claude-mem").toLowerCase();
+        const limitRaw = Number.parseInt(urlObj.searchParams.get("limit") ?? "20", 10);
+        const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 100)) : 20;
+
+        const root = source === "claude-mem"
+          ? "/Users/hoahn/Projects/claude-mem"
+          : process.cwd();
+
+        const candidateDirs = source === "claude-mem"
+          ? [
+              join(root, ".claude/reports"),
+              join(root, ".claude/commands/plans"),
+              join(root, "docs/reports"),
+              join(root, ".plan"),
+            ]
+          : [join(root, "logs"), join(root, "reports")];
+
+        const files: Array<{ path: string; name: string; mtimeMs: number; size: number }> = [];
+
+        for (const dir of candidateDirs) {
+          try {
+            const entries = await readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              if (!entry.isFile()) continue;
+              if (!/\.(md|txt|json|yaml|yml)$/i.test(entry.name)) continue;
+              const p = join(dir, entry.name);
+              try {
+                const st = await stat(p);
+                files.push({ path: p, name: entry.name, mtimeMs: st.mtimeMs, size: st.size });
+              } catch {
+                // ignore stat failure
+              }
+            }
+          } catch {
+            // ignore missing dirs
+          }
+        }
+
+        files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+        const selected = files.slice(0, limit);
+
+        const logs = await Promise.all(
+          selected.map(async (f) => {
+            let preview = "";
+            try {
+              preview = (await readFile(f.path, "utf-8")).slice(0, 4000);
+            } catch {
+              preview = "";
+            }
+            return {
+              file: f.path,
+              name: f.name,
+              modifiedAt: new Date(f.mtimeMs).toISOString(),
+              size: f.size,
+              preview,
+            };
+          }),
+        );
+
+        json(200, {
+          ok: true,
+          source,
+          root,
+          count: logs.length,
+          logs,
+        });
+      } catch (err) {
+        json(500, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+
     if (req.method === "GET" && requestPath === "/screen/tree") {
       if (!isLocalRequest) {
         json(403, { ok: false, error: "Only local requests are allowed" });
         return;
       }
       try {
-        const { stdout } = await execFileAsync(process.execPath, [bridgeProbeScriptPath, "tree"], {
-          timeout: 15_000,
-          maxBuffer: 2 * 1024 * 1024,
-        });
+        const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        const treeMode = urlObj.searchParams.get("mode") ?? "tree";
+        const allowedModes = ["tree", "hierarchy"];
+        const safeMode = allowedModes.includes(treeMode) ? treeMode : "tree";
+        const { stdout } = await execFileAsync(
+          process.execPath,
+          [bridgeProbeScriptPath, safeMode],
+          { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
+        );
         json(200, JSON.parse(stdout));
       } catch (err) {
         json(500, {
@@ -322,8 +501,11 @@ export class OmniStateGateway {
         return;
       }
       try {
-        const { stdout } = await execFileAsync(process.execPath, [bridgeProbeScriptPath, "latency"], {
-          timeout: 20_000,
+        const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        const profileParam = urlObj.searchParams.get("profile") ?? "full";
+        const safeProfile = profileParam === "frame-only" ? "frame-only" : "full";
+        const { stdout } = await execFileAsync(process.execPath, [bridgeProbeScriptPath, "latency", safeProfile], {
+          timeout: 60_000,
           maxBuffer: 2 * 1024 * 1024,
         });
         json(200, JSON.parse(stdout));
@@ -570,7 +752,16 @@ export class OmniStateGateway {
       }
     });
 
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === ws.OPEN) ws.ping();
+    }, 30_000);
+
+    ws.on("pong", () => {
+      // client is alive
+    });
+
     ws.on("close", () => {
+      clearInterval(pingInterval);
       this.clients.delete(clientId);
     });
   }
@@ -595,6 +786,7 @@ export class OmniStateGateway {
           id: clientId,
           role: msg.role,
           authenticatedAt: Date.now(),
+          userId: null,
         });
         const response: ServerMessage = {
           type: "connected",
@@ -1022,6 +1214,73 @@ export class OmniStateGateway {
         };
         this.safeSend(ws, reply);
         setTimeout(() => this.stop(), 100);
+        break;
+      }
+
+      case "voice.enroll": {
+        // msg: { type: "voice.enroll", profileId: string, audio: string }
+        try {
+          const { enrollVoiceSample } = await import("../voice/voiceprint.js");
+          const result = await enrollVoiceSample(msg.profileId, msg.audio);
+          this.safeSend(ws, {
+            type: "voice.enroll.result",
+            profileId: msg.profileId,
+            sampleCount: result.sampleCount,
+            isComplete: result.isComplete,
+            required: 3,
+          });
+        } catch (err: any) {
+          this.safeSend(ws, { type: "voice.enroll.error", error: err.message });
+        }
+        break;
+      }
+
+      case "voice.verify": {
+        // msg: { type: "voice.verify", audio: string }
+        try {
+          const { verifySpeaker } = await import("../voice/voiceprint.js");
+          const result = await verifySpeaker(msg.audio);
+          this.safeSend(ws, {
+            type: "voice.verify.result",
+            matched: result.matched,
+            profileId: result.profileId,
+            similarity: result.similarity,
+          });
+        } catch (err: any) {
+          this.safeSend(ws, { type: "voice.verify.error", error: err.message });
+        }
+        break;
+      }
+
+      case "trigger.create": {
+        const trigger = this.triggerEngine.createTrigger(this.clients.get(clientId)?.userId ?? "local", {
+          name: msg.name,
+          description: msg.description,
+          condition: msg.condition as import("../triggers/index.js").TriggerCondition,
+          action: msg.action,
+          cooldownMs: msg.cooldownMs,
+        });
+        this.safeSend(ws, { type: "trigger.created", trigger } as unknown as ServerMessage);
+        break;
+      }
+      case "trigger.list": {
+        const triggers = this.triggerEngine.listTriggers(this.clients.get(clientId)?.userId ?? "local");
+        this.safeSend(ws, { type: "trigger.list.result", triggers } as unknown as ServerMessage);
+        break;
+      }
+      case "trigger.update": {
+        const trigger = this.triggerEngine.updateTrigger(msg.triggerId, msg.updates);
+        this.safeSend(ws, { type: "trigger.updated", trigger } as unknown as ServerMessage);
+        break;
+      }
+      case "trigger.delete": {
+        this.triggerEngine.deleteTrigger(msg.triggerId);
+        this.safeSend(ws, { type: "trigger.deleted", triggerId: msg.triggerId } as unknown as ServerMessage);
+        break;
+      }
+      case "trigger.history": {
+        const entries = this.triggerEngine.getTriggerHistory(msg.triggerId, msg.limit);
+        this.safeSend(ws, { type: "trigger.history.result", triggerId: msg.triggerId, entries } as unknown as ServerMessage);
         break;
       }
 
