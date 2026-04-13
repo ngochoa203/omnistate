@@ -7,6 +7,7 @@ struct OmniStateApp: App {
     @StateObject private var healthChecker = HealthChecker.shared
     @StateObject private var networkMonitor = NetworkMonitor.shared
     @StateObject private var deviceManager = DeviceManager.shared
+    @StateObject private var socketClient = GatewaySocketClient.shared
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct OmniStateApp: App {
                 .environmentObject(healthChecker)
                 .environmentObject(networkMonitor)
                 .environmentObject(deviceManager)
+                .environmentObject(socketClient)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.titleBar)
@@ -48,6 +50,7 @@ struct OmniStateApp: App {
                 .environmentObject(healthChecker)
                 .environmentObject(networkMonitor)
                 .environmentObject(deviceManager)
+                .environmentObject(socketClient)
         } label: {
             Image(systemName: healthChecker.isHealthy ? "circle.fill" : "circle")
                 .foregroundColor(healthChecker.isHealthy ? .green : .red)

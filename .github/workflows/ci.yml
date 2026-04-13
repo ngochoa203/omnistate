@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust (${{ matrix.os }})
@@ -39,7 +43,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   typescript:
-    name: TypeScript
+    name: TypeScript Quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +56,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm test
-        continue-on-error: true
+      - name: Lint (if present)
+        run: pnpm -r --if-present lint
+      - name: Build (typecheck)
+        run: pnpm -r --if-present build
+      - name: Test (if present)
+        run: pnpm -r --if-present test
