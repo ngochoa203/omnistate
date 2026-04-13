@@ -42,15 +42,24 @@ final class GatewaySocketClient: ObservableObject {
     @Published var sharedMemoryLog: [String] = []
     @Published var sessionMemoryByConversation: [String: NativeSessionMemoryState] = [:]
     @Published var lastClaudeMemSyncMessage = ""
+    @Published var activeConversationIdForLatestMessage: String?
 
     private var socket: URLSessionWebSocketTask?
     private let url = URL(string: "ws://127.0.0.1:19800")!
     private var hasConnected = false
+    private var pendingConversationId: String?
+    private var taskConversationMap: [String: String] = [:]
 
     private init() {}
 
     func connect() {
-        if hasConnected { return }
+        if hasConnected && isConnected { return }
+
+        if socket != nil && !isConnected {
+            socket?.cancel(with: .goingAway, reason: nil)
+            socket = nil
+        }
+
         hasConnected = true
 
         let session = URLSession(configuration: .default)
@@ -63,10 +72,6 @@ final class GatewaySocketClient: ObservableObject {
             "role": "ui"
         ])
 
-        queryHistory(limit: 30)
-        queryRuntimeConfig()
-        queryClaudeMem()
-
         receiveLoop()
     }
 
@@ -77,10 +82,12 @@ final class GatewaySocketClient: ObservableObject {
         isConnected = false
     }
 
-    func sendTask(goal: String) {
+    func sendTask(goal: String, conversationId: String? = nil) {
         let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        pendingConversationId = conversationId
+        activeConversationIdForLatestMessage = conversationId
         messages.append(NativeChatMessage(role: "user", text: trimmed))
         sendRaw([
             "type": "task",
@@ -163,6 +170,8 @@ final class GatewaySocketClient: ObservableObject {
             case .failure(let error):
                 Task { @MainActor in
                     self.isConnected = false
+                    self.hasConnected = false
+                    self.socket = nil
                     self.messages.append(NativeChatMessage(role: "system", text: "Socket disconnected: \(error.localizedDescription)"))
                 }
             case .success(let message):
@@ -200,15 +209,36 @@ final class GatewaySocketClient: ObservableObject {
 
         case "task.accepted":
             currentTaskId = json["taskId"] as? String
+            if let taskId = currentTaskId, let conversationId = pendingConversationId {
+                taskConversationMap[taskId] = conversationId
+                activeConversationIdForLatestMessage = conversationId
+            }
+            pendingConversationId = nil
             let goal = json["goal"] as? String ?? ""
             messages.append(NativeChatMessage(role: "assistant", text: "Task accepted: \(goal)"))
 
         case "task.step":
+            if let taskId = json["taskId"] as? String,
+               let conversationId = taskConversationMap[taskId] {
+                activeConversationIdForLatestMessage = conversationId
+            } else if let currentTaskId,
+                      let conversationId = taskConversationMap[currentTaskId] {
+                activeConversationIdForLatestMessage = conversationId
+            }
             let step = json["step"] as? Int ?? -1
             let status = json["status"] as? String ?? "executing"
             messages.append(NativeChatMessage(role: "assistant", text: "Step \(step): \(status)"))
 
         case "task.complete":
+            if let taskId = json["taskId"] as? String,
+               let conversationId = taskConversationMap[taskId] {
+                activeConversationIdForLatestMessage = conversationId
+                taskConversationMap.removeValue(forKey: taskId)
+            } else if let currentTaskId,
+                      let conversationId = taskConversationMap[currentTaskId] {
+                activeConversationIdForLatestMessage = conversationId
+                taskConversationMap.removeValue(forKey: currentTaskId)
+            }
             currentTaskId = nil
             if let result = json["result"] {
                 let pretty = prettyJSON(result) ?? "Task completed"
@@ -219,6 +249,15 @@ final class GatewaySocketClient: ObservableObject {
             queryHistory(limit: 30)
 
         case "task.error":
+            if let taskId = json["taskId"] as? String,
+               let conversationId = taskConversationMap[taskId] {
+                activeConversationIdForLatestMessage = conversationId
+                taskConversationMap.removeValue(forKey: taskId)
+            } else if let currentTaskId,
+                      let conversationId = taskConversationMap[currentTaskId] {
+                activeConversationIdForLatestMessage = conversationId
+                taskConversationMap.removeValue(forKey: currentTaskId)
+            }
             currentTaskId = nil
             let error = json["error"] as? String ?? "Unknown error"
             messages.append(NativeChatMessage(role: "system", text: "Task error: \(error)"))
