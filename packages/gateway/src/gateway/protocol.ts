@@ -5,6 +5,8 @@ export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 export type ClientMessage =
   | ConnectMessage
   | TaskMessage
+  | ClaudeMemQueryMessage
+  | ClaudeMemSyncMessage
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
@@ -34,6 +36,30 @@ export interface TaskMessage {
   goal: string;
   /** Optional: force a specific execution layer. */
   layer?: "deep" | "surface" | "auto";
+}
+
+export interface ClaudeMemPayload {
+  sharedMemorySummary: string;
+  sharedMemoryLog: string[];
+  sessionStateByConversation: Record<
+    string,
+    {
+      memorySummary: string;
+      memoryLog: string[];
+      provider?: string;
+      model?: string;
+      updatedAt?: number;
+    }
+  >;
+}
+
+export interface ClaudeMemQueryMessage {
+  type: "claude.mem.query";
+}
+
+export interface ClaudeMemSyncMessage {
+  type: "claude.mem.sync";
+  payload: ClaudeMemPayload;
 }
 
 export interface HistoryQueryMessage {
@@ -119,6 +145,8 @@ export interface SystemDashboardMessage {
 /** Messages sent from gateway to client. */
 export type ServerMessage =
   | ConnectedMessage
+  | ClaudeMemStateMessage
+  | ClaudeMemAckMessage
   | TaskAcceptedMessage
   | TaskStepMessage
   | TaskVerifyMessage
@@ -145,6 +173,19 @@ export interface ConnectedMessage {
   type: "connected";
   clientId: string;
   capabilities: string[];
+}
+
+export interface ClaudeMemStateMessage {
+  type: "claude.mem.state";
+  payload: ClaudeMemPayload;
+  updatedAt: string;
+}
+
+export interface ClaudeMemAckMessage {
+  type: "claude.mem.ack";
+  ok: boolean;
+  message: string;
+  updatedAt: string;
 }
 
 export interface TaskAcceptedMessage {

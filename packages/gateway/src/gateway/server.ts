@@ -8,9 +8,11 @@ import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ClientRole } from "./protocol.js";
-import { authenticateClient } from "./auth.js";
+import { authenticateConnection } from "./auth.js";
 import { createAuthRoutes, parseBody, jsonResponse } from "../http/auth-routes.js";
 import { createVoiceRoutes } from "../http/voice-routes.js";
+import { createNetworkRoutes } from "../http/network-routes.js";
+import { createDeviceRoutes } from "../http/device-routes.js";
 import { classifyIntent, planFromIntent } from "../planner/intent.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
@@ -23,6 +25,7 @@ import { setActiveModel, setActiveProvider, setVoiceField, updateActiveProviderF
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
 import { TriggerEngine } from "../triggers/index.js";
+import { ClaudeMemStore } from "../session/claude-mem-store.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -102,6 +105,8 @@ interface ConnectedClient {
   role: ClientRole;
   authenticatedAt: number;
   userId: string | null;
+  /** Set when the connection authenticated via a device JWT (type: "device"). */
+  deviceId?: string | null;
 }
 
 /**
@@ -129,6 +134,7 @@ export class OmniStateGateway {
     timestamp: string;
     durationMs: number;
   }> = [];
+  private claudeMemStore = new ClaudeMemStore();
 
   constructor(config: GatewayConfig) {
     this.config = config;
@@ -321,6 +327,31 @@ export class OmniStateGateway {
       return;
     }
 
+    // Network info REST routes (Tailscale + LAN detection)
+    const networkRoutes = createNetworkRoutes();
+    const networkHandler = networkRoutes.match(req.method!, requestPath);
+    if (networkHandler) {
+      try {
+        await networkHandler(req, res);
+      } catch (err: any) {
+        jsonResponse(res, 500, { error: err.message ?? "Internal server error" });
+      }
+      return;
+    }
+
+    // Device management REST routes (LAN pairing + token lifecycle)
+    const deviceRoutes = createDeviceRoutes();
+    const deviceHandler = deviceRoutes.match(req.method!, requestPath);
+    if (deviceHandler) {
+      try {
+        const body = await parseBody(req);
+        await deviceHandler(req, res, body);
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: err.message ?? "Bad request" });
+      }
+      return;
+    }
+
     // POST /api/voice/enroll — direct HTTP enrollment via Resemblyzer service
     if (req.method === "POST" && requestPath === "/api/voice/enroll") {
       const body = await parseBody(req);
@@ -367,11 +398,13 @@ export class OmniStateGateway {
     }
 
     if (req.method === "GET" && (requestPath === "/health" || requestPath === "/healthz")) {
+      const { getTailscaleStatus } = await import("../network/tailscale.js");
       jsonResponse(res, 200, {
         status: "ok",
         uptime: process.uptime(),
         connections: this.clients.size,
         timestamp: new Date().toISOString(),
+        tailscale: getTailscaleStatus(),
       });
       return;
     }
@@ -730,11 +763,14 @@ export class OmniStateGateway {
     _req: import("http").IncomingMessage
   ): void {
     const clientId = crypto.randomUUID();
+    const remoteIp = _req.socket.remoteAddress ?? "unknown";
+    const isLocalhost =
+      remoteIp === "127.0.0.1" || remoteIp === "::1" || remoteIp.startsWith("::ffff:127.0.0.1");
 
     ws.on("message", (raw) => {
       try {
         const msg: ClientMessage = JSON.parse(raw.toString());
-        this.handleMessage(clientId, ws, msg).catch((err) => {
+        this.handleMessage(clientId, ws, msg, remoteIp, isLocalhost).catch((err) => {
           ws.send(
             JSON.stringify({
               type: "error",
@@ -769,11 +805,13 @@ export class OmniStateGateway {
   private async handleMessage(
     clientId: string,
     ws: WebSocket,
-    msg: ClientMessage
+    msg: ClientMessage,
+    remoteIp: string = "unknown",
+    isLocalhost: boolean = true
   ): Promise<void> {
     switch (msg.type) {
       case "connect": {
-        const authResult = authenticateClient(msg, this.config);
+        const authResult = authenticateConnection(msg.auth?.token, this.config, isLocalhost, remoteIp);
         if (!authResult.ok) {
           ws.send(
             JSON.stringify({ type: "error", message: authResult.reason })
@@ -786,14 +824,42 @@ export class OmniStateGateway {
           id: clientId,
           role: msg.role,
           authenticatedAt: Date.now(),
-          userId: null,
+          userId: authResult.userId ?? null,
+          deviceId: authResult.deviceId ?? null,
         });
         const response: ServerMessage = {
           type: "connected",
           clientId,
-          capabilities: ["task", "health", "fleet", "llm.preflight"],
+          capabilities: ["task", "health", "fleet", "llm.preflight", "claude.mem"],
         };
         ws.send(JSON.stringify(response));
+        break;
+      }
+
+      case "claude.mem.query": {
+        const state = this.claudeMemStore.loadState();
+        this.safeSend(ws, {
+          type: "claude.mem.state",
+          payload: state.payload,
+          updatedAt: state.updatedAt,
+        } as ServerMessage);
+        break;
+      }
+
+      case "claude.mem.sync": {
+        const state = this.claudeMemStore.saveState(msg.payload);
+        this.safeSend(ws, {
+          type: "claude.mem.ack",
+          ok: true,
+          message: "claude-mem synced",
+          updatedAt: state.updatedAt,
+        } as ServerMessage);
+
+        this.safeSend(ws, {
+          type: "claude.mem.state",
+          payload: state.payload,
+          updatedAt: state.updatedAt,
+        } as ServerMessage);
         break;
       }
 

@@ -189,6 +189,29 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
     `,
   },
+  {
+    version: 6,
+    name: "registered_devices",
+    sql: `
+      CREATE TABLE IF NOT EXISTS registered_devices (
+        id TEXT PRIMARY KEY,
+        device_name TEXT NOT NULL,
+        device_type TEXT NOT NULL DEFAULT 'android',
+        device_token TEXT NOT NULL UNIQUE,
+        refresh_token TEXT UNIQUE,
+        user_id TEXT,
+        paired_via TEXT NOT NULL DEFAULT 'lan_pin',
+        tailscale_ip TEXT,
+        last_seen_at TEXT,
+        last_seen_ip TEXT,
+        is_revoked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_devices_token ON registered_devices(device_token);
+      CREATE INDEX IF NOT EXISTS idx_devices_user ON registered_devices(user_id);
+    `,
+  },
 ];
 
 function runMigrations(db: Database.Database): void {

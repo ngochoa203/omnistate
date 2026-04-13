@@ -46,6 +46,12 @@ export const gatewayConfigSchema = z.object({
     dir: z.string().default("~/.omnistate/plugins/"),
     enabled: z.array(z.string()).default([]),
   }).default({}),
+
+  remote: z.object({
+    enabled: z.boolean().default(false),
+    tailscaleOnly: z.boolean().default(true), // reject non-Tailscale remote IPs
+    allowedDevices: z.number().int().min(1).default(5), // max registered devices
+  }).default({}),
 });
 
 export type GatewayConfig = z.infer<typeof gatewayConfigSchema>;
