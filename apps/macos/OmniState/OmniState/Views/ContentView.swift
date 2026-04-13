@@ -8,34 +8,43 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             WebViewContainer()
-                .opacity(healthChecker.isHealthy ? 1 : 0)
+                .opacity(1)
 
             if !healthChecker.isHealthy {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.5)
+                VStack {
+                    HStack(spacing: 12) {
+                        ProgressView()
 
-                    Text(gatewayManager.isRunning ? "Connecting to Gateway..." : "Starting Gateway...")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
+                        Text(gatewayManager.isRunning ? "Connecting to Gateway..." : "Starting Gateway...")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
 
-                    if let error = gatewayManager.lastError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .padding(.horizontal)
-                    }
+                        if let error = gatewayManager.lastError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
 
-                    Button("Retry") {
-                        gatewayManager.stop()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                            gatewayManager.start()
+                        Button("Retry") {
+                            gatewayManager.stop()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                gatewayManager.start()
+                            }
                         }
                     }
-                    .padding(.top, 8)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .shadow(radius: 4)
+                    .padding(.top, 12)
+
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 12)
             }
         }
     }
