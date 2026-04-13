@@ -11,6 +11,10 @@ packages/gateway/native/
 dist/
 *.tsbuildinfo
 
+# macOS app build artifacts
+apps/macos/OmniState/.build/
+apps/**/.build/
+
 # Environment
 .env
 .env.*
