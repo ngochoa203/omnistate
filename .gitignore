@@ -33,6 +33,11 @@ eng.traineddata
 *.swo
 *~
 
+# Temp files
+*.tmp
+.tmp-*
+pipefail
+
 # Logs
 *.log
 npm-debug.log*
