@@ -12,7 +12,9 @@
     "clean": "rm -rf dist *.tsbuildinfo",
     "lint": "oxlint src/",
     "test": "vitest run",
-    "test:planner": "vitest run src/__tests__/planner.test.ts --testTimeout=30000"
+    "test:planner": "vitest run src/__tests__/planner.test.ts --testTimeout=30000",
+    "test:parser-bench": "vitest run src/__tests__/parser-latency.benchmark.test.ts --testTimeout=60000",
+    "test:parser-bench:enforce": "PARSER_BENCH_ENFORCE=1 vitest run src/__tests__/parser-latency.benchmark.test.ts --testTimeout=60000"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.85.0",

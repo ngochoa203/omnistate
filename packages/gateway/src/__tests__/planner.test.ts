@@ -273,6 +273,416 @@ describe("planFromIntent() — plan structure", () => {
     expect(plan.nodes[0]?.action.params?.y).toBe(240);
   });
 
+  it("ui-interaction click with comma coordinates maps to ui.clickAt", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click at 100,200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[0]?.action.params?.x).toBe(100);
+    expect(plan.nodes[0]?.action.params?.y).toBe(200);
+  });
+
+  it("ui-interaction click with x:y semicolon format maps to ui.clickAt", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click at x:100;y:200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[0]?.action.params?.x).toBe(100);
+    expect(plan.nodes[0]?.action.params?.y).toBe(200);
+  });
+
+  it("ui-interaction move then click with one coordinate creates two ordered actions", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 640 y 360 and left click",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[1]?.dependencies).toEqual(["move"]);
+    expect(plan.nodes[1]?.action.params?.x).toBe(640);
+    expect(plan.nodes[1]?.action.params?.y).toBe(360);
+    expect(plan.nodes[1]?.action.params?.button).toBe("left");
+  });
+
+  it("ui-interaction move then click with two coordinates uses second point for click", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 100 y 120 and click at x 300 y 320",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[0]?.action.params?.x).toBe(100);
+    expect(plan.nodes[0]?.action.params?.y).toBe(120);
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[1]?.action.params?.x).toBe(300);
+    expect(plan.nodes[1]?.action.params?.y).toBe(320);
+  });
+
+  it("ui-interaction move then scroll builds ordered move->scroll nodes", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 200 y 240 and scroll down 600",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["move"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-600);
+  });
+
+  it("ui-interaction move click scroll builds ordered move->click->scroll", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 100 y 150 and click at x 300 y 350 then scroll up 400",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(3);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[2]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["move"]);
+    expect(plan.nodes[2]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[2]?.action.params?.dy).toBe(400);
+  });
+
+  it("ui-interaction chain parser supports Vietnamese connectors sau do/roi", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 120 y 180 sau do click at x 400 y 420 roi cuon len 300",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(3);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[2]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["move"]);
+    expect(plan.nodes[2]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[2]?.action.params?.dy).toBe(300);
+  });
+
+  it("ui-interaction chain parser supports accented Vietnamese connectors sau do/roi", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move mouse to x 120 y 180 sau đó click at x 400 y 420 rồi cuộn lên 300",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(3);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[2]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[2]?.action.params?.dy).toBe(300);
+  });
+
+  it("ui-interaction chain parser handles no-accent Vietnamese phrasing", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "move chuot toi x 120 y 180 sau day click at x 400 y 420 roi cuon len 300",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(3);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[2]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[2]?.action.params?.dy).toBe(300);
+  });
+
+  it("ui-interaction chain parser can mix query click then scroll", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button then scroll down 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[0]?.action.params?.query).toContain("click submit button");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-200);
+  });
+
+  it("ui-interaction parser keeps click then scroll in same segment with and", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button and scroll down 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+  });
+
+  it("ui-interaction chain parser supports teencode short connector r", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button r scroll down 120",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-120);
+  });
+
+  it("ui-interaction chain parser supports xong connector", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button xong cuon xuong 150",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-150);
+  });
+
+  it("ui-interaction chain parser supports arrow connector", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button -> scroll down 80",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-80);
+  });
+
+  it("ui-interaction chain parser does not leak later coordinates into earlier query click", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "click submit button then move mouse to x 100 y 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.move");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.x).toBe(100);
+    expect(plan.nodes[1]?.action.params?.y).toBe(200);
+  });
+
+  it("ui-interaction chain parser keeps quoted type text that contains connector words", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "type \"Tom and Jerry\" then scroll down 100",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.type");
+    expect(plan.nodes[0]?.action.params?.text).toBe("Tom and Jerry");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[1]?.action.params?.dy).toBe(-100);
+  });
+
+  it("ui-interaction type without quotes keeps 'and' text payload", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "type Tom and Jerry",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.type");
+    expect(plan.nodes[0]?.action.params?.text).toBe("Tom and Jerry");
+  });
+
+  it("ui-interaction type without quotes keeps Vietnamese 'va' payload", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "type xin chao va tam biet",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.type");
+    expect(plan.nodes[0]?.action.params?.text).toBe("xin chao va tam biet");
+  });
+
+  it("ui-interaction double click query chain keeps both clicks before scroll", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "double click submit button then scroll down 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(3);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+    expect(plan.nodes[2]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[2]?.dependencies).toEqual(["interact-2"]);
+    expect(plan.nodes[2]?.action.params?.dy).toBe(-200);
+  });
+
+  it("ui-interaction standalone double click query keeps two click actions", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "double click submit button",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(2);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[1]?.dependencies).toEqual(["interact"]);
+  });
+
+  it("ui-interaction negative phrase does not click when told don't click", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "don't click at 100,200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.wait");
+    expect(plan.nodes[0]?.id).toBe("no-op");
+  });
+
+  it("ui-interaction negative phrase does not scroll when told khong scroll", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "khong scroll down 300",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.wait");
+    expect(plan.nodes[0]?.id).toBe("no-op");
+  });
+
+  it("ui-interaction mixed negation keeps allowed steps only", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "dung click submit button then scroll down 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[0]?.action.params?.dy).toBe(-200);
+  });
+
+  it("ui-interaction scoped negation does not cancel following action", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "do not click and scroll down 200",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.scroll");
+    expect(plan.nodes[0]?.action.params?.dy).toBe(-200);
+  });
+
+  it("ui-interaction right click with coordinates maps to ui.clickAt with right button", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "right click at x 480 y 360",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes[0]?.action.tool).toBe("ui.clickAt");
+    expect(plan.nodes[0]?.action.params?.button).toBe("right");
+    expect(plan.nodes[0]?.action.params?.x).toBe(480);
+    expect(plan.nodes[0]?.action.params?.y).toBe(360);
+  });
+
+  it("ui-interaction standalone right click query preserves right button intent", async () => {
+    const intent = {
+      type: "ui-interaction",
+      entities: {},
+      confidence: 0.95,
+      rawText: "right click submit button",
+    };
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(1);
+    expect(plan.nodes[0]?.action.tool).toBe("ui.click");
+    expect(plan.nodes[0]?.action.params?.button).toBe("right");
+  });
+
   it("ui-interaction modal detection intent maps to vision.modal.detect", async () => {
     const intent = {
       type: "ui-interaction",
