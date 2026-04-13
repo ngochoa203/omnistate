@@ -13,12 +13,12 @@ type RuntimeProvider = {
 };
 
 const QUICK_CMDS = [
-  { label: "Disk space", cmd: "check disk space" },
-  { label: "CPU usage", cmd: "show CPU usage and top processes" },
-  { label: "Memory", cmd: "how much memory is available?" },
-  { label: "Network", cmd: "check network connectivity" },
-  { label: "Hostname", cmd: "what is my hostname?" },
-  { label: "Uptime", cmd: "how long has the system been running?" },
+  { label: "Disk space", cmd: "check disk space", icon: "💾" },
+  { label: "CPU usage", cmd: "show CPU usage and top processes", icon: "🖥️" },
+  { label: "Memory", cmd: "how much memory is available?", icon: "🧠" },
+  { label: "Network", cmd: "check network connectivity", icon: "📡" },
+  { label: "Hostname", cmd: "what is my hostname?", icon: "🏠" },
+  { label: "Uptime", cmd: "how long has the system been running?", icon: "⏱️" },
 ];
 
 function EmptyState({ onSend, disabled }: { onSend: (t: string) => void; disabled: boolean }) {
@@ -29,7 +29,7 @@ function EmptyState({ onSend, disabled }: { onSend: (t: string) => void; disable
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
       <div className="animate-float" style={{ fontSize: 56, marginBottom: 16 }}>🧠</div>
       <h2 style={{ margin: "0 0 6px", fontSize: "1.4rem", fontWeight: 700 }}>
-        <span className="gradient-text">OmniState</span>
+        <span className="gradient-text-cyber">OmniState</span>
       </h2>
       <p style={{ margin: "0 0 28px", color: "var(--color-text-muted)", fontSize: "0.875rem", textAlign: "center", maxWidth: 340, lineHeight: 1.6 }}>
         {copy.chat.emptyDesc}
@@ -40,18 +40,16 @@ function EmptyState({ onSend, disabled }: { onSend: (t: string) => void; disable
             key={item.cmd}
             onClick={() => onSend(item.cmd)}
             disabled={disabled}
-            className="glass glass-hover"
+            className="glow-card"
             style={{
-              padding: "10px 14px", borderRadius: 10, textAlign: "left",
+              padding: "10px 14px", textAlign: "left",
               fontSize: "0.78rem", color: "var(--color-text-secondary)",
               cursor: disabled ? "not-allowed" : "pointer",
               opacity: disabled ? 0.4 : 1,
-              border: "1px solid rgba(255,255,255,0.06)",
-              background: "rgba(255,255,255,0.03)",
               transition: "all 0.18s",
             }}
           >
-            <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", display: "block", marginBottom: 2 }}>→</span>
+            <span style={{ fontSize: "0.9rem", display: "block", marginBottom: 4 }}>{item.icon}</span>
             {item.label}
           </button>
         ))}
@@ -184,14 +182,15 @@ export function ChatView() {
 
   return (
     <div style={{ height: "100%", display: "flex", minWidth: 0 }}>
+      {/* Conversation sidebar */}
       <aside style={{ width: 250, borderRight: "1px solid rgba(255,255,255,0.06)", background: "rgba(5,5,8,0.5)", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "12px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <button className="btn-primary" style={{ width: "100%", fontSize: "0.8rem", padding: "9px 12px" }} onClick={handleNewConversation}>
-            {copy.chat.newConversation}
+            + {copy.chat.newConversation}
           </button>
         </div>
-        <div style={{ padding: "10px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+        <div style={{ flex: 1, padding: "10px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
             {copy.chat.conversations}
           </div>
           {conversations.map((conv) => {
@@ -199,27 +198,34 @@ export function ChatView() {
             return (
               <div
                 key={conv.id}
-                style={{
-                  borderRadius: 10,
-                  border: active ? "1px solid rgba(99,102,241,0.35)" : "1px solid rgba(255,255,255,0.06)",
-                  background: active ? "rgba(99,102,241,0.14)" : "rgba(255,255,255,0.02)",
-                  padding: "8px 10px",
-                }}
+                className={`conv-item ${active ? "active" : ""}`}
+                onClick={() => switchConversation(conv.id)}
               >
-                <button
-                  onClick={() => switchConversation(conv.id)}
-                  style={{ width: "100%", background: "none", border: "none", color: active ? "white" : "var(--color-text-secondary)", textAlign: "left", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}
-                >
-                  {conv.name}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{
+                    fontSize: "0.82rem", fontWeight: active ? 600 : 500,
+                    color: active ? "white" : "var(--color-text-secondary)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    flex: 1, minWidth: 0,
+                  }}>
+                    {conv.name}
+                  </span>
+                  {conv.messageCount > 0 && (
+                    <span className="neon-badge neon-badge-accent" style={{ marginLeft: 6 }}>
+                      {conv.messageCount}
+                    </span>
+                  )}
+                </div>
                 <div style={{ marginTop: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "0.68rem", color: "var(--color-text-muted)" }}>{conv.messageCount} {copy.common.messages}</span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: "0.64rem" }} onClick={() => handleRenameConversation(conv.id, conv.name)}>
-                      {copy.chat.rename}
+                  <span style={{ fontSize: "0.65rem", color: "var(--color-text-muted)" }}>
+                    {new Date(conv.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <div style={{ display: "flex", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                    <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: "0.6rem", borderRadius: 6 }} onClick={() => handleRenameConversation(conv.id, conv.name)}>
+                      ✏️
                     </button>
-                    <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: "0.64rem" }} onClick={() => deleteConversation(conv.id)}>
-                      {copy.chat.delete}
+                    <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: "0.6rem", borderRadius: 6, color: "#f43f5e", borderColor: "rgba(244,63,94,0.2)" }} onClick={() => deleteConversation(conv.id)}>
+                      🗑️
                     </button>
                   </div>
                 </div>
@@ -229,7 +235,9 @@ export function ChatView() {
         </div>
       </aside>
 
+      {/* Main chat area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {/* Chat toolbar */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "10px 20px", borderBottom: "1px solid rgba(255,255,255,0.05)",
@@ -240,9 +248,9 @@ export function ChatView() {
               {messages.length} {copy.common.messages}
             </span>
             {pendingCount > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.75rem", color: "#f59e0b" }}>
-                <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="#f59e0b" strokeWidth="3" strokeDasharray="31.4 15" />
+              <span className="neon-badge neon-badge-warn">
+                <svg className="animate-spin" width="10" height="10" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 15" />
                 </svg>
                 {pendingCount} {copy.common.executing}
               </span>
@@ -254,7 +262,7 @@ export function ChatView() {
               className="btn-ghost"
               style={{ padding: "5px 12px", fontSize: "0.75rem" }}
             >
-              {showMemoryPanel ? "Hide Memory" : "Shared Memory"}
+              {showMemoryPanel ? "Hide Memory" : "🧠 Memory"}
             </button>
             <select
               value={currentSessionState?.provider ?? "anthropic"}
@@ -304,6 +312,7 @@ export function ChatView() {
         <ChatInput onSend={handleSend} disabled={!isConnected} />
       </div>
 
+      {/* Memory panel */}
       {showMemoryPanel && (
         <aside
           style={{
@@ -317,7 +326,7 @@ export function ChatView() {
           }}
         >
           <div>
-            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>Shared Memory</div>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>🧠 Shared Memory</div>
             <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", lineHeight: 1.5 }}>
               Chỉnh tay memory dùng chung giữa các phiên và bấm Save để đồng bộ lên backend session store.
             </div>

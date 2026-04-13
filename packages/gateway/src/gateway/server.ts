@@ -7,7 +7,7 @@ import { readFile, readdir, stat, writeFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ClientRole } from "./protocol.js";
+import type { ClientMessage, ServerMessage, ClientRole, RuntimeConfigSetMessage } from "./protocol.js";
 import { authenticateConnection } from "./auth.js";
 import { createAuthRoutes, parseBody, jsonResponse } from "../http/auth-routes.js";
 import { createVoiceRoutes } from "../http/voice-routes.js";
@@ -21,7 +21,7 @@ import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setVoiceField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
 import { TriggerEngine } from "../triggers/index.js";
@@ -1191,28 +1191,82 @@ export class OmniStateGateway {
 
       case "runtime.config.set": {
         let config = loadLlmRuntimeConfig();
-        const key = msg.key;
+        const key = String((msg as RuntimeConfigSetMessage).key);
+        let handled = false;
 
         try {
           switch (key) {
             case "provider":
+              handled = true;
               config = setActiveProvider(String(msg.value));
               break;
             case "model":
+              handled = true;
               config = setActiveModel(String(msg.value));
               break;
             case "baseURL":
+              handled = true;
               config = updateActiveProviderField("baseURL", String(msg.value));
               break;
             case "apiKey":
+              handled = true;
               config = updateActiveProviderField("apiKey", String(msg.value));
               break;
             case "voice.lowLatency":
+              handled = true;
               config = setVoiceField("lowLatency", Boolean(msg.value));
               break;
             case "voice.autoExecuteTranscript":
+              handled = true;
               config = setVoiceField("autoExecuteTranscript", Boolean(msg.value));
               break;
+            case "voice.wake.enabled":
+              handled = true;
+              config = setWakeField("enabled", Boolean(msg.value));
+              break;
+            case "voice.wake.phrase":
+              handled = true;
+              config = setWakeField("phrase", String(msg.value));
+              break;
+            case "voice.wake.cooldownMs":
+              handled = true;
+              config = setWakeField("cooldownMs", Number(msg.value));
+              break;
+            case "voice.wake.commandWindowSec":
+              handled = true;
+              config = setWakeField("commandWindowSec", Number(msg.value));
+              break;
+            case "voice.siri.enabled":
+              handled = true;
+              config = setSiriField("enabled", Boolean(msg.value));
+              break;
+            case "voice.siri.mode":
+              handled = true;
+              config = setSiriField("mode", String(msg.value));
+              break;
+            case "voice.siri.shortcutName":
+              handled = true;
+              config = setSiriField("shortcutName", String(msg.value));
+              break;
+            case "voice.siri.endpoint":
+              handled = true;
+              config = setSiriField("endpoint", String(msg.value));
+              break;
+            case "voice.siri.token":
+              handled = true;
+              config = setSiriField("token", String(msg.value));
+              break;
+          }
+
+          if (!handled) {
+            this.safeSend(ws, {
+              type: "runtime.config.ack",
+              ok: false,
+              key,
+              message: `Unsupported runtime config key: ${key}`,
+              config,
+            } as ServerMessage);
+            break;
           }
 
           this.safeSend(ws, {

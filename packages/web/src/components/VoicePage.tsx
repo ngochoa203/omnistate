@@ -505,7 +505,7 @@ function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
       </div>
 
       {/* TTS */}
-      <div className="glass" style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      <div className="glow-card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
           <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
             {isVi ? "Đầu ra" : "Output"}
@@ -535,7 +535,7 @@ function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
       </div>
 
       {/* STT Provider */}
-      <div className="glass" style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      <div className="glow-card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
           <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
             {isVi ? "Engine chuyển giọng nói thành chữ" : "Speech-to-Text Engine"}
@@ -573,7 +573,7 @@ function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
       </div>
 
       {/* Wake Word */}
-      <div className="glass" style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+      <div className="glow-card" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
             {isVi ? "Từ kích hoạt" : "Wake Word"}
@@ -609,13 +609,13 @@ export function VoicePage() {
     <div style={{ height: "100%", overflowY: "auto", background: "transparent" }}>
       <div style={{ maxWidth: 700, margin: "0 auto", padding: "24px" }}>
         {/* Header */}
-        <div className="animate-fade-in" style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+        <div className="hero-gradient animate-fade-in" style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{
-              width: 44, height: 44, borderRadius: 12,
+              width: 48, height: 48, borderRadius: 14,
               background: "linear-gradient(135deg, #22d3ee, #6366f1)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 22, boxShadow: "0 4px 20px rgba(34,211,238,0.3)",
+              fontSize: 24, boxShadow: "0 4px 20px rgba(34,211,238,0.3)",
             }}>
               🎙️
             </div>
@@ -644,7 +644,7 @@ export function VoicePage() {
         </div>
 
         {/* Tab panel */}
-        <div className="glass animate-fade-in" style={{ borderRadius: 20, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
+        <div className="glow-card animate-fade-in" style={{ padding: 0, overflow: "hidden" }}>
           {tab === "input"    && <VoiceInputTab isVi={isVi} />}
           {tab === "train"    && <VoiceTrainTab isVi={isVi} />}
           {tab === "settings" && <VoiceSettingsTab isVi={isVi} />}

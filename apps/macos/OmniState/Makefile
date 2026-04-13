@@ -23,7 +23,7 @@ dev:
 	swift build
 	.build/debug/OmniState
 
-run-app: all
+run-app: package
 	open dist/OmniState.app
 
 clean:
@@ -32,4 +32,4 @@ clean:
 build-web:
 	bash ../build-web.sh
 
-all: build-web package
+all: package

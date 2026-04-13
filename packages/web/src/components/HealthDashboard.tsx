@@ -2,13 +2,29 @@ import { useEffect } from "react";
 import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 
+function GaugeCircle({ value, max, color, size = 64 }: { value: number; max: number; color: string; size?: number }) {
+  const r = (size - 8) / 2;
+  const circumference = 2 * Math.PI * r;
+  const pct = Math.min(value / max, 1);
+  return (
+    <svg width={size} height={size} className="gauge-ring">
+      <circle cx={size / 2} cy={size / 2} r={r} className="gauge-track" strokeWidth="5" />
+      <circle
+        cx={size / 2} cy={size / 2} r={r}
+        className="gauge-value"
+        stroke={color} strokeWidth="5"
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - pct)}
+      />
+    </svg>
+  );
+}
+
 function SensorCard({ name, sensor }: { name: string; sensor: { status: string; value: number; unit: string; message?: string } }) {
   const isOk = sensor.status === "ok";
   const isWarn = sensor.status === "warning";
 
   const color = isOk ? "#22c55e" : isWarn ? "#f59e0b" : "#ef4444";
-  const bgColor = isOk ? "rgba(34,197,94,0.06)" : isWarn ? "rgba(245,158,11,0.06)" : "rgba(239,68,68,0.06)";
-  const borderColor = isOk ? "rgba(34,197,94,0.2)" : isWarn ? "rgba(245,158,11,0.2)" : "rgba(239,68,68,0.2)";
 
   const icons: Record<string, string> = {
     cpu: "🖥️", memory: "🧠", disk: "💾", network: "📡", processes: "⚙️",
@@ -17,15 +33,7 @@ function SensorCard({ name, sensor }: { name: string; sensor: { status: string; 
   const pct = Math.min((sensor.value / (name === "memory" ? 32768 : 100)) * 100, 100);
 
   return (
-    <div style={{
-      borderRadius: 16, padding: "20px",
-      background: bgColor,
-      border: `1px solid ${borderColor}`,
-      position: "relative", overflow: "hidden",
-      transition: "transform 0.2s",
-    }}
-      className="glass-hover"
-    >
+    <div className="glow-card" style={{ padding: 20 }}>
       <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, borderRadius: "50%", background: `radial-gradient(circle, ${color}18, transparent)`, pointerEvents: "none" }} />
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
@@ -33,21 +41,24 @@ function SensorCard({ name, sensor }: { name: string; sensor: { status: string; 
           <span style={{ fontSize: 18 }}>{icons[name] ?? "📊"}</span>
           <span style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", textTransform: "capitalize", fontWeight: 600 }}>{name}</span>
         </div>
-        <span style={{
-          fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.06em",
-          padding: "3px 8px", borderRadius: "20px",
-          background: `${color}20`, color, border: `1px solid ${color}40`,
-          textTransform: "uppercase",
-        }}>
+        <span className={`neon-badge ${isOk ? "neon-badge-ok" : isWarn ? "neon-badge-warn" : "neon-badge-error"}`}>
           {sensor.status}
         </span>
       </div>
 
-      <div style={{ marginBottom: 10 }}>
-        <span style={{ fontSize: "2rem", fontWeight: 800, color: "white", lineHeight: 1 }}>
-          {sensor.value}
-        </span>
-        <span style={{ fontSize: "0.85rem", color, marginLeft: 4, fontWeight: 600 }}>{sensor.unit}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+        <div style={{ position: "relative" }}>
+          <GaugeCircle value={pct} max={100} color={color} size={56} />
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.65rem", fontWeight: 700, color }}>
+            {Math.round(pct)}%
+          </div>
+        </div>
+        <div>
+          <span style={{ fontSize: "1.8rem", fontWeight: 800, color: "white", lineHeight: 1 }}>
+            {sensor.value}
+          </span>
+          <span style={{ fontSize: "0.85rem", color, marginLeft: 4, fontWeight: 600 }}>{sensor.unit}</span>
+        </div>
       </div>
 
       <div className="progress-bar" style={{ marginBottom: 8 }}>
@@ -72,11 +83,7 @@ function AlertItem({ alert, index }: { alert: { sensor: string; severity: string
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
           <span style={{ fontSize: "0.78rem", fontWeight: 700, color: isCritical ? "#f43f5e" : "#f59e0b", textTransform: "capitalize" }}>{alert.sensor}</span>
-          <span style={{
-            fontSize: "0.6rem", fontWeight: 700, padding: "2px 6px", borderRadius: "20px", textTransform: "uppercase",
-            background: isCritical ? "rgba(244,63,94,0.15)" : "rgba(245,158,11,0.15)",
-            color: isCritical ? "#f43f5e" : "#f59e0b",
-          }}>
+          <span className={`neon-badge ${isCritical ? "neon-badge-error" : "neon-badge-warn"}`}>
             {alert.severity}
           </span>
         </div>
@@ -142,15 +149,15 @@ export function HealthDashboard() {
     <div style={{ height: "100%", overflowY: "auto", padding: "24px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
 
-        {/* Header */}
-        <div className="animate-fade-in" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        {/* Header with hero gradient */}
+        <div className="hero-gradient animate-fade-in" style={{ marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{
-              width: 44, height: 44, borderRadius: 12,
+              width: 48, height: 48, borderRadius: 14,
               background: `${overallColor}20`,
               border: `1px solid ${overallColor}40`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 22,
+              fontSize: 24,
             }}>
               {overallEmoji}
             </div>
@@ -164,10 +171,8 @@ export function HealthDashboard() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              padding: "8px 18px", borderRadius: "20px", fontWeight: 700, fontSize: "0.875rem",
-              background: `${overallColor}15`, border: `1px solid ${overallColor}40`, color: overallColor
-            }}>
+            <div className={`neon-badge ${health.overall === "healthy" ? "neon-badge-ok" : health.overall === "degraded" ? "neon-badge-warn" : "neon-badge-error"}`}
+              style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
               {health.overall.toUpperCase()}
             </div>
             <button
@@ -182,7 +187,7 @@ export function HealthDashboard() {
         {/* Sensor grid */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
           {sensorEntries.map(([name, sensor], i) => (
-            <div key={name} className="animate-fade-in" style={{ animationDelay: `${i * 0.06}s` }}>
+            <div key={name} className="card-reveal" style={{ animationDelay: `${i * 0.06}s` }}>
               <SensorCard name={name} sensor={sensor} />
             </div>
           ))}
@@ -190,7 +195,7 @@ export function HealthDashboard() {
 
         {/* Alerts */}
         {health.alerts.length > 0 && (
-          <div className="glass animate-fade-in" style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden", marginBottom: 20 }}>
+          <div className="glow-card animate-fade-in" style={{ padding: 0, marginBottom: 20, overflow: "hidden" }}>
             <div style={{
               padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.04)",
               display: "flex", alignItems: "center", justifyContent: "space-between"
@@ -200,12 +205,12 @@ export function HealthDashboard() {
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 {health.alerts.filter(a => a.severity === "critical").length > 0 && (
-                  <span style={{ fontSize: "0.7rem", color: "#f43f5e", fontWeight: 700 }}>
+                  <span className="neon-badge neon-badge-error">
                     🚨 {health.alerts.filter(a => a.severity === "critical").length} {isVi ? "nghiêm trọng" : "critical"}
                   </span>
                 )}
                 {health.alerts.filter(a => a.severity !== "critical").length > 0 && (
-                  <span style={{ fontSize: "0.7rem", color: "#f59e0b", fontWeight: 700 }}>
+                  <span className="neon-badge neon-badge-warn">
                     ⚠️ {health.alerts.filter(a => a.severity !== "critical").length} {isVi ? "cảnh báo" : "warning"}
                   </span>
                 )}
@@ -220,9 +225,9 @@ export function HealthDashboard() {
         )}
 
         {health.alerts.length === 0 && (
-          <div className="glass animate-fade-in" style={{ borderRadius: 18, border: "1px solid rgba(34,197,94,0.15)", padding: "20px", textAlign: "center" }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🟢</div>
-            <div style={{ fontSize: "0.9rem", color: "#22c55e", fontWeight: 600, marginBottom: 4 }}>
+          <div className="glow-card animate-fade-in" style={{ padding: 28, textAlign: "center", borderColor: "rgba(34,197,94,0.15)" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>🟢</div>
+            <div style={{ fontSize: "0.95rem", color: "#22c55e", fontWeight: 600, marginBottom: 4 }}>
               {isVi ? "Tất cả hệ thống ổn định" : "All systems nominal"}
             </div>
             <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>

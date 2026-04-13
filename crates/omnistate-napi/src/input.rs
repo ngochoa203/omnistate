@@ -68,6 +68,24 @@ pub fn key_tap(key: String, shift: bool, control: bool, alt: bool, meta: bool) -
         .map_err(|e| Error::from_reason(e.to_string()))
 }
 
+/// Press a key down without releasing it. Pair with key_up to release.
+#[napi]
+pub fn key_down(key: String, shift: bool, control: bool, alt: bool, meta: bool) -> Result<()> {
+    let k = parse_key(&key)?;
+    let modifiers = Modifiers { shift, control, alt, meta };
+    omnistate_input::key_down(k, modifiers)
+        .map_err(|e| Error::from_reason(e.to_string()))
+}
+
+/// Release a previously pressed key.
+#[napi]
+pub fn key_up(key: String, shift: bool, control: bool, alt: bool, meta: bool) -> Result<()> {
+    let k = parse_key(&key)?;
+    let modifiers = Modifiers { shift, control, alt, meta };
+    omnistate_input::key_up(k, modifiers)
+        .map_err(|e| Error::from_reason(e.to_string()))
+}
+
 /// Type a string of text with human-like delays.
 #[napi]
 pub fn type_text(text: String) -> Result<()> {

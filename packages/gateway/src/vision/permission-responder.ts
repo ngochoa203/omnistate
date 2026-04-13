@@ -137,6 +137,18 @@ export class PermissionResponder extends EventEmitter {
   private history: PermissionEvent[] = [];
   private readonly options: PermissionResponderOptions;
 
+  /** Monitoring state */
+  private monitoringActive = false;
+  private monitoringStartedAt: Date | undefined = undefined;
+  private monitoringDecisionsCount = 0;
+  private monitoringLastDecision: { timestamp: Date; tool: string; decision: string } | undefined = undefined;
+
+  /** Registered interceptors: run before evaluate() */
+  private interceptors: Array<{
+    pattern: { tool?: string; resource?: string };
+    handler: (request: ApprovalRequest) => Promise<"allow" | "deny" | "ask">;
+  }> = [];
+
   constructor(
     private readonly surface: SurfaceLayer,
     private readonly vision: AdvancedVision,
@@ -321,6 +333,118 @@ export class PermissionResponder extends EventEmitter {
   }
 
   // ── History ────────────────────────────────────────────────────────────────
+
+  // ── Real-time monitoring ───────────────────────────────────────────────────
+
+  /**
+   * Start a self-contained monitoring loop that auto-evaluates permission dialogs.
+   * Returns a stop handle. Independent of the main start()/stop() lifecycle.
+   */
+  async startMonitoring(options?: {
+    pollIntervalMs?: number;
+    onDecision?: (decision: any) => void;
+  }): Promise<{ stop: () => void }> {
+    this.monitoringActive = true;
+    this.monitoringStartedAt = new Date();
+
+    const intervalMs = options?.pollIntervalMs ?? this.options.pollIntervalMs;
+
+    const tick = async (): Promise<void> => {
+      if (!this.monitoringActive) return;
+      try {
+        const modal = await this.vision.detectModal();
+        if (!modal) return;
+        const permDialog = await this.detectPermissionDialog(modal);
+        if (!permDialog) return;
+
+        const hash = hashDialog(permDialog);
+        if (hash === this.lastDialogHash) return;
+        this.lastDialogHash = hash;
+
+        const request: ApprovalRequest = {
+          app: permDialog.app,
+          resource: permDialog.resource,
+          action: permDialog.action,
+          dialogType: permDialog.type,
+          rawText: permDialog.rawText,
+          timestamp: new Date(),
+        };
+
+        // Run interceptors first
+        let interceptorResult: "allow" | "deny" | "ask" | null = null;
+        for (const { pattern, handler } of this.interceptors) {
+          const toolMatch = !pattern.tool || permDialog.action === pattern.tool;
+          const resourceMatch = !pattern.resource || permDialog.resource.includes(pattern.resource);
+          if (toolMatch && resourceMatch) {
+            interceptorResult = await handler(request);
+            break;
+          }
+        }
+
+        const decision = interceptorResult
+          ? { decision: interceptorResult, reason: "Matched interceptor" }
+          : this.policy.evaluate(request);
+
+        this.monitoringDecisionsCount++;
+        this.monitoringLastDecision = {
+          timestamp: new Date(),
+          tool: permDialog.action,
+          decision: decision.decision,
+        };
+
+        const result = { request, decision, dialog: permDialog };
+        options?.onDecision?.(result);
+
+        if (decision.decision === "allow") {
+          await this.clickWithRetry(permDialog.allowButton ?? "Allow");
+          this.recordEvent(permDialog, decision as ApprovalDecision, "allowed");
+        } else if (decision.decision === "deny") {
+          await this.clickWithRetry(permDialog.denyButton ?? "Deny");
+          this.recordEvent(permDialog, decision as ApprovalDecision, "denied");
+        } else {
+          this.recordEvent(permDialog, decision as ApprovalDecision, "deferred");
+        }
+      } catch (err) {
+        this.emit("error", err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+
+    const handle = setInterval(() => void tick(), intervalMs);
+
+    return {
+      stop: () => {
+        clearInterval(handle);
+        this.monitoringActive = false;
+      },
+    };
+  }
+
+  async getMonitoringStatus(): Promise<{
+    isActive: boolean;
+    startedAt?: Date;
+    decisionsCount: number;
+    lastDecision?: { timestamp: Date; tool: string; decision: string };
+  }> {
+    return {
+      isActive: this.monitoringActive,
+      startedAt: this.monitoringStartedAt,
+      decisionsCount: this.monitoringDecisionsCount,
+      lastDecision: this.monitoringLastDecision,
+    };
+  }
+
+  /**
+   * Register a custom interceptor that runs before the default evaluate().
+   * The first matching interceptor wins; use 'ask' to fall through to evaluate().
+   */
+  async registerInterceptor(
+    pattern: { tool?: string; resource?: string },
+    handler: (request: ApprovalRequest) => Promise<"allow" | "deny" | "ask">
+  ): Promise<void> {
+    this.interceptors.push({ pattern, handler });
+  }
+
+  // ── History (PermissionResponder) ──────────────────────────────────────────
 
   private recordEvent(
     dialog: PermissionDialogInfo,

@@ -803,24 +803,31 @@ export function TriggerPage() {
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "28px 32px" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: "1.35rem", fontWeight: 800, color: "white", letterSpacing: "-0.01em" }}>
-            Event Triggers
-          </h1>
-          <p style={{ margin: "5px 0 0", fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
-            Automate tasks when system conditions are met
-          </p>
+      <div className="hero-gradient animate-fade-in" style={{ marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 14,
+            background: "linear-gradient(135deg, rgba(167,139,250,0.3), rgba(99,102,241,0.2))",
+            border: "1px solid rgba(167,139,250,0.3)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.8">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+          </div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: "1.3rem", fontWeight: 700, color: "white" }}>
+              Event Triggers
+            </h1>
+            <p style={{ margin: "4px 0 0", fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+              Automate tasks when system conditions are met
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setModal({ open: true })}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "9px 18px", borderRadius: 10, cursor: "pointer",
-            background: "linear-gradient(135deg, #6366f1, #7c3aed)",
-            border: "none", color: "white", fontSize: "0.85rem", fontWeight: 700,
-            boxShadow: "0 4px 16px rgba(99,102,241,0.35)",
-          }}
+          className="btn-primary"
+          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem" }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -836,9 +843,8 @@ export function TriggerPage() {
           { label: "Active", value: triggers.filter((t) => t.enabled).length, color: "#22c55e" },
           { label: "Total Fires", value: triggers.reduce((s, t) => s + t.fireCount, 0), color: "#f59e0b" },
         ].map((stat) => (
-          <div key={stat.label} style={{
-            padding: "12px 20px", borderRadius: 12,
-            background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+          <div key={stat.label} className="glow-card" style={{
+            padding: "14px 22px",
             display: "flex", flexDirection: "column", gap: 2,
           }}>
             <span style={{ fontSize: "1.4rem", fontWeight: 800, color: stat.color }}>{stat.value}</span>

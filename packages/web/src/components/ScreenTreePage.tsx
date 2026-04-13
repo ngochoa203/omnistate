@@ -400,7 +400,7 @@ export function ScreenTreePage() {
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "24px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-        <div className="glass" style={{ borderRadius: 16, padding: 18 }}>
+        <div className="hero-gradient animate-fade-in">
           <h2 style={{ margin: 0, fontSize: "1.2rem", color: "white" }}>
             {isVi ? "Cây màn hình" : "Screen Tree"}
           </h2>
@@ -411,7 +411,7 @@ export function ScreenTreePage() {
           </p>
         </div>
 
-        <div className="glass" style={{ borderRadius: 16, padding: 18 }}>
+        <div className="glow-card" style={{ padding: 18 }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <button className="btn-primary" onClick={loadTree} disabled={loadingTree}>
               {loadingTree
@@ -658,7 +658,7 @@ export function ScreenTreePage() {
           ) : null}
         </div>
 
-        <div className="glass" style={{ borderRadius: 16, padding: 18 }}>
+        <div className="glow-card" style={{ padding: 18 }}>
           <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", marginBottom: 8 }}>
             {isVi
               ? "Ví dụ lệnh điều khiển chuột và ghi nhớ click"

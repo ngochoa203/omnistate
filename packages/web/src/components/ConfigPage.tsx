@@ -247,12 +247,12 @@ export function ConfigPage() {
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "24px" }}>
       <div style={{ maxWidth: 920, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-        <div className="glass" style={{ borderRadius: 16, padding: 20 }}>
+        <div className="hero-gradient animate-fade-in">
           <h2 style={{ margin: 0, fontSize: "1.25rem", color: "white" }}>{title}</h2>
           <p style={{ margin: "6px 0 0", color: "var(--color-text-muted)", fontSize: "0.85rem" }}>{subtitle}</p>
         </div>
 
-        <div className="glass" style={{ borderRadius: 16, padding: 20 }}>
+        <div className="glow-card" style={{ padding: 20 }}>
           {actionState !== "idle" && (
             <div
               style={{
@@ -260,8 +260,8 @@ export function ConfigPage() {
                 padding: "10px 12px",
                 borderRadius: 10,
                 fontSize: "0.8rem",
-                border: actionState === "error" ? "1px solid rgba(239,68,68,0.35)" : "1px solid rgba(34,197,94,0.25)",
-                background: actionState === "error" ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)",
+                border: actionState === "error" ? "1px solid rgba(239,68,68,0.35)" : actionState === "loading" ? "1px solid rgba(245,158,11,0.25)" : "1px solid rgba(34,197,94,0.25)",
+                background: actionState === "error" ? "rgba(239,68,68,0.08)" : actionState === "loading" ? "rgba(245,158,11,0.06)" : "rgba(34,197,94,0.08)",
                 color: actionState === "error" ? "#ef4444" : actionState === "loading" ? "#f59e0b" : "#22c55e",
               }}
             >
@@ -548,7 +548,7 @@ export function ConfigPage() {
           )}
         </div>
 
-        <div className="glass" style={{ borderRadius: 16, padding: 20 }}>
+        <div className="glow-card" style={{ padding: 20 }}>
           <div style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)", marginBottom: 10 }}>
             {appLanguage === "vi" ? "Thiết lập nhanh" : "Quick setup"}
           </div>
