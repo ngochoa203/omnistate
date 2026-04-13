@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { buildMemoryEntry, summarizeMemory } from "./session-memory";
+import type { ClaudeMemPayload } from "./protocol";
 
 export interface ChatMessage {
   id: string;
@@ -26,12 +28,25 @@ export interface Conversation {
   messageCount: number;
 }
 
+export interface ConversationSessionState {
+  provider: string;
+  model: string;
+  memorySummary: string;
+  memoryLog: string[];
+  updatedAt: number;
+}
+
 interface ChatStore {
   appLanguage: "vi" | "en";
   messages: ChatMessage[];
   conversations: Conversation[];
   currentConversationId: string;
   messagesByConversation: Record<string, ChatMessage[]>;
+  sessionStateByConversation: Record<string, ConversationSessionState>;
+  sharedMemorySummary: string;
+  sharedMemoryLog: string[];
+  outboundConversationQueue: string[];
+  taskConversationMap: Record<string, string>;
   connectionState: "connecting" | "connected" | "disconnected";
   health: null | {
     overall: string;
@@ -71,8 +86,12 @@ interface ChatStore {
   switchConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   renameConversation: (id: string, name: string) => void;
+  setConversationRuntime: (id: string, runtime: { provider?: string; model?: string }) => void;
+  setSharedMemoryManual: (summary: string, log: string[]) => void;
+  applyClaudeMemState: (payload: ClaudeMemPayload) => void;
+  noteOutboundTaskRequest: (conversationId: string) => void;
   setConnectionState: (state: ChatStore["connectionState"]) => void;
-  addUserMessage: (content: string) => string; // returns id
+  addUserMessage: (content: string) => string;
   addSystemMessage: (content: string, taskId?: string) => string;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   addStep: (taskId: string, step: StepInfo) => void;
@@ -90,7 +109,7 @@ interface ChatStore {
 
 let _id = 0;
 const nextId = () => `msg-${++_id}-${Date.now()}`;
-const CHAT_SNAPSHOT_KEY = "omnistate.chatSnapshot.v1";
+const CHAT_SNAPSHOT_KEY = "omnistate.chatSnapshot.v2";
 
 function getInitialAppLanguage(): "vi" | "en" {
   if (typeof window === "undefined") return "vi";
@@ -114,6 +133,30 @@ interface ChatSnapshot {
   conversations: Conversation[];
   currentConversationId: string;
   messagesByConversation: Record<string, ChatMessage[]>;
+  sessionStateByConversation?: Record<string, ConversationSessionState>;
+  sharedMemorySummary?: string;
+  sharedMemoryLog?: string[];
+}
+
+function createDefaultSessionState(now: number = Date.now()): ConversationSessionState {
+  return {
+    provider: "anthropic",
+    model: "",
+    memorySummary: "",
+    memoryLog: [],
+    updatedAt: now,
+  };
+}
+
+function ensureSessionStates(
+  conversations: Conversation[],
+  existing?: Record<string, ConversationSessionState>,
+): Record<string, ConversationSessionState> {
+  const next: Record<string, ConversationSessionState> = {};
+  for (const conv of conversations) {
+    next[conv.id] = existing?.[conv.id] ?? createDefaultSessionState();
+  }
+  return next;
 }
 
 function loadChatSnapshot(): ChatSnapshot | null {
@@ -176,6 +219,44 @@ const initialConversations = snapshot?.conversations?.length
   : [defaultConversation];
 const initialCurrentConversationId = snapshot?.currentConversationId ?? initialConversations[0].id;
 const initialMessagesByConversation = snapshot?.messagesByConversation ?? { [initialConversations[0].id]: [] };
+const initialSessionStates = ensureSessionStates(initialConversations, snapshot?.sessionStateByConversation);
+
+function resolveConversationForTask(state: ChatStore, taskId?: string): string {
+  if (!taskId) return state.currentConversationId;
+  return state.taskConversationMap[taskId] ?? state.outboundConversationQueue[0] ?? state.currentConversationId;
+}
+
+function normalizeLog(log: string[], maxItems: number): string[] {
+  return log
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(-maxItems);
+}
+
+export function buildClaudeMemPayloadFromState(state: {
+  sharedMemorySummary: string;
+  sharedMemoryLog: string[];
+  sessionStateByConversation: Record<string, ConversationSessionState>;
+}): ClaudeMemPayload {
+  const sessionStateByConversation = Object.fromEntries(
+    Object.entries(state.sessionStateByConversation).map(([conversationId, session]) => [
+      conversationId,
+      {
+        memorySummary: session.memorySummary ?? "",
+        memoryLog: normalizeLog(session.memoryLog ?? [], 80),
+        provider: session.provider,
+        model: session.model,
+        updatedAt: session.updatedAt,
+      },
+    ]),
+  );
+
+  return {
+    sharedMemorySummary: state.sharedMemorySummary ?? "",
+    sharedMemoryLog: normalizeLog(state.sharedMemoryLog ?? [], 120),
+    sessionStateByConversation,
+  };
+}
 
 export const useChatStore = create<ChatStore>((set) => ({
   appLanguage: getInitialAppLanguage(),
@@ -183,6 +264,11 @@ export const useChatStore = create<ChatStore>((set) => ({
   conversations: initialConversations,
   currentConversationId: initialCurrentConversationId,
   messagesByConversation: initialMessagesByConversation,
+  sessionStateByConversation: initialSessionStates,
+  sharedMemorySummary: snapshot?.sharedMemorySummary ?? "",
+  sharedMemoryLog: Array.isArray(snapshot?.sharedMemoryLog) ? snapshot.sharedMemoryLog : [],
+  outboundConversationQueue: [],
+  taskConversationMap: {},
   connectionState: "disconnected",
   health: null,
   voiceState: "idle",
@@ -206,6 +292,10 @@ export const useChatStore = create<ChatStore>((set) => ({
       currentConversationId: conv.id,
       messages: [],
       messagesByConversation: { ...s.messagesByConversation, [conv.id]: [] },
+      sessionStateByConversation: {
+        ...s.sessionStateByConversation,
+        [conv.id]: createDefaultSessionState(),
+      },
     }));
     return conv.id;
   },
@@ -227,13 +317,16 @@ export const useChatStore = create<ChatStore>((set) => ({
       }
       const nextConversations = s.conversations.filter((conv) => conv.id !== id);
       const nextMessagesByConversation = { ...s.messagesByConversation };
+      const nextSessionStateByConversation = { ...s.sessionStateByConversation };
       delete nextMessagesByConversation[id];
+      delete nextSessionStateByConversation[id];
       const fallbackConversation = nextConversations[0];
       const nextCurrentId = s.currentConversationId === id ? fallbackConversation.id : s.currentConversationId;
       return {
         conversations: nextConversations,
         currentConversationId: nextCurrentId,
         messagesByConversation: nextMessagesByConversation,
+        sessionStateByConversation: ensureSessionStates(nextConversations, nextSessionStateByConversation),
         messages: nextMessagesByConversation[nextCurrentId] ?? [],
       };
     });
@@ -249,14 +342,79 @@ export const useChatStore = create<ChatStore>((set) => ({
     }));
   },
 
+  setConversationRuntime: (id, runtime) => {
+    set((s) => {
+      const current = s.sessionStateByConversation[id] ?? createDefaultSessionState();
+      return {
+        sessionStateByConversation: {
+          ...s.sessionStateByConversation,
+          [id]: {
+            ...current,
+            provider: runtime.provider?.trim() ? runtime.provider.trim() : current.provider,
+            model: runtime.model?.trim() ? runtime.model.trim() : current.model,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  setSharedMemoryManual: (summary, log) => {
+    set({
+      sharedMemorySummary: summary.trim(),
+      sharedMemoryLog: normalizeLog(log, 120),
+    });
+  },
+
+  applyClaudeMemState: (payload) => {
+    set((s) => {
+      const nextSharedSummary = String(payload.sharedMemorySummary ?? "");
+      const nextSharedLog = normalizeLog(
+        Array.isArray(payload.sharedMemoryLog) ? payload.sharedMemoryLog.map(String) : [],
+        120,
+      );
+
+      const mergedSessionState: Record<string, ConversationSessionState> = {
+        ...s.sessionStateByConversation,
+      };
+
+      for (const [conversationId, incoming] of Object.entries(payload.sessionStateByConversation ?? {})) {
+        const existing = mergedSessionState[conversationId] ?? createDefaultSessionState();
+        mergedSessionState[conversationId] = {
+          ...existing,
+          provider: typeof incoming.provider === "string" && incoming.provider.trim()
+            ? incoming.provider.trim()
+            : existing.provider,
+          model: typeof incoming.model === "string" ? incoming.model.trim() : existing.model,
+          memorySummary: typeof incoming.memorySummary === "string" ? incoming.memorySummary : existing.memorySummary,
+          memoryLog: normalizeLog(
+            Array.isArray(incoming.memoryLog) ? incoming.memoryLog.map(String) : existing.memoryLog,
+            80,
+          ),
+          updatedAt: typeof incoming.updatedAt === "number" ? incoming.updatedAt : Date.now(),
+        };
+      }
+
+      return {
+        sharedMemorySummary: nextSharedSummary,
+        sharedMemoryLog: nextSharedLog,
+        sessionStateByConversation: mergedSessionState,
+      };
+    });
+  },
+
+  noteOutboundTaskRequest: (conversationId) => {
+    set((s) => ({
+      outboundConversationQueue: [...s.outboundConversationQueue, conversationId],
+    }));
+  },
+
   setConnectionState: (connectionState) => set({ connectionState }),
 
   addUserMessage: (content) => {
     const id = nextId();
     set((s) => ({
-      messages: [...s.messages, {
-        id, role: "user", content, timestamp: Date.now(),
-      }],
+      messages: [...s.messages, { id, role: "user", content, timestamp: Date.now() }],
       messagesByConversation: {
         ...s.messagesByConversation,
         [s.currentConversationId]: [
@@ -275,33 +433,46 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   addSystemMessage: (content, taskId) => {
     const id = nextId();
-    set((s) => ({
-      messages: [...s.messages, {
-        id, role: "system", content, timestamp: Date.now(),
-        taskId, status: taskId ? "pending" : "complete",
-      }],
-      messagesByConversation: {
+    set((s) => {
+      const targetConversationId = resolveConversationForTask(s, taskId);
+      const nextTaskMap = taskId
+        ? { ...s.taskConversationMap, [taskId]: targetConversationId }
+        : s.taskConversationMap;
+      const nextQueue = taskId ? s.outboundConversationQueue.slice(1) : s.outboundConversationQueue;
+      const nextMessagesByConversation = {
         ...s.messagesByConversation,
-        [s.currentConversationId]: [
-          ...(s.messagesByConversation[s.currentConversationId] ?? []),
+        [targetConversationId]: [
+          ...(s.messagesByConversation[targetConversationId] ?? []),
           {
-            id, role: "system", content, timestamp: Date.now(),
-            taskId, status: taskId ? "pending" : "complete",
+            id,
+            role: "system" as const,
+            content,
+            timestamp: Date.now(),
+            taskId,
+            status: taskId ? "pending" as const : "complete" as const,
           },
         ],
-      },
-      conversations: updateConversationStats(
-        s.conversations,
-        s.currentConversationId,
-        (s.messagesByConversation[s.currentConversationId] ?? []).length + 1,
-      ),
-    }));
+      };
+      return {
+        taskConversationMap: nextTaskMap,
+        outboundConversationQueue: nextQueue,
+        messages: s.currentConversationId === targetConversationId
+          ? nextMessagesByConversation[targetConversationId]
+          : s.messages,
+        messagesByConversation: nextMessagesByConversation,
+        conversations: updateConversationStats(
+          s.conversations,
+          targetConversationId,
+          nextMessagesByConversation[targetConversationId].length,
+        ),
+      };
+    });
     return id;
   },
 
   updateMessage: (id, updates) =>
     set((s) => ({
-      messages: s.messages.map((m) => m.id === id ? { ...m, ...updates } : m),
+      messages: s.messages.map((m) => (m.id === id ? { ...m, ...updates } : m)),
       messagesByConversation: {
         ...s.messagesByConversation,
         [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
@@ -310,74 +481,97 @@ export const useChatStore = create<ChatStore>((set) => ({
       },
     })),
 
-  addStep: (taskId, _step) => {
-    set((s) => ({
-      messages: s.messages.map((m) =>
-        m.taskId === taskId
-          ? { ...m, status: "streaming" as const }
-          : m
-      ),
-      messagesByConversation: {
-        ...s.messagesByConversation,
-        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
-          m.taskId === taskId ? { ...m, status: "streaming" as const } : m,
-        ),
-      },
-    }));
+  addStep: (taskId) => {
+    set((s) => {
+      const conversationId = s.taskConversationMap[taskId] ?? s.currentConversationId;
+      const nextMessages = (s.messagesByConversation[conversationId] ?? []).map((m) =>
+        m.taskId === taskId ? { ...m, status: "streaming" as const } : m,
+      );
+      return {
+        messages: s.currentConversationId === conversationId ? nextMessages : s.messages,
+        messagesByConversation: {
+          ...s.messagesByConversation,
+          [conversationId]: nextMessages,
+        },
+      };
+    });
   },
 
-  completeTask: (taskId, result) =>
-    set((s) => ({
-      messages: s.messages.map((m) =>
+  completeTask: (taskId, result) => {
+    set((s) => {
+      const conversationId = s.taskConversationMap[taskId] ?? s.currentConversationId;
+      const targetMessages = s.messagesByConversation[conversationId] ?? [];
+      const resolvedContent = typeof result.output === "string"
+        ? result.output
+        : extractReadableContent(result);
+      const completedMessages = targetMessages.map((m) =>
         m.taskId === taskId
           ? {
               ...m,
               status: "complete" as const,
               data: result,
-              content: typeof result.output === "string"
-                ? result.output
-                : extractReadableContent(result) || m.content,
+              content: resolvedContent || m.content,
             }
-          : m
-      ),
-      messagesByConversation: {
-        ...s.messagesByConversation,
-        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
-          m.taskId === taskId
-            ? {
-                ...m,
-                status: "complete" as const,
-                data: result,
-                content: typeof result.output === "string"
-                  ? result.output
-                  : extractReadableContent(result) || m.content,
-              }
-            : m,
-        ),
-      },
-    })),
+          : m,
+      );
 
-  failTask: (taskId, error) =>
-    set((s) => ({
-      messages: s.messages.map((m) =>
+      const lastUser = [...targetMessages].reverse().find((m) => m.role === "user");
+      const memoryEntry = buildMemoryEntry(lastUser?.content, resolvedContent);
+      const currentSessionState = s.sessionStateByConversation[conversationId] ?? createDefaultSessionState();
+      const nextSessionLog = memoryEntry
+        ? [...currentSessionState.memoryLog, memoryEntry].slice(-20)
+        : currentSessionState.memoryLog;
+      const nextSharedLog = memoryEntry
+        ? [...s.sharedMemoryLog, memoryEntry].slice(-40)
+        : s.sharedMemoryLog;
+
+      return {
+        messages: s.currentConversationId === conversationId ? completedMessages : s.messages,
+        messagesByConversation: {
+          ...s.messagesByConversation,
+          [conversationId]: completedMessages,
+        },
+        sessionStateByConversation: {
+          ...s.sessionStateByConversation,
+          [conversationId]: {
+            ...currentSessionState,
+            memoryLog: nextSessionLog,
+            memorySummary: summarizeMemory(currentSessionState.memorySummary, memoryEntry),
+            updatedAt: Date.now(),
+          },
+        },
+        sharedMemoryLog: nextSharedLog,
+        sharedMemorySummary: summarizeMemory(s.sharedMemorySummary, memoryEntry),
+      };
+    });
+  },
+
+  failTask: (taskId, error) => {
+    set((s) => {
+      const conversationId = s.taskConversationMap[taskId] ?? s.currentConversationId;
+      const targetMessages = s.messagesByConversation[conversationId] ?? [];
+      const failedMessages = targetMessages.map((m) =>
         m.taskId === taskId
           ? { ...m, status: "failed" as const, content: error }
-          : m
-      ),
-      messagesByConversation: {
-        ...s.messagesByConversation,
-        [s.currentConversationId]: (s.messagesByConversation[s.currentConversationId] ?? []).map((m) =>
-          m.taskId === taskId ? { ...m, status: "failed" as const, content: error } : m,
-        ),
-      },
-    })),
+          : m,
+      );
+      return {
+        messages: s.currentConversationId === conversationId ? failedMessages : s.messages,
+        messagesByConversation: {
+          ...s.messagesByConversation,
+          [conversationId]: failedMessages,
+        },
+      };
+    });
+  },
 
   setHealth: (health) => set({ health }),
-  clearMessages: () => set((s) => ({
-    messages: [],
-    messagesByConversation: { ...s.messagesByConversation, [s.currentConversationId]: [] },
-    conversations: updateConversationStats(s.conversations, s.currentConversationId, 0),
-  })),
+  clearMessages: () =>
+    set((s) => ({
+      messages: [],
+      messagesByConversation: { ...s.messagesByConversation, [s.currentConversationId]: [] },
+      conversations: updateConversationStats(s.conversations, s.currentConversationId, 0),
+    })),
   setVoiceState: (voiceState) => set({ voiceState }),
   setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
   setSystemInfo: (systemInfo) => set({ systemInfo }),
@@ -392,6 +586,9 @@ if (typeof window !== "undefined") {
       conversations: state.conversations,
       currentConversationId: state.currentConversationId,
       messagesByConversation: state.messagesByConversation,
+      sessionStateByConversation: state.sessionStateByConversation,
+      sharedMemorySummary: state.sharedMemorySummary,
+      sharedMemoryLog: state.sharedMemoryLog,
     });
   });
 }

@@ -5,6 +5,8 @@ export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 export type ClientMessage =
   | ConnectMessage
   | TaskMessage
+  | ClaudeMemQueryMessage
+  | ClaudeMemSyncMessage
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
@@ -21,7 +23,12 @@ export type ClientMessage =
   | TriggerListMessage
   | TriggerUpdateMessage
   | TriggerDeleteMessage
-  | TriggerHistoryMessage;
+  | TriggerHistoryMessage
+  | PermissionPolicyGetMessage
+  | PermissionPolicyUpdateMessage
+  | PermissionHistoryMessage
+  | PermissionStartMessage
+  | PermissionStopMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -34,6 +41,30 @@ export interface TaskMessage {
   goal: string;
   /** Optional: force a specific execution layer. */
   layer?: "deep" | "surface" | "auto";
+}
+
+export interface ClaudeMemPayload {
+  sharedMemorySummary: string;
+  sharedMemoryLog: string[];
+  sessionStateByConversation: Record<
+    string,
+    {
+      memorySummary: string;
+      memoryLog: string[];
+      provider?: string;
+      model?: string;
+      updatedAt?: number;
+    }
+  >;
+}
+
+export interface ClaudeMemQueryMessage {
+  type: "claude.mem.query";
+}
+
+export interface ClaudeMemSyncMessage {
+  type: "claude.mem.sync";
+  payload: ClaudeMemPayload;
 }
 
 export interface HistoryQueryMessage {
@@ -119,6 +150,8 @@ export interface SystemDashboardMessage {
 /** Messages sent from gateway to client. */
 export type ServerMessage =
   | ConnectedMessage
+  | ClaudeMemStateMessage
+  | ClaudeMemAckMessage
   | TaskAcceptedMessage
   | TaskStepMessage
   | TaskVerifyMessage
@@ -139,12 +172,28 @@ export type ServerMessage =
   | VoiceEnrollErrorMessage
   | VoiceVerifyResultMessage
   | VoiceVerifyErrorMessage
-  | SystemInfoMessage;
+  | SystemInfoMessage
+  | PermissionPolicyReportMessage
+  | PermissionHistoryResultMessage
+  | PermissionStatusMessage;
 
 export interface ConnectedMessage {
   type: "connected";
   clientId: string;
   capabilities: string[];
+}
+
+export interface ClaudeMemStateMessage {
+  type: "claude.mem.state";
+  payload: ClaudeMemPayload;
+  updatedAt: string;
+}
+
+export interface ClaudeMemAckMessage {
+  type: "claude.mem.ack";
+  ok: boolean;
+  message: string;
+  updatedAt: string;
 }
 
 export interface TaskAcceptedMessage {
@@ -332,4 +381,50 @@ export interface TriggerHistoryMessage {
   type: "trigger.history";
   triggerId: string;
   limit?: number;
+}
+
+// ─── Permission Responder Messages ────────────────────────────────────────────
+
+// Client → gateway
+export interface PermissionPolicyGetMessage {
+  type: "permission.policy.get";
+}
+
+export interface PermissionPolicyUpdateMessage {
+  type: "permission.policy.update";
+  /** Partial policy fields to merge into the running config. */
+  policy: Record<string, unknown>;
+}
+
+export interface PermissionHistoryMessage {
+  type: "permission.history";
+}
+
+export interface PermissionStartMessage {
+  type: "permission.start";
+}
+
+export interface PermissionStopMessage {
+  type: "permission.stop";
+}
+
+// Gateway → client
+export interface PermissionPolicyReportMessage {
+  type: "permission.policy.report";
+  policy: Record<string, unknown> | null;
+}
+
+export interface PermissionHistoryResultMessage {
+  type: "permission.history.result";
+  history: Array<{
+    timestamp: string;
+    promptLine: string;
+    action: "allowed" | "denied" | "deferred" | "error";
+    reason: string;
+  }>;
+}
+
+export interface PermissionStatusMessage {
+  type: "permission.status";
+  running: boolean;
 }

@@ -2,6 +2,8 @@
 export type ClientMessage =
   | ConnectMessage
   | TaskMessage
+  | ClaudeMemQueryMessage
+  | ClaudeMemSyncMessage
   | OpenClawTaskMessage
   | HistoryQueryMessage
   | HealthQueryMessage
@@ -26,6 +28,30 @@ export interface TaskMessage {
   type: "task";
   goal: string;
   layer?: "deep" | "surface" | "auto";
+}
+
+export interface ClaudeMemPayload {
+  sharedMemorySummary: string;
+  sharedMemoryLog: string[];
+  sessionStateByConversation: Record<
+    string,
+    {
+      memorySummary: string;
+      memoryLog: string[];
+      provider?: string;
+      model?: string;
+      updatedAt?: number;
+    }
+  >;
+}
+
+export interface ClaudeMemQueryMessage {
+  type: "claude.mem.query";
+}
+
+export interface ClaudeMemSyncMessage {
+  type: "claude.mem.sync";
+  payload: ClaudeMemPayload;
 }
 
 export interface OpenClawAction {
@@ -140,6 +166,8 @@ export interface SystemDashboardMessage {
 /** Messages sent from gateway to client. */
 export type ServerMessage =
   | ConnectedMessage
+  | ClaudeMemStateMessage
+  | ClaudeMemAckMessage
   | TaskAcceptedMessage
   | OpenClawResultMessage
   | TaskStepMessage
@@ -162,6 +190,8 @@ export type ServerMessage =
   | SystemInfoMessage;
 
 export interface ConnectedMessage { type: "connected"; clientId: string; capabilities: string[] }
+export interface ClaudeMemStateMessage { type: "claude.mem.state"; payload: ClaudeMemPayload; updatedAt: string }
+export interface ClaudeMemAckMessage { type: "claude.mem.ack"; ok: boolean; message: string; updatedAt: string }
 export interface TaskAcceptedMessage { type: "task.accepted"; taskId: string; goal: string }
 export interface OpenClawResultMessage { type: "openclaw.result"; id: string; taskId: string; status: "complete" | "failed"; error?: string }
 export interface TaskStepMessage { type: "task.step"; taskId: string; step: number; status: "executing" | "completed" | "failed"; layer: "deep" | "surface" | "fleet"; data?: Record<string, unknown> }

@@ -1,9 +1,15 @@
 import type { ClientMessage, ServerMessage } from "./protocol";
+import type { ClaudeMemPayload } from "./protocol";
 import { useAuthStore } from "./auth-store";
 
 type EventHandler = (msg: ServerMessage) => void;
 
 function resolveGatewayUrl(): string {
+  // If running inside native macOS app (WKWebView), use injected URL
+  if (typeof window !== "undefined" && (window as any).OMNISTATE_GATEWAY_URL) {
+    return (window as any).OMNISTATE_GATEWAY_URL as string;
+  }
+
   try {
     const envUrl = (import.meta as unknown as { env?: { VITE_GATEWAY_WS_URL?: string } })
       .env?.VITE_GATEWAY_WS_URL;
@@ -111,6 +117,14 @@ export class GatewayClient {
 
   requestRuntimeConfig(): void {
     this.send({ type: "runtime.config.get" } as ClientMessage);
+  }
+
+  queryClaudeMem(): void {
+    this.send({ type: "claude.mem.query" } as ClientMessage);
+  }
+
+  syncClaudeMem(payload: ClaudeMemPayload): void {
+    this.send({ type: "claude.mem.sync", payload } as ClientMessage);
   }
 
   setRuntimeConfig(

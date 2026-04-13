@@ -5,3 +5,12 @@ export { SessionRepository } from "./session-repository.js";
 export type { SessionRow, TokenPair, AccessTokenPayload } from "./session-repository.js";
 export { VoiceProfileRepository } from "./voice-profile-repository.js";
 export type { VoiceProfileRow, CreateProfileInput } from "./voice-profile-repository.js";
+export { DeviceRepository } from "./device-repository.js";
+export type {
+  DeviceInfo,
+  DeviceType,
+  PairedVia,
+  DeviceTokenPayload,
+  RegisterDeviceOpts,
+  RegisterDeviceResult,
+} from "./device-repository.js";

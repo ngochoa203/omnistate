@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>OmniState</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>OmniState needs Accessibility access to read and interact with UI elements on your screen.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>OmniState needs Screen Recording access to capture screen content for AI-powered automation.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>OmniState needs microphone access for voice commands and speaker verification.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>OmniState may use the camera for visual context understanding.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>OmniState needs to control other applications via AppleScript for automation tasks.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>OmniState uses the local network to communicate between the gateway and connected devices.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_omnistate._tcp</string>
+    </array>
+</dict>
+</plist>

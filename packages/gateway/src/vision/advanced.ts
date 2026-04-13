@@ -256,8 +256,28 @@ export interface ModalInfo {
   title: string | null;
   message: string | null;
   buttons: string[];
-  type: "alert" | "confirm" | "prompt" | "sheet" | "custom" | "unknown";
+  type: "alert" | "confirm" | "prompt" | "sheet" | "custom" | "permission" | "unknown";
   bounds: BoundsRect;
+}
+
+/** Structured information about a detected permission dialog. */
+export interface PermissionDialogInfo {
+  /** Broad category of the permission dialog. */
+  type: "macos_system" | "app_dialog" | "terminal_prompt" | "browser";
+  /** The application requesting the permission. */
+  app: string;
+  /** The resource or capability being requested (file path, permission type, etc.). */
+  resource: string;
+  /** The kind of access being requested. */
+  action: "read" | "write" | "execute" | "full_access";
+  /** Labels of every button detected in the dialog. */
+  buttons: string[];
+  /** The button that grants permission (if identified). */
+  allowButton?: string;
+  /** The button that denies permission (if identified). */
+  denyButton?: string;
+  /** Full OCR text of the dialog. */
+  rawText: string;
 }
 
 /** Full content of a modal including input fields. */
@@ -1412,13 +1432,55 @@ export class AdvancedVision {
   /**
    * Dismiss the currently visible modal using keyboard or button click.
    *
-   * @param action - How to dismiss: "accept" (Return/OK), "dismiss" (Escape/Cancel), "close" (⌘W).
+   * @param action - How to dismiss: "accept" (Return/OK), "dismiss" (Escape/Cancel), "close" (⌘W),
+   *                 "allow" / "allow_always" / "allow_once" / "deny" for permission dialogs.
    */
   async dismissModal(
-    action: "accept" | "dismiss" | "close" = "dismiss"
+    action: "accept" | "dismiss" | "close" | "allow" | "allow_always" | "allow_once" | "deny" = "dismiss"
   ): Promise<boolean> {
     const modal = await this.detectModal();
     if (!modal) return false;
+
+    // Permission dialog actions: find and click the appropriate button
+    if (action === "allow" || action === "allow_always" || action === "allow_once" || action === "deny") {
+      const permInfo = await this.detectPermissionDialog();
+
+      // Determine the target button label
+      const isAllow = action !== "deny";
+      const targetLabel = isAllow ? permInfo?.allowButton : permInfo?.denyButton;
+
+      console.log(
+        `[AdvancedVision] Permission dialog action="${action}"` +
+        ` app="${permInfo?.app ?? "unknown"}" resource="${permInfo?.resource ?? "unknown"}"` +
+        ` button="${targetLabel ?? "(keyboard fallback)"}"`
+      );
+
+      if (targetLabel) {
+        // Click the identified button via AppleScript
+        const clicked = await runAppleScript(`
+          tell application "System Events"
+            set frontApp to first application process whose frontmost is true
+            set modalWindows to every window of frontApp whose modal is true
+            if (count of modalWindows) > 0 then
+              set w to first item of modalWindows
+              click button "${targetLabel.replace(/"/g, '\\"')}" of w
+              return "ok"
+            end if
+            return ""
+          end tell
+        `).catch(() => "");
+
+        if (clicked === "ok") {
+          await sleep(200);
+          return true;
+        }
+      }
+
+      // Keyboard fallback: allow = Return, deny = Escape
+      await this.surface.keyTap(isAllow ? "return" : "escape");
+      await sleep(200);
+      return true;
+    }
 
     switch (action) {
       case "accept":
@@ -1433,6 +1495,104 @@ export class AdvancedVision {
     }
     await sleep(200);
     return true;
+  }
+
+  /**
+   * Detect and parse a permission dialog currently on screen.
+   *
+   * Captures the screen, OCRs the dialog, and extracts structured information
+   * about which app is requesting access, what resource is targeted, and which
+   * buttons allow or deny the request.
+   *
+   * @returns Structured {@link PermissionDialogInfo}, or `null` if no permission dialog is visible.
+   */
+  async detectPermissionDialog(): Promise<PermissionDialogInfo | null> {
+    // ── Step 1: Check if any modal is present ────────────────────────────────
+    const modal = await this.detectModal();
+    if (!modal) return null;
+
+    // ── Step 2: OCR the dialog region to get full text ───────────────────────
+    const buf = await this.captureBuffer(modal.bounds);
+    const elements = await this.localOcr.detectElements(buf, "");
+    const rawText = elements.map((e) => e.text ?? "").join(" ").trim();
+
+    // ── Step 3: Confirm this looks like a permission dialog ──────────────────
+    const combinedType = inferModalTypeFromText(modal.buttons, rawText);
+    if (combinedType !== "permission") return null;
+
+    // ── Step 4: Identify the requesting app ──────────────────────────────────
+    let app = "Unknown";
+    try {
+      app = await runAppleScript(`
+        tell application "System Events"
+          return name of first application process whose frontmost is true
+        end tell
+      `);
+    } catch { /* best-effort */ }
+
+    // ── Step 5: Classify dialog type ─────────────────────────────────────────
+    const lowerText = rawText.toLowerCase();
+    let dialogType: PermissionDialogInfo["type"] = "app_dialog";
+    if (
+      lowerText.includes("screen recording") ||
+      lowerText.includes("accessibility") ||
+      lowerText.includes("full disk access") ||
+      lowerText.includes("files and folders") ||
+      lowerText.includes("automation") ||
+      lowerText.includes("input monitoring")
+    ) {
+      dialogType = "macos_system";
+    } else if (
+      lowerText.includes("terminal") ||
+      lowerText.includes("shell") ||
+      lowerText.includes("claude code") ||
+      lowerText.includes("approve") ||
+      lowerText.includes("reject")
+    ) {
+      dialogType = "terminal_prompt";
+    } else if (lowerText.includes("browser") || lowerText.includes("safari") || lowerText.includes("chrome")) {
+      dialogType = "browser";
+    }
+
+    // ── Step 6: Extract the requested resource ────────────────────────────────
+    // Heuristic: path-like strings, or the phrase after "access to"
+    const resourceMatch =
+      rawText.match(/access to ([^\n.]+)/i) ??
+      rawText.match(/([~/][^\s]+)/) ??
+      rawText.match(/(?:read|write|modify|delete|execute)\s+([^\n.]+)/i);
+    const resource = resourceMatch?.[1]?.trim() ?? "unknown";
+
+    // ── Step 7: Determine the access action ──────────────────────────────────
+    let accessAction: PermissionDialogInfo["action"] = "full_access";
+    if (lowerText.includes("read") && !lowerText.includes("write")) {
+      accessAction = "read";
+    } else if (lowerText.includes("write") || lowerText.includes("modify")) {
+      accessAction = "write";
+    } else if (lowerText.includes("execute") || lowerText.includes("run")) {
+      accessAction = "execute";
+    }
+
+    // ── Step 8: Identify allow / deny buttons ────────────────────────────────
+    const ALLOW_LABELS = ["allow", "ok", "yes", "grant", "approve", "cho phép", "allow always", "allow once"];
+    const DENY_LABELS  = ["deny", "don't allow", "no", "block", "reject", "cancel", "từ chối"];
+
+    const allowButton = modal.buttons.find((b) =>
+      ALLOW_LABELS.some((lbl) => b.toLowerCase().includes(lbl))
+    );
+    const denyButton = modal.buttons.find((b) =>
+      DENY_LABELS.some((lbl) => b.toLowerCase().includes(lbl))
+    );
+
+    return {
+      type: dialogType,
+      app,
+      resource,
+      action: accessAction,
+      buttons: modal.buttons,
+      ...(allowButton !== undefined && { allowButton }),
+      ...(denyButton  !== undefined && { denyButton }),
+      rawText,
+    };
   }
 
   /**
@@ -2166,13 +2326,52 @@ function rectsOverlap(a: BoundsRect, b: BoundsRect): boolean {
   );
 }
 
+/** Keywords whose presence in button labels or dialog text signals a permission dialog. */
+const PERMISSION_KEYWORDS = [
+  "allow", "deny", "don't allow", "block", "permission",
+  "access", "would like to", "wants to access",
+  "grant", "authorize", "cho phép", "từ chối",
+  // macOS system privacy dialogs
+  "screen recording", "accessibility", "full disk access",
+  "files and folders", "automation", "input monitoring",
+  // Claude Code / terminal permission prompts
+  "read", "write", "execute", "modify", "delete",
+  "approve", "reject", "yes", "no",
+];
+
 /** Infer modal type from its button labels. */
 function inferModalType(buttons: string[]): ModalInfo["type"] {
   const lowerBtns = buttons.map((b) => b.toLowerCase());
+
+  // Permission dialogs: look for allow/deny style buttons first
+  if (
+    lowerBtns.some((b) =>
+      PERMISSION_KEYWORDS.some((kw) => b.includes(kw))
+    ) &&
+    lowerBtns.some((b) =>
+      ["allow", "deny", "don't allow", "block", "approve", "reject",
+       "yes", "no", "grant", "cho phép", "từ chối"].some((kw) => b.includes(kw))
+    )
+  ) {
+    return "permission";
+  }
+
   if (lowerBtns.includes("ok") && lowerBtns.includes("cancel")) return "confirm";
   if (lowerBtns.some((b) => b.includes("ok") || b.includes("close"))) return "alert";
   if (lowerBtns.includes("save")) return "sheet";
   return "unknown";
+}
+
+/**
+ * Infer modal type from both button labels AND full dialog text.
+ * Used by detectPermissionDialog() which has access to OCR text.
+ */
+function inferModalTypeFromText(buttons: string[], text: string): ModalInfo["type"] {
+  const lowerText = text.toLowerCase();
+  if (PERMISSION_KEYWORDS.some((kw) => lowerText.includes(kw.toLowerCase()))) {
+    return "permission";
+  }
+  return inferModalType(buttons);
 }
 
 /** Quick non-cryptographic hash of a buffer for change detection. */
