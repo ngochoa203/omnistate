@@ -5,8 +5,12 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,17 +30,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build gateway
-        run: pnpm -C packages/gateway build
+      - name: Lint (if present)
+        run: pnpm -r --if-present lint
 
-      - name: Build web
-        run: pnpm -C packages/web build
+      - name: Build (typecheck)
+        run: pnpm -r --if-present build
 
-      - name: Test gateway (if script exists)
-        shell: bash
-        run: |
-          if node -e "const p=require('./packages/gateway/package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)"; then
-            pnpm -C packages/gateway test
-          else
-            echo "No test script in packages/gateway. Skipping tests."
-          fi
+      - name: Test (if present)
+        run: pnpm -r --if-present test
