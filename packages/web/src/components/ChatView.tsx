@@ -1,9 +1,16 @@
-import { useEffect, useRef, useCallback } from "react";
-import { useChatStore } from "../lib/chat-store";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { buildClaudeMemPayloadFromState, useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 import { ChatInput } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
 import { getCopy } from "../lib/i18n";
+import { buildTaskGoalWithMemory } from "../lib/session-memory";
+
+type RuntimeProvider = {
+  id: string;
+  model?: string;
+  models?: string[];
+};
 
 const QUICK_CMDS = [
   { label: "Disk space", cmd: "check disk space" },
@@ -68,18 +75,83 @@ export function ChatView() {
   const switchConversation = useChatStore((s) => s.switchConversation);
   const deleteConversation = useChatStore((s) => s.deleteConversation);
   const renameConversation = useChatStore((s) => s.renameConversation);
+  const setConversationRuntime = useChatStore((s) => s.setConversationRuntime);
+  const setSharedMemoryManual = useChatStore((s) => s.setSharedMemoryManual);
+  const sessionStateByConversation = useChatStore((s) => s.sessionStateByConversation);
+  const sharedMemorySummary = useChatStore((s) => s.sharedMemorySummary);
+  const sharedMemoryLog = useChatStore((s) => s.sharedMemoryLog);
+  const runtimeConfig = useChatStore((s) => s.runtimeConfig);
+  const llmPreflight = useChatStore((s) => s.llmPreflight);
   const connectionState = useChatStore((s) => s.connectionState);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [memorySummaryDraft, setMemorySummaryDraft] = useState(sharedMemorySummary);
+  const [memoryLogDraft, setMemoryLogDraft] = useState(sharedMemoryLog.join("\n"));
+
+  const currentSessionState = sessionStateByConversation[currentConversationId];
+
+  const providers = (() => {
+    const cfg = runtimeConfig as { providers?: RuntimeProvider[] } | null;
+    if (Array.isArray(cfg?.providers) && cfg.providers.length > 0) return cfg.providers;
+    return [
+      { id: "anthropic", model: "claude-haiku-4.5", models: ["claude-haiku-4.5", "claude-sonnet-4.6"] },
+      { id: "router9", model: "cx/gpt-5.4", models: ["cx/gpt-5.4", "gh/claude-sonnet-4.6", "gh/gemini-3-flash-preview"] },
+    ];
+  })();
+
+  const selectedProvider = providers.find((p) => p.id === currentSessionState?.provider);
+  const modelOptions = selectedProvider?.models?.length
+    ? selectedProvider.models
+    : selectedProvider?.model
+      ? [selectedProvider.model]
+      : (currentSessionState?.model ? [currentSessionState.model] : []);
+
+  useEffect(() => {
+    if (!currentSessionState) {
+      const provider = llmPreflight?.providerId || "anthropic";
+      const model = llmPreflight?.model || "";
+      setConversationRuntime(currentConversationId, { provider, model });
+    }
+  }, [currentConversationId, currentSessionState, llmPreflight, setConversationRuntime]);
+
+  useEffect(() => {
+    if (connectionState !== "connected") return;
+    if (!currentSessionState) return;
+    if (currentSessionState.provider) getClient().setRuntimeConfig("provider", currentSessionState.provider);
+    if (currentSessionState.model) getClient().setRuntimeConfig("model", currentSessionState.model);
+  }, [connectionState, currentConversationId, currentSessionState]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  useEffect(() => {
+    setMemorySummaryDraft(sharedMemorySummary);
+    setMemoryLogDraft(sharedMemoryLog.join("\n"));
+  }, [sharedMemorySummary, sharedMemoryLog]);
+
   const handleSend = useCallback((text: string) => {
-    useChatStore.getState().addUserMessage(text);
-    getClient().sendTask(text);
-  }, []);
+    const state = useChatStore.getState();
+    const sessionState = state.sessionStateByConversation[state.currentConversationId];
+    const provider = sessionState?.provider || llmPreflight?.providerId || "anthropic";
+    const model = sessionState?.model || llmPreflight?.model || "";
+
+    state.addUserMessage(text);
+    state.noteOutboundTaskRequest(state.currentConversationId);
+
+    if (provider) getClient().setRuntimeConfig("provider", provider);
+    if (model) getClient().setRuntimeConfig("model", model);
+
+    const contextualGoal = buildTaskGoalWithMemory({
+      goal: text,
+      provider,
+      model,
+      sharedMemorySummary: state.sharedMemorySummary,
+      sessionMemorySummary: sessionState?.memorySummary ?? "",
+    });
+    getClient().sendTask(contextualGoal);
+  }, [llmPreflight?.model, llmPreflight?.providerId]);
 
   const handleClear = useCallback(() => {
     useChatStore.getState().clearMessages();
@@ -96,6 +168,19 @@ export function ChatView() {
 
   const isConnected = connectionState === "connected";
   const pendingCount = messages.filter(m => m.status === "pending" || m.status === "streaming").length;
+
+  const handleSaveSharedMemory = useCallback(() => {
+    const nextSummary = memorySummaryDraft.trim();
+    const nextLog = memoryLogDraft
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    setSharedMemoryManual(nextSummary, nextLog);
+
+    const payload = buildClaudeMemPayloadFromState(useChatStore.getState());
+    getClient().syncClaudeMem(payload);
+  }, [memoryLogDraft, memorySummaryDraft, setSharedMemoryManual]);
 
   return (
     <div style={{ height: "100%", display: "flex", minWidth: 0 }}>
@@ -163,9 +248,45 @@ export function ChatView() {
               </span>
             )}
           </div>
-          <button onClick={handleClear} className="btn-ghost" style={{ padding: "5px 12px", fontSize: "0.75rem" }}>
-            {copy.common.clear}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={() => setShowMemoryPanel((v) => !v)}
+              className="btn-ghost"
+              style={{ padding: "5px 12px", fontSize: "0.75rem" }}
+            >
+              {showMemoryPanel ? "Hide Memory" : "Shared Memory"}
+            </button>
+            <select
+              value={currentSessionState?.provider ?? "anthropic"}
+              onChange={(e) => {
+                const nextProvider = e.target.value;
+                const providerModel = providers.find((p) => p.id === nextProvider)?.model ?? "";
+                setConversationRuntime(currentConversationId, { provider: nextProvider, model: providerModel });
+              }}
+              className="omni-input"
+              style={{ fontSize: "0.72rem", height: 30, minWidth: 120 }}
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.id}</option>
+              ))}
+            </select>
+            <input
+              list="session-model-options"
+              value={currentSessionState?.model ?? ""}
+              onChange={(e) => setConversationRuntime(currentConversationId, { model: e.target.value })}
+              placeholder="model"
+              className="omni-input"
+              style={{ fontSize: "0.72rem", height: 30, minWidth: 180 }}
+            />
+            <datalist id="session-model-options">
+              {modelOptions.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+            <button onClick={handleClear} className="btn-ghost" style={{ padding: "5px 12px", fontSize: "0.75rem" }}>
+              {copy.common.clear}
+            </button>
+          </div>
         </div>
 
         {messages.length === 0 ? (
@@ -182,6 +303,49 @@ export function ChatView() {
 
         <ChatInput onSend={handleSend} disabled={!isConnected} />
       </div>
+
+      {showMemoryPanel && (
+        <aside
+          style={{
+            width: 340,
+            borderLeft: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(5,5,8,0.55)",
+            display: "flex",
+            flexDirection: "column",
+            padding: "14px",
+            gap: 10,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 4 }}>Shared Memory</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", lineHeight: 1.5 }}>
+              Chỉnh tay memory dùng chung giữa các phiên và bấm Save để đồng bộ lên backend session store.
+            </div>
+          </div>
+
+          <label style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Summary</label>
+          <textarea
+            value={memorySummaryDraft}
+            onChange={(e) => setMemorySummaryDraft(e.target.value)}
+            className="omni-input"
+            style={{ minHeight: 150, resize: "vertical", fontSize: "0.78rem", lineHeight: 1.5, padding: 10 }}
+            placeholder="Shared memory summary..."
+          />
+
+          <label style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Memory Log (mỗi dòng 1 entry)</label>
+          <textarea
+            value={memoryLogDraft}
+            onChange={(e) => setMemoryLogDraft(e.target.value)}
+            className="omni-input"
+            style={{ minHeight: 170, resize: "vertical", fontSize: "0.75rem", lineHeight: 1.45, padding: 10 }}
+            placeholder="- User prefers concise output\n- Last session focused on parser tests"
+          />
+
+          <button className="btn-primary" style={{ padding: "8px 12px", fontSize: "0.78rem" }} onClick={handleSaveSharedMemory}>
+            {copy.common.save}
+          </button>
+        </aside>
+      )}
     </div>
   );
 }

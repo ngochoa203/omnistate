@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { GatewayClient } from "../lib/gateway-client";
-import { useChatStore } from "../lib/chat-store";
+import { buildClaudeMemPayloadFromState, useChatStore } from "../lib/chat-store";
 import type { ServerMessage } from "../lib/protocol";
 
 let _client: GatewayClient | null = null;
@@ -16,6 +16,32 @@ export function useGateway() {
 
   useEffect(() => {
     const client = clientRef.current;
+    const lastRemoteHashRef = { current: "" };
+    const lastLocalHashRef = { current: "" };
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleMemorySync = () => {
+      const state = useChatStore.getState();
+      const payload = buildClaudeMemPayloadFromState(state);
+      const hash = JSON.stringify(payload);
+      if (hash === lastRemoteHashRef.current || hash === lastLocalHashRef.current) {
+        return;
+      }
+
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        lastLocalHashRef.current = hash;
+        client.syncClaudeMem(payload);
+      }, 300);
+    };
+
+    const unsubscribeMem = useChatStore.subscribe((state) => {
+      void state.sharedMemorySummary;
+      void state.sharedMemoryLog;
+      void state.sessionStateByConversation;
+      scheduleMemorySync();
+    });
+
     store.setConnectionState("connecting");
     client.connect();
 
@@ -25,6 +51,7 @@ export function useGateway() {
       store.setConnectionState("connected");
       client.requestLlmPreflight();
       client.requestRuntimeConfig();
+      client.queryClaudeMem();
     }));
 
     unsubs.push(client.on("_disconnected", () => {
@@ -157,7 +184,17 @@ export function useGateway() {
       }
     }));
 
+    unsubs.push(client.on("claude.mem.state", (msg: ServerMessage) => {
+      if (msg.type === "claude.mem.state") {
+        const hash = JSON.stringify(msg.payload);
+        lastRemoteHashRef.current = hash;
+        store.applyClaudeMemState(msg.payload);
+      }
+    }));
+
     return () => {
+      if (syncTimer) clearTimeout(syncTimer);
+      unsubscribeMem();
       unsubs.forEach(u => u());
       client.disconnect();
     };
