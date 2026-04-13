@@ -56,12 +56,14 @@ struct WebViewContainer: NSViewRepresentable {
         }
         #endif
 
-        // Default: load bundled web assets via custom omnistate:// scheme.
+        // Default: load bundled web assets from app resources.
         if let resourcePath = Bundle.main.resourcePath {
-            let indexPath = "\(resourcePath)/web-dist/index.html"
-            if FileManager.default.fileExists(atPath: indexPath),
-               let bundledURL = URL(string: "omnistate://app/index.html") {
-                webView.load(URLRequest(url: bundledURL))
+            let distPath = "\(resourcePath)/web-dist"
+            let indexPath = "\(distPath)/index.html"
+            if FileManager.default.fileExists(atPath: indexPath) {
+                let indexURL = URL(fileURLWithPath: indexPath)
+                let distURL = URL(fileURLWithPath: distPath)
+                webView.loadFileURL(indexURL, allowingReadAccessTo: distURL)
                 return
             }
         }
@@ -140,15 +142,12 @@ struct WebViewContainer: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             print("[OmniState] Web provisional navigation failed: \(error.localizedDescription)")
-            // Dev fallback is opt-in only.
-#if DEBUG
-            guard ProcessInfo.processInfo.environment["OMNISTATE_USE_DEV_SERVER"] == "1" else { return }
+            // Retry after delay (Vite may not be ready yet)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                if let url = URL(string: "http://localhost:5173") {
+                if let url = webView.url ?? URL(string: "http://localhost:5173") {
                     webView.load(URLRequest(url: url))
                 }
             }
-#endif
         }
     }
 }

@@ -112,6 +112,20 @@ interface NativeBindings {
     alt: boolean,
     meta: boolean
   ): void;
+  keyDown(
+    key: string,
+    shift: boolean,
+    control: boolean,
+    alt: boolean,
+    meta: boolean
+  ): void;
+  keyUp(
+    key: string,
+    shift: boolean,
+    control: boolean,
+    alt: boolean,
+    meta: boolean
+  ): void;
   typeText(text: string): void;
 
   // Accessibility (omnistate-a11y — AXUIElement based)
@@ -302,6 +316,42 @@ export function keyTap(
   } = {}
 ) {
   getNative().keyTap(
+    key,
+    modifiers.shift ?? false,
+    modifiers.control ?? false,
+    modifiers.alt ?? false,
+    modifiers.meta ?? false
+  );
+}
+
+export function keyDown(
+  key: string,
+  modifiers: {
+    shift?: boolean;
+    control?: boolean;
+    alt?: boolean;
+    meta?: boolean;
+  } = {}
+) {
+  getNative().keyDown(
+    key,
+    modifiers.shift ?? false,
+    modifiers.control ?? false,
+    modifiers.alt ?? false,
+    modifiers.meta ?? false
+  );
+}
+
+export function keyUp(
+  key: string,
+  modifiers: {
+    shift?: boolean;
+    control?: boolean;
+    alt?: boolean;
+    meta?: boolean;
+  } = {}
+) {
+  getNative().keyUp(
     key,
     modifiers.shift ?? false,
     modifiers.control ?? false,

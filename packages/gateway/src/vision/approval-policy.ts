@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { homedir } from "node:os";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, createReadStream, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline";
 
 // ---------------------------------------------------------------------------
 // Glob helpers (no external dep — picomatch/minimatch not in package.json)
@@ -214,6 +215,18 @@ function rateKey(req: ApprovalRequest): string {
 // ApprovalEngine
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// App scope types
+// ---------------------------------------------------------------------------
+
+export interface AppScope {
+  allowedPaths: string[];
+  deniedPaths: string[];
+  allowedTools: string[];
+  deniedTools: string[];
+  maxRequestsPerMinute?: number;
+}
+
 export class ApprovalEngine {
   private policy: ApprovalPolicy;
 
@@ -222,6 +235,13 @@ export class ApprovalEngine {
    * Each entry: [count, windowStartEpochMs]
    */
   private rateBuckets: Map<string, { count: number; windowStart: number }> =
+    new Map();
+
+  /** Per-app granular scopes, keyed by app name (case-insensitive). */
+  private appScopes: Map<string, AppScope> = new Map();
+
+  /** Per-minute rate buckets for app scopes, keyed by app name. */
+  private appScopeRateBuckets: Map<string, { count: number; windowStart: number }> =
     new Map();
 
   constructor(policy?: Partial<ApprovalPolicy>) {
@@ -255,7 +275,22 @@ export class ApprovalEngine {
       };
     }
 
-    // 3. ALLOWLIST — auto-approve (subject to rate limit)
+    // 3. APP SCOPE — per-app granular rules evaluated before allowlist
+    const scopeResult = this.evaluateAppScope(request.app, request.action, request.resource);
+    if (scopeResult !== "no_scope") {
+      const reason = scopeResult === "allow"
+        ? `Allowed by app scope for ${request.app}`
+        : `Denied by app scope for ${request.app}`;
+      this.audit(request, scopeResult, reason);
+      return {
+        decision: scopeResult,
+        reason,
+        isBlocklisted: false,
+        isAllowlisted: false,
+      };
+    }
+
+    // 4. ALLOWLIST — auto-approve (subject to rate limit)
     if (this.isAllowlisted(request)) {
       if (this.isRateLimited(request)) {
         this.audit(request, "ask", "Allowlisted but rate limit exceeded");
@@ -276,7 +311,7 @@ export class ApprovalEngine {
       };
     }
 
-    // 4. Custom rules (evaluated in declaration order)
+    // 5. Custom rules (evaluated in declaration order)
     for (const rule of this.policy.rules) {
       if (this.ruleMatches(rule, request)) {
         const condCheck = this.checkConditions(rule, request);
@@ -303,13 +338,230 @@ export class ApprovalEngine {
       }
     }
 
-    // 5. Default: escalate to user
+    // 6. Default: escalate to user
     this.audit(request, "ask", "No matching rule");
     return {
       decision: "ask",
       reason: "No matching policy rule",
       isBlocklisted: false,
       isAllowlisted: false,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-app permission scoping
+  // -------------------------------------------------------------------------
+
+  /**
+   * Define granular permission rules for a specific app.
+   * These are evaluated after the blocklist but before the allowlist.
+   */
+  addAppScope(appName: string, scope: AppScope): void {
+    this.appScopes.set(appName.toLowerCase(), scope);
+  }
+
+  /**
+   * Evaluate a request against the registered app scope for `appName`.
+   * Returns 'allow' | 'deny' when the scope matches, or 'no_scope' when
+   * no scope is registered for the app.
+   */
+  evaluateAppScope(appName: string, tool: string, resource: string): "allow" | "deny" | "no_scope" {
+    const scope = this.appScopes.get(appName.toLowerCase());
+    if (!scope) return "no_scope";
+
+    // Denied paths take priority
+    if (resource && matchesAny(resource, scope.deniedPaths)) return "deny";
+
+    // Denied tools take priority
+    if (scope.deniedTools.includes(tool) || scope.deniedTools.includes("*")) return "deny";
+
+    // Check per-minute rate limit
+    if (scope.maxRequestsPerMinute !== undefined) {
+      const bucket = this.getAppScopeRateBucket(appName);
+      if (bucket.count >= scope.maxRequestsPerMinute) return "deny";
+      bucket.count++;
+    }
+
+    // Allowed paths
+    if (resource && matchesAny(resource, scope.allowedPaths)) return "allow";
+
+    // Allowed tools
+    if (scope.allowedTools.includes(tool) || scope.allowedTools.includes("*")) return "allow";
+
+    return "deny";
+  }
+
+  private getAppScopeRateBucket(appName: string): { count: number; windowStart: number } {
+    const key = appName.toLowerCase();
+    const now = Date.now();
+    const existing = this.appScopeRateBuckets.get(key);
+    if (!existing || now - existing.windowStart >= 60_000) {
+      const fresh = { count: 0, windowStart: now };
+      this.appScopeRateBuckets.set(key, fresh);
+      return fresh;
+    }
+    return existing;
+  }
+
+  // -------------------------------------------------------------------------
+  // Permission Audit API
+  // -------------------------------------------------------------------------
+
+  private get auditLogPath(): string {
+    return resolve(expandHome(this.policy.auditLog.path));
+  }
+
+  private async readAuditEntries(since?: Date): Promise<any[]> {
+    const entries: any[] = [];
+    try {
+      const rl = createInterface({
+        input: createReadStream(this.auditLogPath, { encoding: "utf-8" }),
+        crlfDelay: Infinity,
+      });
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const entry = JSON.parse(trimmed);
+          if (since && entry.ts && new Date(entry.ts) < since) continue;
+          entries.push(entry);
+        } catch {
+          // skip malformed lines
+        }
+      }
+    } catch {
+      // file may not exist yet — return empty
+    }
+    return entries;
+  }
+
+  async getAuditStats(since?: Date): Promise<{
+    totalRequests: number;
+    approved: number;
+    denied: number;
+    byTool: Record<string, { approved: number; denied: number }>;
+    byApp: Record<string, { approved: number; denied: number }>;
+    topDeniedResources: Array<{ resource: string; count: number }>;
+  }> {
+    const entries = await this.readAuditEntries(since);
+    let approved = 0;
+    let denied = 0;
+    const byTool: Record<string, { approved: number; denied: number }> = {};
+    const byApp: Record<string, { approved: number; denied: number }> = {};
+    const deniedResourceCounts: Record<string, number> = {};
+
+    for (const e of entries) {
+      const isApproved = e.decision === "allow";
+      const isDenied = e.decision === "deny";
+      if (isApproved) approved++;
+      if (isDenied) denied++;
+
+      const tool: string = e.action ?? "unknown";
+      if (!byTool[tool]) byTool[tool] = { approved: 0, denied: 0 };
+      if (isApproved) byTool[tool]!.approved++;
+      if (isDenied) byTool[tool]!.denied++;
+
+      const app: string = e.app ?? "unknown";
+      if (!byApp[app]) byApp[app] = { approved: 0, denied: 0 };
+      if (isApproved) byApp[app]!.approved++;
+      if (isDenied) byApp[app]!.denied++;
+
+      if (isDenied && e.resource) {
+        deniedResourceCounts[e.resource] = (deniedResourceCounts[e.resource] ?? 0) + 1;
+      }
+    }
+
+    const topDeniedResources = Object.entries(deniedResourceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([resource, count]) => ({ resource, count }));
+
+    return {
+      totalRequests: entries.length,
+      approved,
+      denied,
+      byTool,
+      byApp,
+      topDeniedResources,
+    };
+  }
+
+  async getRecentDecisions(limit = 50): Promise<Array<{
+    timestamp: string;
+    tool: string;
+    resource: string;
+    decision: string;
+    reason: string;
+    app?: string;
+  }>> {
+    const entries = await this.readAuditEntries();
+    return entries.slice(-limit).map((e) => ({
+      timestamp: e.ts ?? "",
+      tool: e.action ?? "unknown",
+      resource: e.resource ?? "",
+      decision: e.decision ?? "ask",
+      reason: e.reason ?? "",
+      app: e.app,
+    }));
+  }
+
+  async searchAuditLog(query: {
+    tool?: string;
+    resource?: string;
+    decision?: string;
+    since?: Date;
+    until?: Date;
+  }): Promise<any[]> {
+    const entries = await this.readAuditEntries(query.since);
+    return entries.filter((e) => {
+      if (query.tool && e.action !== query.tool) return false;
+      if (query.resource && !(e.resource ?? "").includes(query.resource)) return false;
+      if (query.decision && e.decision !== query.decision) return false;
+      if (query.until && e.ts && new Date(e.ts) > query.until) return false;
+      return true;
+    });
+  }
+
+  async exportAuditReport(outputPath: string, format: "json" | "csv"): Promise<string> {
+    const entries = await this.readAuditEntries();
+    const absPath = resolve(expandHome(outputPath));
+    mkdirSync(dirname(absPath), { recursive: true });
+
+    if (format === "json") {
+      writeFileSync(absPath, JSON.stringify(entries, null, 2), "utf-8");
+    } else {
+      const headers = ["ts", "decision", "reason", "app", "resource", "action", "dialogType"];
+      const rows = entries.map((e) =>
+        headers.map((h) => JSON.stringify(e[h] ?? "")).join(",")
+      );
+      writeFileSync(absPath, [headers.join(","), ...rows].join("\n"), "utf-8");
+    }
+    return absPath;
+  }
+
+  async getPermissionSummary(): Promise<{
+    engine: { blocklist: number; allowlist: number; customRules: number; appScopes: number };
+    stats: { total: number; approveRate: number; topTools: string[] };
+    status: "active" | "inactive";
+  }> {
+    const stats = await this.getAuditStats();
+    const approveRate = stats.totalRequests > 0
+      ? Math.round((stats.approved / stats.totalRequests) * 100) / 100
+      : 0;
+    const topTools = Object.entries(stats.byTool)
+      .sort((a, b) => (b[1].approved + b[1].denied) - (a[1].approved + a[1].denied))
+      .slice(0, 5)
+      .map(([tool]) => tool);
+
+    return {
+      engine: {
+        blocklist: this.policy.blocklist.paths.length + this.policy.blocklist.apps.length,
+        allowlist: this.policy.allowlist.paths.length + this.policy.allowlist.apps.length,
+        customRules: this.policy.rules.length,
+        appScopes: this.appScopes.size,
+      },
+      stats: { total: stats.totalRequests, approveRate, topTools },
+      status: this.policy.enabled ? "active" : "inactive",
     };
   }
 

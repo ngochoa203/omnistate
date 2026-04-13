@@ -83,6 +83,40 @@ pre, code {
   box-shadow: 0 0 24px rgba(99,102,241,0.12);
 }
 
+/* ─── Glow Accent Card ──────────────────────────────────────────────────────── */
+.glow-card {
+  background: rgba(13,13,26,0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(99,102,241,0.18);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16,1,0.3,1);
+}
+
+.glow-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.3), transparent, rgba(34,211,238,0.2));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.glow-card:hover::before { opacity: 1; }
+.glow-card:hover {
+  border-color: rgba(99,102,241,0.35);
+  box-shadow: 0 0 30px rgba(99,102,241,0.12), 0 8px 32px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+
 /* ─── Gradient Text ──────────────────────────────────────────────────────────── */
 .gradient-text {
   background: linear-gradient(135deg, #6366f1 0%, #a78bfa 50%, #22d3ee 100%);
@@ -98,6 +132,13 @@ pre, code {
   background-clip: text;
 }
 
+.gradient-text-cyber {
+  background: linear-gradient(135deg, #22d3ee 0%, #6366f1 50%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 /* ─── Background Effects ─────────────────────────────────────────────────────── */
 .bg-orb {
   position: fixed;
@@ -106,6 +147,57 @@ pre, code {
   opacity: 0.12;
   pointer-events: none;
   animation: orb-drift 18s ease-in-out infinite alternate;
+}
+
+/* Scanline sweep overlay */
+.scanline-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.scanline-overlay::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 120px;
+  background: linear-gradient(180deg, transparent, rgba(99,102,241,0.06), transparent);
+  animation: scanline-sweep 6s linear infinite;
+  filter: blur(4px);
+}
+
+.scanline-overlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(255,255,255,0.012) 3px,
+    rgba(255,255,255,0.012) 4px
+  );
+  pointer-events: none;
+}
+
+@keyframes scanline-sweep {
+  0%   { transform: translateY(-120px); }
+  100% { transform: translateY(100vh); }
+}
+
+/* Cyber grid subtle pattern */
+.cyber-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(99,102,241,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  opacity: 0.4;
 }
 
 /* ─── Sidebar ────────────────────────────────────────────────────────────────── */
@@ -162,9 +254,71 @@ pre, code {
   flex-shrink: 0;
 }
 
-.status-dot.connected  { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
-.status-dot.connecting { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+.status-dot.connected  { background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse-dot 1.4s ease-in-out infinite; }
+.status-dot.connecting { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: pulse-dot 0.8s ease-in-out infinite; }
 .status-dot.disconnected { background: #ef4444; }
+
+/* ─── Neon Badge ─────────────────────────────────────────────────────────────── */
+.neon-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.neon-badge-ok {
+  background: rgba(34,197,94,0.12);
+  color: #22c55e;
+  border: 1px solid rgba(34,197,94,0.25);
+  box-shadow: 0 0 12px rgba(34,197,94,0.1);
+}
+
+.neon-badge-warn {
+  background: rgba(245,158,11,0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245,158,11,0.25);
+  box-shadow: 0 0 12px rgba(245,158,11,0.1);
+}
+
+.neon-badge-error {
+  background: rgba(239,68,68,0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239,68,68,0.25);
+  box-shadow: 0 0 12px rgba(239,68,68,0.1);
+}
+
+.neon-badge-info {
+  background: rgba(34,211,238,0.10);
+  color: #22d3ee;
+  border: 1px solid rgba(34,211,238,0.25);
+  box-shadow: 0 0 12px rgba(34,211,238,0.08);
+}
+
+.neon-badge-accent {
+  background: rgba(99,102,241,0.12);
+  color: #a78bfa;
+  border: 1px solid rgba(99,102,241,0.25);
+  box-shadow: 0 0 12px rgba(99,102,241,0.1);
+}
+
+/* Alert counter badge */
+.alert-count-badge {
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 10px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1;
+}
 
 /* ─── Metric Cards ───────────────────────────────────────────────────────────── */
 .metric-card {
@@ -323,6 +477,15 @@ pre, code {
   }
 }
 
+@keyframes border-glow {
+  0%, 100% { border-color: rgba(99,102,241,0.25); }
+  50%       { border-color: rgba(99,102,241,0.5); }
+}
+
+@keyframes gauge-fill {
+  from { stroke-dashoffset: var(--gauge-circumference, 283); }
+}
+
 .animate-fade-in       { animation: fade-in 0.25s ease-out; }
 .animate-slide-left    { animation: slide-in-left 0.3s ease-out; }
 .animate-slide-right   { animation: slide-in-right 0.3s ease-out; }
@@ -330,6 +493,7 @@ pre, code {
 .animate-float         { animation: float 3s ease-in-out infinite; }
 .animate-spin-slow     { animation: spin-slow 8s linear infinite; }
 .animate-pulse-dot     { animation: pulse-dot 1.4s ease-in-out infinite; }
+.animate-border-glow   { animation: border-glow 2s ease-in-out infinite; }
 
 .view-transition {
   animation: view-in 0.34s cubic-bezier(0.16, 1, 0.3, 1);
@@ -446,6 +610,24 @@ pre, code {
   box-shadow: 0 4px 16px rgba(244,63,94,0.2);
 }
 
+.btn-cyber {
+  background: linear-gradient(135deg, rgba(34,211,238,0.15), rgba(99,102,241,0.15));
+  color: #22d3ee;
+  border: 1px solid rgba(34,211,238,0.3);
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-cyber:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(34,211,238,0.25), rgba(99,102,241,0.25));
+  box-shadow: 0 4px 16px rgba(34,211,238,0.2);
+  border-color: rgba(34,211,238,0.5);
+}
+
 /* ─── Toggle ─────────────────────────────────────────────────────────────────── */
 .toggle {
   position: relative;
@@ -527,6 +709,18 @@ pre, code {
 .gauge-ring {
   transform: rotate(-90deg);
   transform-origin: center;
+}
+
+.gauge-track {
+  stroke: rgba(255,255,255,0.06);
+  fill: none;
+}
+
+.gauge-value {
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1.2s cubic-bezier(0.16,1,0.3,1);
+  filter: drop-shadow(0 0 6px currentColor);
 }
 
 /* ─── Tab Strip ──────────────────────────────────────────────────────────────── */
@@ -633,4 +827,85 @@ pre, code {
   position: relative;
   height: 32px;
   width: 100%;
+}
+
+/* ─── Topbar Provider Chip ───────────────────────────────────────────────────── */
+.topbar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  transition: all 0.2s;
+}
+
+.topbar-chip:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(99,102,241,0.3);
+}
+
+/* ─── Hero Section ───────────────────────────────────────────────────────────── */
+.hero-gradient {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(34,211,238,0.04), transparent);
+  border: 1px solid rgba(99,102,241,0.15);
+  border-radius: 20px;
+  padding: 28px 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-gradient::before {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(99,102,241,0.15), transparent 70%);
+  pointer-events: none;
+}
+
+.hero-gradient::after {
+  content: '';
+  position: absolute;
+  bottom: -60px;
+  left: -20px;
+  width: 160px;
+  height: 160px;
+  background: radial-gradient(circle, rgba(34,211,238,0.1), transparent 70%);
+  pointer-events: none;
+}
+
+/* ─── Conversation sidebar item ──────────────────────────────────────────────── */
+.conv-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.conv-item:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.06);
+}
+
+.conv-item.active {
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(34,211,238,0.08));
+  border-color: rgba(99,102,241,0.3);
+  box-shadow: 0 0 16px rgba(99,102,241,0.1);
+}
+
+.conv-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #6366f1, #22d3ee);
 }

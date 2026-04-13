@@ -20,7 +20,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 
 type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers";
 
-const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers"; icon: React.ReactNode; badge?: string }> = [
+const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers"; icon: React.ReactNode }> = [
   {
     id: "dashboard",
     labelKey: "dashboard",
@@ -75,16 +75,6 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
     ),
   },
   {
-    id: "settings",
-    labelKey: "settings",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    ),
-  },
-  {
     id: "config",
     labelKey: "config",
     icon: (
@@ -93,6 +83,16 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
         <path d="M4 17h16" />
         <circle cx="17" cy="7" r="3" />
         <circle cx="7" cy="17" r="3" />
+      </svg>
+    ),
+  },
+  {
+    id: "settings",
+    labelKey: "settings",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </svg>
     ),
   },
@@ -140,6 +140,8 @@ export function App() {
   const connectionState = useChatStore((s) => s.connectionState);
   const llmPreflight = useChatStore((s) => s.llmPreflight);
   const messages = useChatStore((s) => s.messages);
+  const health = useChatStore((s) => s.health);
+  const runtimeConfig = useChatStore((s) => s.runtimeConfig);
   const copy = getCopy(appLanguage);
 
   const unreadCount = useMemo(
@@ -147,10 +149,33 @@ export function App() {
     [messages],
   );
 
+  const alertCount = useMemo(() => {
+    let c = 0;
+    if (health?.alerts?.length) c += health.alerts.length;
+    if (connectionState === "disconnected") c += 1;
+    return c;
+  }, [health, connectionState]);
+
   const activeNavLabel = useMemo(
     () => copy.nav[NAV_ITEMS.find((n) => n.id === view)?.labelKey ?? "dashboard"],
     [view, copy],
   );
+
+  const activeModel = useMemo(() => {
+    if (llmPreflight?.model) return llmPreflight.model;
+    if (runtimeConfig && typeof runtimeConfig === "object" && "activeModel" in runtimeConfig) {
+      return String((runtimeConfig as Record<string, unknown>).activeModel ?? "");
+    }
+    return "";
+  }, [llmPreflight, runtimeConfig]);
+
+  const activeProvider = useMemo(() => {
+    if (llmPreflight?.providerId) return llmPreflight.providerId;
+    if (runtimeConfig && typeof runtimeConfig === "object" && "activeProviderId" in runtimeConfig) {
+      return String((runtimeConfig as Record<string, unknown>).activeProviderId ?? "");
+    }
+    return "";
+  }, [llmPreflight, runtimeConfig]);
 
   const connColor =
     connectionState === "connected" ? "connected" :
@@ -167,10 +192,12 @@ export function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", position: "relative" }}>
-      {/* Background Orbs */}
+      {/* Background Effects */}
       <div className="bg-orb" style={{ width: 600, height: 600, top: -200, left: -200, background: "radial-gradient(circle, #6366f1, transparent)" }} />
       <div className="bg-orb" style={{ width: 500, height: 500, bottom: -150, right: -100, background: "radial-gradient(circle, #7c3aed, transparent)", opacity: 0.08 }} />
       <div className="bg-orb" style={{ width: 300, height: 300, top: "40%", right: "30%", background: "radial-gradient(circle, #22d3ee, transparent)", opacity: 0.05 }} />
+      <div className="scanline-overlay" />
+      <div className="cyber-grid" />
 
       {/* Sidebar */}
       <aside
@@ -223,13 +250,22 @@ export function App() {
               {!sidebarCollapsed && (
                 <span className="animate-fade-in" style={{ flex: 1 }}>{copy.nav[item.labelKey]}</span>
               )}
+              {/* Chat unread badge */}
               {!sidebarCollapsed && item.id === "chat" && unreadCount > 0 && (
-                <span style={{
+                <span className="alert-count-badge" style={{
                   background: "linear-gradient(135deg, #6366f1, #7c3aed)",
-                  color: "white", borderRadius: "20px",
-                  padding: "1px 7px", fontSize: "0.65rem", fontWeight: 700,
+                  color: "white",
                 }}>
                   {unreadCount}
+                </span>
+              )}
+              {/* Health alert badge */}
+              {!sidebarCollapsed && item.id === "health" && alertCount > 0 && (
+                <span className="alert-count-badge" style={{
+                  background: "linear-gradient(135deg, #f59e0b, #f43f5e)",
+                  color: "white",
+                }}>
+                  {alertCount}
                 </span>
               )}
             </button>
@@ -256,7 +292,12 @@ export function App() {
                   {!llmPreflight ? copy.status.unchecked : llmPreflight.ok ? copy.status.ready : copy.status.error}
                 </span>
               </div>
-              <div style={{ marginTop: 8, fontSize: "0.68rem", color: "var(--color-text-muted)", fontFamily: "monospace" }}>
+              {activeProvider && (
+                <div style={{ marginTop: 6, fontSize: "0.65rem", color: "var(--color-text-muted)", fontFamily: "monospace" }}>
+                  {activeProvider} / {activeModel || "default"}
+                </div>
+              )}
+              <div style={{ marginTop: 6, fontSize: "0.68rem", color: "var(--color-text-muted)", fontFamily: "monospace" }}>
                 <LiveClock />
               </div>
             </div>
@@ -302,11 +343,7 @@ export function App() {
             <h2 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "white" }}>
               {activeNavLabel}
             </h2>
-            <span style={{
-              padding: "2px 8px", borderRadius: "20px", fontSize: "0.65rem",
-              background: "rgba(99,102,241,0.12)", color: "#a78bfa",
-              border: "1px solid rgba(99,102,241,0.25)", fontWeight: 600, letterSpacing: "0.04em"
-            }}>
+            <span className="neon-badge neon-badge-accent">
               v0.1.0
             </span>
           </div>
@@ -315,37 +352,29 @@ export function App() {
             <LanguageSwitch value={appLanguage} onChange={setAppLanguage} />
 
             {/* Connection badge */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 12px", borderRadius: "20px",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              fontSize: "0.75rem", color: "var(--color-text-secondary)",
-            }}>
+            <div className="topbar-chip">
               <div className={`status-dot ${connColor}`} style={{ width: 6, height: 6 }}></div>
               <span>{connText}</span>
             </div>
 
             {/* LLM badge */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 12px", borderRadius: "20px",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              fontSize: "0.75rem", color: "var(--color-text-secondary)",
+            <div className="topbar-chip" style={{
+              borderColor: !llmPreflight ? undefined : llmPreflight.ok ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)",
             }}>
               <span>🤖</span>
-              <span>{!llmPreflight ? copy.status.unchecked : llmPreflight.ok ? `${llmPreflight.model ?? "LLM"} ✓` : copy.status.error}</span>
+              <span style={{
+                color: !llmPreflight ? "var(--color-text-muted)" : llmPreflight.ok ? "#22c55e" : "#ef4444",
+              }}>
+                {!llmPreflight
+                  ? copy.status.unchecked
+                  : llmPreflight.ok
+                    ? `${activeModel || "LLM"} ✓`
+                    : copy.status.error}
+              </span>
             </div>
 
             {/* Time */}
-            <div style={{
-              padding: "6px 12px", borderRadius: "20px",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              fontSize: "0.75rem", fontFamily: "monospace",
-              color: "var(--color-text-muted)",
-            }}>
+            <div className="topbar-chip" style={{ fontFamily: "monospace" }}>
               <LiveClock />
             </div>
           </div>

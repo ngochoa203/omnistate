@@ -104,8 +104,17 @@ export interface RuntimeConfigSetMessage {
     | "baseURL"
     | "apiKey"
     | "voice.lowLatency"
-    | "voice.autoExecuteTranscript";
-  value: string | boolean;
+    | "voice.autoExecuteTranscript"
+    | "voice.wake.enabled"
+    | "voice.wake.phrase"
+    | "voice.wake.cooldownMs"
+    | "voice.wake.commandWindowSec"
+    | "voice.siri.enabled"
+    | "voice.siri.mode"
+    | "voice.siri.shortcutName"
+    | "voice.siri.endpoint"
+    | "voice.siri.token";
+  value: string | boolean | number;
 }
 
 export interface RuntimeConfigUpsertProviderMessage {

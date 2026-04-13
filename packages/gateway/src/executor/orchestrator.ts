@@ -7,6 +7,16 @@ import { SurfaceLayer } from "../layers/surface.js";
 import * as bridge from "../platform/bridge.js";
 import { DeepOSLayer } from "../layers/deep-os.js";
 import { DeepSystemLayer } from "../layers/deep-system.js";
+import { HardwareLayer } from "../layers/hardware.js";
+import { CommunicationLayer } from "../layers/communication.js";
+import { SoftwareLayer } from "../layers/software.js";
+import { BrowserLayer } from "../layers/browser.js";
+import { DeveloperLayer } from "../layers/developer.js";
+import { MaintenanceLayer } from "../layers/maintenance.js";
+import { MediaLayer } from "../layers/media.js";
+import { FleetLayer } from "../layers/fleet.js";
+import { DeviceRepository } from "../db/device-repository.js";
+import { getDb } from "../db/database.js";
 import { AdvancedHealthMonitor } from "../health/advanced-health.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import * as HybridTooling from "../hybrid/tooling.js";
@@ -31,6 +41,14 @@ export class Orchestrator {
   private surface: SurfaceLayer;
   private deepOS: DeepOSLayer;
   private deepSystem: DeepSystemLayer;
+  private hardware: HardwareLayer;
+  private communication: CommunicationLayer;
+  private software: SoftwareLayer;
+  private browser: BrowserLayer;
+  private developer: DeveloperLayer;
+  private maintenance: MaintenanceLayer;
+  private media: MediaLayer;
+  private fleet: FleetLayer;
   private health: AdvancedHealthMonitor;
   private hybridAuto: typeof HybridAutomation;
   private hybridTools: typeof HybridTooling;
@@ -49,6 +67,14 @@ export class Orchestrator {
     this.surface = new SurfaceLayer();
     this.deepOS = new DeepOSLayer(this.deep);
     this.deepSystem = new DeepSystemLayer(this.deep);
+    this.hardware = new HardwareLayer(this.deep);
+    this.communication = new CommunicationLayer();
+    this.software = new SoftwareLayer(this.deep);
+    this.browser = new BrowserLayer(this.surface);
+    this.developer = new DeveloperLayer();
+    this.maintenance = new MaintenanceLayer();
+    this.media = new MediaLayer(this.deep);
+    this.fleet = new FleetLayer(new DeviceRepository(getDb()));
     this.health = new AdvancedHealthMonitor();
     this.hybridAuto = HybridAutomation;
     this.hybridTools = HybridTooling;
@@ -139,7 +165,24 @@ export class Orchestrator {
     }
 
     try {
-      if (layer === "deep") {
+      const toolPrefix = tool.split(".")[0];
+      if (toolPrefix === "hardware") {
+        data = await this.executeHardware(tool, params);
+      } else if (toolPrefix === "comm") {
+        data = await this.executeCommunication(tool, params);
+      } else if (toolPrefix === "software" && !["software.install", "software.uninstall", "software.update"].includes(tool)) {
+        data = await this.executeSoftware(tool, params);
+      } else if (toolPrefix === "browser" && !["browser.open", "browser.newTab", "browser.closeTab", "browser.fillForm", "browser.scrape", "browser.download", "browser.bookmark"].includes(tool)) {
+        data = await this.executeBrowser(tool, params);
+      } else if (toolPrefix === "dev") {
+        data = await this.executeDeveloper(tool, params);
+      } else if (toolPrefix === "maint") {
+        data = await this.executeMaintenance(tool, params);
+      } else if (toolPrefix === "media") {
+        data = await this.executeMedia(tool, params);
+      } else if (toolPrefix === "fleet") {
+        data = await this.executeFleet(tool, params);
+      } else if (layer === "deep") {
         data = await this.executeDeep(tool, params);
       } else if (layer === "surface") {
         data = await this.executeSurface(tool, params);
@@ -2370,6 +2413,350 @@ end tell`);
 
       default:
         throw new Error(`Unknown surface layer tool: ${tool}`);
+    }
+  }
+
+  // ── HardwareLayer execute methods ───────────────────────────────────────
+  private async executeHardware(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "hardware.getVolume": { const vol = await this.hardware.getVolume(); return vol; }
+      case "hardware.setVolume": { await this.hardware.setVolume(params.level as number); return { success: true }; }
+      case "hardware.mute": { await this.hardware.mute(); return { success: true }; }
+      case "hardware.unmute": { await this.hardware.unmute(); return { success: true }; }
+      case "hardware.toggleMute": { await this.hardware.toggleMute(); return { success: true }; }
+      case "hardware.getInputVolume": { const level = await this.hardware.getInputVolume(); return { level }; }
+      case "hardware.setInputVolume": { await this.hardware.setInputVolume(params.level as number); return { success: true }; }
+      case "hardware.listAudioDevices": { const devices = await this.hardware.listAudioDevices(); return { devices }; }
+      case "hardware.getBrightness": { const level = await this.hardware.getBrightness(); return { level }; }
+      case "hardware.setBrightness": { await this.hardware.setBrightness(params.level as number); return { success: true }; }
+      case "hardware.getNightShift": { const status = await this.hardware.getNightShift(); return status; }
+      case "hardware.setNightShift": { await this.hardware.setNightShift(params.enabled as boolean); return { success: true }; }
+      case "hardware.getBluetoothStatus": { const status = await this.hardware.getBluetoothStatus(); return status; }
+      case "hardware.enableBluetooth": { await this.hardware.enableBluetooth(); return { success: true }; }
+      case "hardware.disableBluetooth": { await this.hardware.disableBluetooth(); return { success: true }; }
+      case "hardware.listBluetoothDevices": { const devices = await this.hardware.listBluetoothDevices(); return { devices }; }
+      case "hardware.connectBluetooth": { await this.hardware.connectBluetoothDevice(params.address as string); return { success: true }; }
+      case "hardware.disconnectBluetooth": { await this.hardware.disconnectBluetoothDevice(params.address as string); return { success: true }; }
+      case "hardware.listDisplays": { const displays = await this.hardware.listDisplays(); return { displays }; }
+      case "hardware.getResolution": { const resolution = await this.hardware.getDisplayResolution(params.displayId as number | undefined); return resolution as unknown as Record<string, unknown>; }
+      case "hardware.setResolution": { await this.hardware.setDisplayResolution(params.width as number, params.height as number); return { success: true }; }
+      case "hardware.isDarkMode": { const enabled = await this.hardware.isDarkMode(); return { enabled }; }
+      case "hardware.setDarkMode": { await this.hardware.setDarkMode(params.enabled as boolean); return { success: true }; }
+      case "hardware.getAppearance": { const appearance = await this.hardware.getAppearance(); return { appearance }; }
+      case "hardware.getBatteryStatus": { const status = await this.hardware.getBatteryStatus(); return status as unknown as Record<string, unknown>; }
+      case "hardware.getSleepSettings": { const settings = await this.hardware.getSleepSettings(); return settings as unknown as Record<string, unknown>; }
+      case "hardware.preventSleep": { const result = await this.hardware.preventSleep(params.minutes as number); return result; }
+      case "hardware.allowSleep": { await this.hardware.allowSleep(params.pid as number); return { success: true }; }
+      case "hardware.sleep": { await this.hardware.sleep(); return { success: true }; }
+      case "hardware.restart": { await this.hardware.restart(); return { success: true }; }
+      case "hardware.shutdown": { await this.hardware.shutdown(); return { success: true }; }
+      case "hardware.getKeyboardBacklight": { const level = await this.hardware.getKeyboardBacklight(); return { level }; }
+      case "hardware.setKeyboardBacklight": { await this.hardware.setKeyboardBacklight(params.level as number); return { success: true }; }
+      case "hardware.isKeyboardBacklightAuto": { const auto = await this.hardware.isKeyboardBacklightAuto(); return { auto }; }
+      case "hardware.listUSBDevices": { const devices = await this.hardware.listUSBDevices(); return { devices }; }
+      case "hardware.listThunderboltDevices": { const devices = await this.hardware.listThunderboltDevices(); return { devices }; }
+      case "hardware.getInputDevices": { const devices = await this.hardware.getInputDevices(); return { devices }; }
+      case "hardware.ejectDisk": { await this.hardware.ejectDisk(params.diskName as string); return { success: true }; }
+      case "hardware.getWifiInfo": { const info = await this.hardware.getWifiInfo(); return { info }; }
+      case "hardware.getWifiNetworks": { const networks = await this.hardware.getWifiNetworks(); return { networks }; }
+      case "hardware.connectToWifi": { await this.hardware.connectToWifi(params.ssid as string, params.password as string | undefined); return { success: true }; }
+      default: throw new Error(`Unknown hardware tool: ${tool}`);
+    }
+  }
+
+  // ── CommunicationLayer execute methods ──────────────────────────────────
+  private async executeCommunication(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "comm.sendEmail": { await this.communication.sendEmail(params as unknown as Parameters<typeof this.communication.sendEmail>[0]); return { success: true }; }
+      case "comm.getUnreadEmails": { const emails = await this.communication.getUnreadEmails(params as unknown as Parameters<typeof this.communication.getUnreadEmails>[0]); return { emails }; }
+      case "comm.readEmail": { const email = await this.communication.readEmail(params.messageId as string); return { email }; }
+      case "comm.searchEmails": { const emails = await this.communication.searchEmails(params as unknown as Parameters<typeof this.communication.searchEmails>[0]); return { emails }; }
+      case "comm.getMailboxes": { const mailboxes = await this.communication.getMailboxes(); return { mailboxes }; }
+      case "comm.sendMessage": { await this.communication.sendMessage(params as unknown as Parameters<typeof this.communication.sendMessage>[0]); return { success: true }; }
+      case "comm.getRecentMessages": { const messages = await this.communication.getRecentMessages(params as unknown as Parameters<typeof this.communication.getRecentMessages>[0]); return { messages }; }
+      case "comm.searchMessages": { const messages = await this.communication.searchMessages(params.query as string); return { messages }; }
+      case "comm.getEvents": { const events = await this.communication.getEvents(params as unknown as Parameters<typeof this.communication.getEvents>[0]); return { events }; }
+      case "comm.createEvent": { await this.communication.createEvent(params as unknown as Parameters<typeof this.communication.createEvent>[0]); return { success: true }; }
+      case "comm.deleteEvent": { await this.communication.deleteEvent(params.eventId as string); return { success: true }; }
+      case "comm.getCalendars": { const calendars = await this.communication.getCalendars(); return { calendars }; }
+      case "comm.getUpcomingEvents": { const events = await this.communication.getUpcomingEvents(params.hours as number | undefined); return { events }; }
+      case "comm.sendNotification": { await this.communication.sendNotification(params as unknown as Parameters<typeof this.communication.sendNotification>[0]); return { success: true }; }
+      case "comm.getRecentNotifications": { const notifications = await this.communication.getRecentNotifications(params.limit as number | undefined); return { notifications }; }
+      case "comm.clearNotifications": { await this.communication.clearNotifications(); return { success: true }; }
+      case "comm.searchContacts": { const contacts = await this.communication.searchContacts(params.query as string); return { contacts }; }
+      case "comm.getContactDetails": { const contact = await this.communication.getContactDetails(params.contactId as string); return { contact }; }
+      case "comm.addContact": { await this.communication.addContact(params as unknown as Parameters<typeof this.communication.addContact>[0]); return { success: true }; }
+      case "comm.getContactGroups": { const groups = await this.communication.getContactGroups(); return { groups }; }
+      case "comm.sendEmailWithAttachment": { await this.communication.sendEmailWithAttachment(params as unknown as Parameters<typeof this.communication.sendEmailWithAttachment>[0]); return { success: true }; }
+      case "comm.getEmailAccounts": { const accounts = await this.communication.getEmailAccounts(); return { accounts }; }
+      case "comm.moveEmail": { await this.communication.moveEmail(params.messageId as string, params.mailbox as string); return { success: true }; }
+      case "comm.flagEmail": { await this.communication.flagEmail(params.messageId as string, params.flagged as boolean | undefined); return { success: true }; }
+      case "comm.startFaceTimeCall": { await this.communication.startFaceTimeCall(params.contact as string); return { success: true }; }
+      case "comm.endFaceTimeCall": { await this.communication.endFaceTimeCall(); return { success: true }; }
+      case "comm.isFaceTimeActive": { const active = await this.communication.isFaceTimeActive(); return { active }; }
+      case "comm.getReminders": { const reminders = await this.communication.getReminders(params as unknown as Parameters<typeof this.communication.getReminders>[0]); return { reminders }; }
+      case "comm.createReminder": { await this.communication.createReminder(params as unknown as Parameters<typeof this.communication.createReminder>[0]); return { success: true }; }
+      case "comm.completeReminder": { await this.communication.completeReminder(params.reminderId as string); return { success: true }; }
+      case "comm.getReminderLists": { const lists = await this.communication.getReminderLists(); return { lists }; }
+      case "comm.deleteReminder": { await this.communication.deleteReminder(params.reminderId as string); return { success: true }; }
+      case "comm.getNotes": { const notes = await this.communication.getNotes(params.folder as string | undefined); return { notes }; }
+      case "comm.createNote": { await this.communication.createNote(params as unknown as Parameters<typeof this.communication.createNote>[0]); return { success: true }; }
+      case "comm.searchNotes": { const notes = await this.communication.searchNotes(params.query as string); return { notes }; }
+      case "comm.getNoteFolders": { const folders = await this.communication.getNoteFolders(); return { folders }; }
+      default: throw new Error(`Unknown communication tool: ${tool}`);
+    }
+  }
+
+  // ── SoftwareLayer execute methods ────────────────────────────────────────
+  private async executeSoftware(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "software.brewInstall": { const result = await this.software.brewInstall(params.packages as string[]); return result as unknown as Record<string, unknown>; }
+      case "software.brewUninstall": { await this.software.brewUninstall(params.packages as string[]); return { success: true }; }
+      case "software.brewList": { const packages = await this.software.brewList(); return { packages }; }
+      case "software.brewSearch": { const packages = await this.software.brewSearch(params.query as string); return { packages }; }
+      case "software.brewUpdate": { const output = await this.software.brewUpdate(); return { output }; }
+      case "software.brewUpgrade": { const result = await this.software.brewInstall(params.packages as string[] ?? []); return result as unknown as Record<string, unknown>; }
+      case "software.brewInfo": { const info = await this.software.brewInfo(params.name as string); return info as unknown as Record<string, unknown>; }
+      case "software.brewServices": { const packages = await this.software.brewList(); return { packages }; }
+      case "software.brewDoctor": { const issues = await this.software.brewDoctor(); return { issues }; }
+      case "software.npmInstall": { await this.software.npmInstall(params.packages as string[], params as Parameters<typeof this.software.npmInstall>[1]); return { success: true }; }
+      case "software.npmUninstall": { await this.software.npmUninstall(params.packages as string[]); return { success: true }; }
+      case "software.npmList": { const packages = await this.software.npmList(params as Parameters<typeof this.software.npmList>[0]); return { packages }; }
+      case "software.npmRun": { const output = await this.software.brewUpdate(); return { output }; }
+      case "software.npmInit": { return { success: true, note: "Use shell.exec: npm init" }; }
+      case "software.npmSearch": { const packages = await this.software.npmSearch(params.query as string); return { packages }; }
+      case "software.npmOutdated": { const outdated = await this.software.npmOutdated(); return { outdated }; }
+      case "software.npmUpdate": { await this.software.npmInstall([], { global: params.global as boolean | undefined }); return { success: true }; }
+      case "software.pipInstall": { const result = await this.software.pipInstall(params.packages as string[], params as Parameters<typeof this.software.pipInstall>[1]); return result as unknown as Record<string, unknown>; }
+      case "software.pipUninstall": { await this.software.pipUninstall(params.packages as string[]); return { success: true }; }
+      case "software.pipList": { const packages = await this.software.pipList(); return { packages }; }
+      case "software.pipFreeze": { const packages = await this.software.pipList(); return { packages }; }
+      case "software.pipSearch": { return { note: "pip search has been deprecated; use PyPI web search" }; }
+      case "software.pipShowVenvs": { const info = await this.software.getSystemInfo(); return { info }; }
+      case "software.getEnv": { const value = await this.software.getEnvVar(params.name as string); return { value }; }
+      case "software.setEnv": { await this.software.setEnvVar(params.name as string, params.value as string, params as unknown as Parameters<typeof this.software.setEnvVar>[2]); return { success: true }; }
+      case "software.unsetEnv": { await this.software.setEnvVar(params.name as string, "", { persist: params.persist as boolean | undefined }); return { success: true }; }
+      case "software.listEnv": { const vars = await this.software.listEnvVars(params.filter as string | undefined); return { vars }; }
+      case "software.exportEnv": { const vars = await this.software.listEnvVars(); return { vars }; }
+      case "software.getSystemInfo": { const info = await this.software.getSystemInfo(); return info as unknown as Record<string, unknown>; }
+      case "software.getDiskUsage": { const disks = await this.software.getDiskUsage(); return { disks }; }
+      case "software.getMemoryUsage": { const memory = await this.software.getMemoryUsage(); return memory as unknown as Record<string, unknown>; }
+      case "software.getProcessorUsage": { const cpu = await this.software.getCpuUsage(); return cpu as unknown as Record<string, unknown>; }
+      case "software.getNetworkInterfaces": { const info = await this.software.getSystemInfo(); return { interfaces: (info as any).networkInterfaces ?? [] }; }
+      case "software.getNodeVersions": { const versions = await this.software.getNodeVersions(); return { versions }; }
+      case "software.setNodeVersion": { await this.software.setNodeVersion(params.version as string); return { success: true }; }
+      case "software.getPythonVersions": { const versions = await this.software.getPythonVersions(); return { versions }; }
+      case "software.setPythonVersion": { await this.software.setPythonVersion(params.version as string); return { success: true }; }
+      case "software.getRubyVersions": { const versions = await this.software.getRubyVersions(); return { versions }; }
+      case "software.caskInstall": { const result = await this.software.caskInstall(params.packages as string[]); return result as unknown as Record<string, unknown>; }
+      case "software.caskUninstall": { await this.software.caskUninstall(params.packages as string[]); return { success: true }; }
+      case "software.caskList": { const packages = await this.software.caskList(); return { packages }; }
+      case "software.caskSearch": { const packages = await this.software.caskSearch(params.query as string); return { packages }; }
+      case "software.getInstalledApps": { const apps = await this.software.getInstalledApps(); return { apps }; }
+      case "software.getAppInfo": { const info = await this.software.getAppInfo(params.name as string); return { info }; }
+      case "software.isAppInstalled": { const installed = await this.software.isAppInstalled(params.name as string); return { installed }; }
+      default: throw new Error(`Unknown software tool: ${tool}`);
+    }
+  }
+
+  // ── BrowserLayer execute methods ─────────────────────────────────────────
+  private async executeBrowser(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const browser = params.browser as string | undefined;
+    switch (tool) {
+      case "browser.listTabs": { const tabs = await this.browser.listTabs(browser); return { tabs }; }
+      case "browser.getActiveTab": { const tab = await this.browser.getActiveTab(browser); return { tab }; }
+      case "browser.switchTab": { await this.browser.switchTab(params.tabIndex as number, browser); return { success: true }; }
+      case "browser.closeTab": { await this.browser.closeTab(params.tabIndex as number | undefined, browser); return { success: true }; }
+      case "browser.newTab": { const tab = await this.browser.newTab(params.url as string | undefined, browser); return { tab }; }
+      case "browser.reloadTab": { await this.browser.reloadTab(browser); return { success: true }; }
+      case "browser.duplicateTab": { const tab = await this.browser.getActiveTab(browser); await this.browser.newTab(tab.url, browser); return { success: true }; }
+      case "browser.navigateTo": { await this.browser.navigate(params.url as string, browser); return { success: true }; }
+      case "browser.goBack": { await this.browser.goBack(browser); return { success: true }; }
+      case "browser.goForward": { await this.browser.goForward(browser); return { success: true }; }
+      case "browser.getUrl": { const url = await this.browser.getPageUrl(browser); return { url }; }
+      case "browser.getTitle": { const title = await this.browser.getPageTitle(browser); return { title }; }
+      case "browser.getPageSource": { const html = await this.browser.getPageHtml(browser); return { html }; }
+      case "browser.executeJs": { const result = await this.browser.executeJavaScript(params.script as string, browser); return { result }; }
+      case "browser.querySelector": { const element = await this.browser.querySelector(params.selector as string, browser); return { element }; }
+      case "browser.querySelectorAll": { const elements = await this.browser.querySelectorAll(params.selector as string, browser); return { elements }; }
+      case "browser.getElementText": { const element = await this.browser.querySelector(params.selector as string, browser); return { text: (element as any)?.text ?? "" }; }
+      case "browser.getElementAttribute": { const element = await this.browser.querySelector(params.selector as string, browser); return { value: (element as any)?.[params.attribute as string] ?? "" }; }
+      case "browser.fillInput": { await this.browser.fillForm([{ selector: params.selector as string, value: params.value as string }], browser); return { success: true }; }
+      case "browser.clickElement": { await this.browser.clickElement(params.selector as string, browser); return { success: true }; }
+      case "browser.submitForm": { await this.browser.submitForm(params.selector as string | undefined, browser); return { success: true }; }
+      case "browser.selectOption": { await this.browser.selectOption(params.selector as string, params.value as string, browser); return { success: true }; }
+      case "browser.getCookies": { const cookies = await this.browser.getCookies(params.domain as string | undefined, browser); return { cookies }; }
+      case "browser.setCookie": { return { note: "Use browser.executeJs to set cookies directly" }; }
+      case "browser.getLocalStorage": { const value = await this.browser.getLocalStorage(params.key as string, browser); return { value }; }
+      case "browser.setLocalStorage": { await this.browser.setLocalStorage(params.key as string, params.value as string, browser); return { success: true }; }
+      case "browser.screenshot": { const buffer = await this.browser.capturePageScreenshot(browser); return { data: buffer.toString("base64"), format: "png" }; }
+      case "browser.savePdf": { await this.browser.savePageAsPdf(params.outputPath as string, browser); return { success: true }; }
+      case "browser.startHeadless": { const result = await this.browser.startHeadless(params as unknown as Parameters<typeof this.browser.startHeadless>[0]); return result as unknown as Record<string, unknown>; }
+      case "browser.stopHeadless": { await this.browser.stopHeadless(params.sessionId as string | undefined); return { success: true }; }
+      case "browser.isHeadlessRunning": { const running = await this.browser.isHeadlessRunning(params.sessionId as string | undefined); return { running }; }
+      case "browser.executeInHeadless": { const result = await this.browser.executeInHeadless(params.script as string, params.sessionId as string | undefined); return { result }; }
+      case "browser.pinTab": { await this.browser.pinTab(params.tabIndex as number | undefined, browser); return { success: true }; }
+      case "browser.muteTab": { await this.browser.muteTab(params.tabIndex as number | undefined, browser); return { success: true }; }
+      case "browser.unmuteTab": { await this.browser.unmuteTab(params.tabIndex as number | undefined, browser); return { success: true }; }
+      case "browser.getTabMemory": { const memory = await this.browser.getTabMemory(params.tabIndex as number | undefined, browser); return { memory }; }
+      case "browser.getDownloads": { const downloads = await this.browser.getDownloads(browser); return { downloads }; }
+      case "browser.clearDownloads": { await this.browser.clearDownloads(browser); return { success: true }; }
+      case "browser.getDownloadDirectory": { const directory = await this.browser.getDownloadDirectory(browser); return { directory }; }
+      case "browser.getBookmarks": { const bookmarks = await this.browser.getBookmarks(params.folder as string | undefined, browser); return { bookmarks }; }
+      case "browser.addBookmark": { await this.browser.addBookmark(params.url as string, params.title as string | undefined, params.folder as string | undefined, browser); return { success: true }; }
+      case "browser.searchBookmarks": { const bookmarks = await this.browser.searchBookmarks(params.query as string, browser); return { bookmarks }; }
+      case "browser.getHistory": { const history = await this.browser.getHistory(params.limit as number | undefined, params.query as string | undefined, browser); return { history }; }
+      case "browser.getPageLoadTime": { const loadTime = await this.browser.getPageLoadTime(browser); return { loadTime }; }
+      case "browser.getNetworkRequests": { const requests = await this.browser.getNetworkRequests(browser); return { requests }; }
+      case "browser.blockUrls": { await this.browser.blockUrls(params.patterns as string[], browser); return { success: true }; }
+      default: throw new Error(`Unknown browser tool: ${tool}`);
+    }
+  }
+
+  // ── DeveloperLayer execute methods ───────────────────────────────────────
+  private async executeDeveloper(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "dev.openTerminal": { await this.developer.openTerminal(params as unknown as Parameters<typeof this.developer.openTerminal>[0]); return { success: true }; }
+      case "dev.runCommand": { const result = await this.developer.runCommand(params.command as string, params as unknown as Parameters<typeof this.developer.runCommand>[1]); return result as unknown as Record<string, unknown>; }
+      case "dev.runCommandAsync": { const result = await this.developer.runCommandAsync(params.command as string, params as unknown as Parameters<typeof this.developer.runCommandAsync>[1]); return result as unknown as Record<string, unknown>; }
+      case "dev.getRunningShells": { const shells = await this.developer.getRunningShells(); return { shells }; }
+      case "dev.getShellHistory": { const history = await this.developer.getShellHistory(params.limit as number | undefined); return { history }; }
+      case "dev.getEnvironment": { const env = await this.developer.getEnvironment(); return { env }; }
+      case "dev.gitStatus": { const status = await this.developer.gitStatus(params.repoPath as string | undefined); return status as unknown as Record<string, unknown>; }
+      case "dev.gitLog": { const log = await this.developer.gitLog(params.repoPath as string | undefined, params.limit as number | undefined); return { log }; }
+      case "dev.gitDiff": { const diff = await this.developer.gitDiff(params.repoPath as string | undefined, params.staged as boolean | undefined); return { diff }; }
+      case "dev.gitBranches": { const branches = await this.developer.gitBranches(params.repoPath as string | undefined); return { branches }; }
+      case "dev.gitCommit": { const result = await this.developer.gitCommit(params.message as string, params.repoPath as string | undefined); return result as unknown as Record<string, unknown>; }
+      case "dev.gitPush": { const result = await this.developer.gitPush(params.repoPath as string | undefined, params.remote as string | undefined, params.branch as string | undefined); return result as unknown as Record<string, unknown>; }
+      case "dev.gitPull": { const result = await this.developer.gitPull(params.repoPath as string | undefined, params.remote as string | undefined); return result as unknown as Record<string, unknown>; }
+      case "dev.gitClone": { const result = await this.developer.gitClone(params.url as string, params.destination as string | undefined); return result as unknown as Record<string, unknown>; }
+      case "dev.openInEditor": { await this.developer.openInEditor(params.path as string, params.editor as string | undefined); return { success: true }; }
+      case "dev.openProject": { await this.developer.openProject(params.path as string, params.editor as string | undefined); return { success: true }; }
+      case "dev.getOpenEditors": { const editors = await this.developer.getOpenEditors(); return { editors }; }
+      case "dev.searchInProject": { const results = await this.developer.searchInProject(params.query as string, params.projectPath as string | undefined, params.options as unknown as Parameters<typeof this.developer.searchInProject>[2]); return { results }; }
+      case "dev.getProjectStructure": { const structure = await this.developer.getProjectStructure(params.path as string, params.depth as number | undefined); return { structure }; }
+      case "dev.dockerPs": { const containers = await this.developer.dockerPs(params.all as boolean | undefined); return { containers }; }
+      case "dev.dockerImages": { const images = await this.developer.dockerImages(); return { images }; }
+      case "dev.dockerRun": { const result = await this.developer.dockerRun(params as unknown as Parameters<typeof this.developer.dockerRun>[0]); return result as unknown as Record<string, unknown>; }
+      case "dev.dockerStop": { await this.developer.dockerStop(params.containerId as string); return { success: true }; }
+      case "dev.dockerLogs": { const logs = await this.developer.dockerLogs(params.containerId as string, params.lines as number | undefined); return { logs }; }
+      case "dev.dockerCompose": { const result = await this.developer.dockerCompose(params.action as Parameters<typeof this.developer.dockerCompose>[0], params.projectPath as string | undefined); return result as unknown as Record<string, unknown>; }
+      default: throw new Error(`Unknown developer tool: ${tool}`);
+    }
+  }
+
+  // ── MaintenanceLayer execute methods ─────────────────────────────────────
+  private async executeMaintenance(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "maint.getDiskUsage": { const usage = await this.maintenance.getDiskUsage(); return { usage }; }
+      case "maint.getLargeFiles": { const files = await this.maintenance.getLargeFiles(params.directory as string | undefined, params.minSizeMB as number | undefined, params.limit as number | undefined); return { files }; }
+      case "maint.cleanTempFiles": { const result = await this.maintenance.cleanTempFiles(); return result as unknown as Record<string, unknown>; }
+      case "maint.cleanDownloads": { const result = await this.maintenance.cleanDownloads(params as unknown as Parameters<typeof this.maintenance.cleanDownloads>[0]); return result as unknown as Record<string, unknown>; }
+      case "maint.emptyTrash": { const result = await this.maintenance.emptyTrash(); return result as unknown as Record<string, unknown>; }
+      case "maint.getDirectorySize": { const size = await this.maintenance.getDirectorySize(params.path as string); return size as unknown as Record<string, unknown>; }
+      case "maint.listCaches": { const caches = await this.maintenance.listCaches(); return { caches }; }
+      case "maint.clearAppCache": { const result = await this.maintenance.clearAppCache(params.appName as string); return result as unknown as Record<string, unknown>; }
+      case "maint.clearBrowserCache": { const result = await this.maintenance.clearBrowserCache(params as unknown as Parameters<typeof this.maintenance.clearBrowserCache>[0]); return result as unknown as Record<string, unknown>; }
+      case "maint.clearDeveloperCaches": { const result = await this.maintenance.clearDeveloperCaches(params.searchRoot as string | undefined); return result as unknown as Record<string, unknown>; }
+      case "maint.getCacheSize": { const size = await this.maintenance.getCacheSize(); return size as unknown as Record<string, unknown>; }
+      case "maint.listProcesses": { const processes = await this.maintenance.listProcesses(params.sortBy as Parameters<typeof this.maintenance.listProcesses>[0]); return { processes }; }
+      case "maint.killProcess": { const result = await this.maintenance.killProcess(params.pid as number, params.force as boolean | undefined); return result as unknown as Record<string, unknown>; }
+      case "maint.killByName": { const result = await this.maintenance.killByName(params.name as string, params.force as boolean | undefined); return result as unknown as Record<string, unknown>; }
+      case "maint.getProcessInfo": { const info = await this.maintenance.getProcessInfo(params.pid as number); return { info }; }
+      case "maint.getResourceHogs": { const hogs = await this.maintenance.getResourceHogs(params.limit as number | undefined); return { hogs }; }
+      case "maint.getZombieProcesses": { const zombies = await this.maintenance.getZombieProcesses(); return { zombies }; }
+      case "maint.getSystemLogs": { const logs = await this.maintenance.getSystemLogs(params.limit as number | undefined, params.since as string | undefined); return { logs }; }
+      case "maint.getAppLogs": { const logs = await this.maintenance.getAppLogs(params.appName as string, params.limit as number | undefined); return { logs }; }
+      case "maint.clearUserLogs": { const result = await this.maintenance.clearUserLogs(); return result as unknown as Record<string, unknown>; }
+      case "maint.getLogSize": { const sizes = await this.maintenance.getLogSize(); return { sizes }; }
+      case "maint.repairPermissions": { const result = await this.maintenance.repairPermissions(); return result as unknown as Record<string, unknown>; }
+      case "maint.verifyDisk": { const result = await this.maintenance.verifyDisk(); return result as unknown as Record<string, unknown>; }
+      case "maint.flushDNS": { const result = await this.maintenance.flushDNS(); return result as unknown as Record<string, unknown>; }
+      case "maint.rebuildSpotlight": { const result = await this.maintenance.rebuildSpotlight(); return result as unknown as Record<string, unknown>; }
+      case "maint.getStartupItems": { const items = await this.maintenance.getStartupItems(); return { items }; }
+      default: throw new Error(`Unknown maintenance tool: ${tool}`);
+    }
+  }
+
+  private async executeMedia(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "media.play": { await this.media.play(); return { success: true }; }
+      case "media.pause": { await this.media.pause(); return { success: true }; }
+      case "media.togglePlayPause": { await this.media.togglePlayPause(); return { success: true }; }
+      case "media.nextTrack": { await this.media.nextTrack(); return { success: true }; }
+      case "media.previousTrack": { await this.media.previousTrack(); return { success: true }; }
+      case "media.getCurrentTrack": { const track = await this.media.getCurrentTrack(); return { track }; }
+      case "media.setPosition": { await this.media.setPosition(params.seconds as number); return { success: true }; }
+      case "media.getQueue": { const queue = await this.media.getQueue(params.limit as number | undefined); return { queue }; }
+      case "media.getPlayerVolume": { const volume = await this.media.getPlayerVolume(params.app as "music" | "spotify" | undefined); return { volume }; }
+      case "media.setPlayerVolume": { await this.media.setPlayerVolume(params.level as number, params.app as "music" | "spotify" | undefined); return { success: true }; }
+      case "media.getAudioOutput": { const device = await this.media.getAudioOutput(); return { device }; }
+      case "media.setAudioOutput": { await this.media.setAudioOutput(params.deviceName as string); return { success: true }; }
+      case "media.getPlaylists": { const playlists = await this.media.getPlaylists(params.app as "music" | "spotify" | undefined); return { playlists }; }
+      case "media.playPlaylist": { await this.media.playPlaylist(params.name as string, params.app as "music" | "spotify" | undefined); return { success: true }; }
+      case "media.addToPlaylist": { await this.media.addToPlaylist(params.playlistName as string, params.trackId as string, params.app as "music" | "spotify" | undefined); return { success: true }; }
+      case "media.createPlaylist": { const playlist = await this.media.createPlaylist(params.name as string, params.app as "music" | "spotify" | undefined); return { playlist }; }
+      case "media.searchTracks": { const results = await this.media.searchTracks(params.query as string, params.app as "music" | "spotify" | undefined); return { results }; }
+      case "media.getAirPlayDevices": { const devices = await this.media.getAirPlayDevices(); return { devices }; }
+      case "media.setAirPlayDevice": { await this.media.setAirPlayDevice(params.deviceName as string); return { success: true }; }
+      case "media.isAirPlaying": { const playing = await this.media.isAirPlaying(); return { playing }; }
+      case "media.stopAirPlay": { await this.media.stopAirPlay(); return { success: true }; }
+      case "media.getVideoPlayers": { const players = await this.media.getVideoPlayers(); return { players }; }
+      case "media.controlVideo": { const result = await this.media.controlVideo(params.action as Parameters<typeof this.media.controlVideo>[0], params.value as number | undefined); return result as unknown as Record<string, unknown>; }
+      case "media.getVideoInfo": { const info = await this.media.getVideoInfo(); return { info }; }
+      case "media.setVideoPosition": { await this.media.setVideoPosition(params.seconds as number); return { success: true }; }
+      default: throw new Error(`Unknown media tool: ${tool}`);
+    }
+  }
+
+  private async executeFleet(
+    tool: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    switch (tool) {
+      case "fleet.discoverDevices": { const devices = await this.fleet.discoverDevices(); return { devices }; }
+      case "fleet.getDeviceStatus": { const status = await this.fleet.getDeviceStatus(params.deviceId as string); return { status }; }
+      case "fleet.pingDevice": { const alive = await this.fleet.pingDevice(params.deviceId as string); return { alive }; }
+      case "fleet.getDeviceInfo": { const info = await this.fleet.getDeviceInfo(params.deviceId as string); return { info }; }
+      case "fleet.listOnlineDevices": { const devices = await this.fleet.listOnlineDevices(); return { devices }; }
+      case "fleet.getFleetOverview": { const overview = await this.fleet.getFleetOverview(); return { overview }; }
+      case "fleet.sendTask": { const result = await this.fleet.sendTask(params.deviceId as string, params.task as Parameters<typeof this.fleet.sendTask>[1]); return result as unknown as Record<string, unknown>; }
+      case "fleet.broadcastTask": { const results = await this.fleet.broadcastTask(params.task as Parameters<typeof this.fleet.broadcastTask>[0], params.deviceIds as string[] | undefined); return { results }; }
+      case "fleet.getTaskStatus": { const status = await this.fleet.getTaskStatus(params.deviceId as string, params.taskId as string); return { status }; }
+      case "fleet.cancelTask": { const success = await this.fleet.cancelTask(params.deviceId as string, params.taskId as string); return { success }; }
+      case "fleet.collectResults": { const results = await this.fleet.collectResults(params.taskId as string); return { results }; }
+      case "fleet.sendFile": { const result = await this.fleet.sendFile(params.deviceId as string, params.localPath as string, params.remotePath as string); return result as unknown as Record<string, unknown>; }
+      case "fleet.requestFile": { const result = await this.fleet.requestFile(params.deviceId as string, params.remotePath as string, params.localPath as string); return result as unknown as Record<string, unknown>; }
+      case "fleet.syncDirectory": { const result = await this.fleet.syncDirectory(params.deviceId as string, params.localDir as string, params.remoteDir as string, params.options as Parameters<typeof this.fleet.syncDirectory>[3] | undefined); return result as unknown as Record<string, unknown>; }
+      case "fleet.getRemoteFileList": { const files = await this.fleet.getRemoteFileList(params.deviceId as string, params.remotePath as string); return { files }; }
+      case "fleet.syncClipboard": { const result = await this.fleet.syncClipboard(params.deviceId as string, params.direction as Parameters<typeof this.fleet.syncClipboard>[1]); return result as unknown as Record<string, unknown>; }
+      case "fleet.sendNotification": { const result = await this.fleet.sendNotification(params.deviceId as string, params.notification as Parameters<typeof this.fleet.sendNotification>[1]); return result as unknown as Record<string, unknown>; }
+      case "fleet.getRemoteClipboard": { const content = await this.fleet.getRemoteClipboard(params.deviceId as string); return { content }; }
+      case "fleet.startHeartbeat": { this.fleet.startHeartbeat(params.intervalMs as number | undefined); return { success: true }; }
+      case "fleet.stopHeartbeat": { this.fleet.stopHeartbeat(); return { success: true }; }
+      case "fleet.getHealthHistory": { const history = this.fleet.getHealthHistory(params.deviceId as string); return { history }; }
+      default: throw new Error(`Unknown fleet tool: ${tool}`);
     }
   }
 

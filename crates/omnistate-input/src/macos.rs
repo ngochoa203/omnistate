@@ -195,6 +195,28 @@ pub fn drag(from: Point, to: Point) -> OmniResult<()> {
     Ok(())
 }
 
+/// Press a key down (without releasing). Pair with key_up to release.
+pub fn key_down(key: Key, modifiers: Modifiers) -> OmniResult<()> {
+    let source = create_event_source()?;
+    let keycode = key_to_keycode(key);
+    let event = CGEvent::new_keyboard_event(source, keycode, true)
+        .map_err(|_| OmniError::InputError("Failed to create key down event".into()))?;
+    apply_modifiers(&event, modifiers);
+    event.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+/// Release a previously pressed key.
+pub fn key_up(key: Key, modifiers: Modifiers) -> OmniResult<()> {
+    let source = create_event_source()?;
+    let keycode = key_to_keycode(key);
+    let event = CGEvent::new_keyboard_event(source, keycode, false)
+        .map_err(|_| OmniError::InputError("Failed to create key up event".into()))?;
+    apply_modifiers(&event, modifiers);
+    event.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
 pub fn key_tap(key: Key, modifiers: Modifiers) -> OmniResult<()> {
     let source = create_event_source()?;
     let keycode = key_to_keycode(key);

@@ -16,6 +16,8 @@ import * as bridge from "../platform/bridge.js";
 import { fingerprintTree } from "../vision/fingerprint.js";
 import { detectByFingerprint as _detectByFingerprint } from "../vision/detect.js";
 
+type Modifiers = Array<'command' | 'shift' | 'option' | 'control' | 'fn'>;
+
 export class SurfaceLayer {
   /** Check if the native bridge is available. */
   get isAvailable(): boolean {
@@ -320,6 +322,124 @@ export class SurfaceLayer {
     bridge.keyTap(key, modifiers);
   }
 
+  // ── Keyboard (raw key events) ──────────────────────────────
+  async keyDown(key: string, modifiers: Modifiers = []): Promise<void> {
+    const bridge = await import('../platform/bridge.js');
+    const code = this.keyNameToCode(key);
+    const flags = this.modifiersToFlags(modifiers);
+    bridge.keyDown(code, flags);
+  }
+
+  async keyUp(key: string, modifiers: Modifiers = []): Promise<void> {
+    const bridge = await import('../platform/bridge.js');
+    const code = this.keyNameToCode(key);
+    const flags = this.modifiersToFlags(modifiers);
+    bridge.keyUp(code, flags);
+  }
+
+  async holdKey(key: string, durationMs: number, modifiers: Modifiers = []): Promise<void> {
+    await this.keyDown(key, modifiers);
+    await new Promise(r => setTimeout(r, durationMs));
+    await this.keyUp(key, modifiers);
+  }
+
+  // ── Desktop / Space navigation (macOS) ─────────────────────
+  async switchDesktop(direction: 'left' | 'right'): Promise<void> {
+    const key = direction === 'left' ? 'left' : 'right';
+    await this.keyDown(key, ['control']);
+    await new Promise(r => setTimeout(r, 50));
+    await this.keyUp(key, ['control']);
+  }
+
+  async missionControl(): Promise<void> {
+    await this.keyDown('up', ['control']);
+    await new Promise(r => setTimeout(r, 50));
+    await this.keyUp('up', ['control']);
+  }
+
+  async showDesktop(): Promise<void> {
+    // F11 or Fn+F11 depending on keyboard settings
+    await this.keyDown('f11', ['fn']);
+    await new Promise(r => setTimeout(r, 50));
+    await this.keyUp('f11', ['fn']);
+  }
+
+  async switchDisplay(displayIndex: number): Promise<void> {
+    // Move mouse to center of target display to activate it
+    const { execSync } = await import('child_process');
+    try {
+      const info = execSync(
+        `system_profiler SPDisplaysDataType -json 2>/dev/null`,
+        { encoding: 'utf-8', timeout: 5000 }
+      );
+      const parsed = JSON.parse(info);
+      const displays = parsed?.SPDisplaysDataType?.[0]?.spdisplays_ndrvs ?? [];
+      if (displayIndex >= 0 && displayIndex < displays.length) {
+        const res = displays[displayIndex]?._spdisplays_resolution;
+        if (res) {
+          const match = res.match(/(\d+)\s*x\s*(\d+)/);
+          if (match) {
+            const cx = Math.round(parseInt(match[1]) / 2);
+            const cy = Math.round(parseInt(match[2]) / 2);
+            const bridge = await import('../platform/bridge.js');
+            bridge.moveMouse(cx, cy);
+          }
+        }
+      }
+    } catch {
+      // Fallback: ignore if display info unavailable
+    }
+  }
+
+  async goToDesktop(desktopNumber: number): Promise<void> {
+    // macOS: Ctrl+<number> switches to that desktop/space
+    // Must be enabled in System Preferences > Keyboard > Shortcuts > Mission Control
+    if (desktopNumber >= 1 && desktopNumber <= 9) {
+      const key = String(desktopNumber);
+      await this.keyDown(key, ['control']);
+      await new Promise(r => setTimeout(r, 50));
+      await this.keyUp(key, ['control']);
+    }
+  }
+
+  // ── Private helpers for keyboard ───────────────────────────
+  private keyNameToCode(name: string): number {
+    const MAP: Record<string, number> = {
+      'a': 0, 'b': 11, 'c': 8, 'd': 2, 'e': 14, 'f': 3, 'g': 5,
+      'h': 4, 'i': 34, 'j': 38, 'k': 40, 'l': 37, 'm': 46, 'n': 45,
+      'o': 31, 'p': 35, 'q': 12, 'r': 15, 's': 1, 't': 17, 'u': 32,
+      'v': 9, 'w': 13, 'x': 7, 'y': 16, 'z': 6,
+      '0': 29, '1': 18, '2': 19, '3': 20, '4': 21,
+      '5': 23, '6': 22, '7': 26, '8': 28, '9': 25,
+      'return': 36, 'enter': 36, 'tab': 48, 'space': 49,
+      'delete': 51, 'backspace': 51, 'escape': 53, 'esc': 53,
+      'up': 126, 'down': 125, 'left': 123, 'right': 124,
+      'f1': 122, 'f2': 120, 'f3': 99, 'f4': 118, 'f5': 96,
+      'f6': 97, 'f7': 98, 'f8': 100, 'f9': 101, 'f10': 109,
+      'f11': 103, 'f12': 111,
+      'home': 115, 'end': 119, 'pageup': 116, 'pagedown': 121,
+      'forwarddelete': 117,
+      'minus': 27, 'equal': 24, 'leftbracket': 33, 'rightbracket': 30,
+      'semicolon': 41, 'quote': 39, 'comma': 43, 'period': 47,
+      'slash': 44, 'backslash': 42, 'grave': 50,
+    };
+    return MAP[name.toLowerCase()] ?? 0;
+  }
+
+  private modifiersToFlags(mods: Modifiers): number {
+    let flags = 0;
+    for (const m of mods) {
+      switch (m) {
+        case 'command':  flags |= (1 << 20); break; // kCGEventFlagMaskCommand
+        case 'shift':    flags |= (1 << 17); break; // kCGEventFlagMaskShift
+        case 'option':   flags |= (1 << 19); break; // kCGEventFlagMaskAlternate
+        case 'control':  flags |= (1 << 18); break; // kCGEventFlagMaskControl
+        case 'fn':       flags |= (1 << 23); break; // kCGEventFlagMaskSecondaryFn
+      }
+    }
+    return flags;
+  }
+
   /** Type a string of text with human-like delays. */
   async typeText(text: string): Promise<void> {
     bridge.typeText(text);
@@ -328,6 +448,312 @@ export class SurfaceLayer {
   /** Check if accessibility permissions are granted. */
   isAccessibilityTrusted(): boolean {
     return bridge.isAccessibilityTrusted();
+  }
+
+  // ── Window Geometry Management ─────────────────────────────
+
+  /** Get window geometry info for an app (frontmost app if omitted). */
+  async getWindowInfo(appName?: string): Promise<{ app: string; title: string; position: [number, number]; size: [number, number]; minimized: boolean; fullscreen: boolean } | null> {
+    const { execSync } = await import('child_process');
+    try {
+      const target = appName
+        ? `tell process "${appName}"`
+        : `tell (first process whose frontmost is true)`;
+      const script = `
+        tell application "System Events"
+          ${target}
+            if (count of windows) = 0 then return ""
+            set w to front window
+            set pos to position of w
+            set sz to size of w
+            set ttl to name of w
+            set mini to miniaturized of w
+            set fs to value of attribute "AXFullScreen" of w
+            set nm to name of it
+            return nm & "|" & ttl & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & "|" & mini & "|" & fs
+          end tell
+        end tell`;
+      const raw = execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { encoding: 'utf-8', timeout: 5000 }).trim();
+      if (!raw) return null;
+      const parts = raw.split('|');
+      if (parts.length < 8) return null;
+      return {
+        app: parts[0],
+        title: parts[1],
+        position: [parseInt(parts[2]), parseInt(parts[3])],
+        size: [parseInt(parts[4]), parseInt(parts[5])],
+        minimized: parts[6].trim() === 'true',
+        fullscreen: parts[7].trim() === 'true',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resize the front window of an app (frontmost app if omitted). */
+  async resizeWindow(width: number, height: number, appName?: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    const target = appName ? `tell process "${appName}"` : `tell (first process whose frontmost is true)`;
+    const script = `tell application "System Events"\n${target}\nset size of front window to {${width}, ${height}}\nend tell\nend tell`;
+    execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+  }
+
+  /** Move the front window of an app to coordinates (frontmost app if omitted). */
+  async repositionWindow(x: number, y: number, appName?: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    const target = appName ? `tell process "${appName}"` : `tell (first process whose frontmost is true)`;
+    const script = `tell application "System Events"\n${target}\nset position of front window to {${x}, ${y}}\nend tell\nend tell`;
+    execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+  }
+
+  /** Minimize the front window of an app (frontmost app if omitted). */
+  async minimizeWindow(appName?: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    if (appName) {
+      const script = `tell application "${appName}" to set miniaturized of front window to true`;
+      execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+    } else {
+      const script = `tell application "System Events" to tell (first process whose frontmost is true) to set miniaturized of front window to true`;
+      execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+    }
+  }
+
+  /** Maximize (zoom) the front window of an app (frontmost app if omitted). */
+  async maximizeWindow(appName?: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    const target = appName ? `tell process "${appName}"` : `tell (first process whose frontmost is true)`;
+    // Click the green zoom button (button 3 of every macOS window)
+    const script = `tell application "System Events"\n${target}\nif (count of windows) > 0 then\nclick button 3 of front window\nend if\nend tell\nend tell`;
+    execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+  }
+
+  /** Close the front window of an app (frontmost app if omitted). */
+  async closeWindow(appName?: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    if (appName) {
+      const script = `tell application "${appName}" to close front window`;
+      execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+    } else {
+      const script = `tell application "System Events" to tell (first process whose frontmost is true) to click button 1 of front window`;
+      execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 });
+    }
+  }
+
+  /** List windows of an app (frontmost app if omitted). */
+  async listWindowsForApp(appName?: string): Promise<Array<{ title: string; index: number; position: [number, number]; size: [number, number]; minimized: boolean }>> {
+    const { execSync } = await import('child_process');
+    try {
+      const target = appName ? `tell process "${appName}"` : `tell (first process whose frontmost is true)`;
+      const script = `
+        tell application "System Events"
+          ${target}
+            set result to {}
+            set winCount to count of windows
+            repeat with i from 1 to winCount
+              set w to window i
+              set pos to position of w
+              set sz to size of w
+              set ttl to name of w
+              set mini to miniaturized of w
+              set result to result & {ttl & "|" & i & "|" & (item 1 of pos) & "|" & (item 2 of pos) & "|" & (item 1 of sz) & "|" & (item 2 of sz) & "|" & mini & "||"}
+            end repeat
+            return result as text
+          end tell
+        end tell`;
+      const raw = execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { encoding: 'utf-8', timeout: 8000 }).trim();
+      if (!raw) return [];
+      return raw.split('||').filter(Boolean).map(entry => {
+        const p = entry.split('|');
+        return {
+          title: p[0] ?? '',
+          index: parseInt(p[1] ?? '0'),
+          position: [parseInt(p[2] ?? '0'), parseInt(p[3] ?? '0')] as [number, number],
+          size: [parseInt(p[4] ?? '0'), parseInt(p[5] ?? '0')] as [number, number],
+          minimized: (p[6] ?? '').trim() === 'true',
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  // ── OCR with Confidence ────────────────────────────────────
+
+  /** Get OCR text with confidence scores, optionally for a screen region. */
+  async getTextWithConfidence(region?: { x: number; y: number; width: number; height: number }): Promise<Array<{ text: string; confidence: number; bounds: { x: number; y: number; width: number; height: number } }>> {
+    const { execSync } = await import('child_process');
+    const os = await import('os');
+    const path = await import('path');
+    const tmpImg = path.join(os.tmpdir(), `omni_ocr_${Date.now()}.png`);
+    try {
+      // Capture the region or full screen
+      if (region) {
+        execSync(`screencapture -x -R${region.x},${region.y},${region.width},${region.height} "${tmpImg}"`, { timeout: 5000 });
+      } else {
+        execSync(`screencapture -x "${tmpImg}"`, { timeout: 5000 });
+      }
+
+      // Try Vision framework via Swift one-liner
+      const swiftScript = `
+import Vision
+import AppKit
+let url = URL(fileURLWithPath: "${tmpImg}")
+guard let image = NSImage(contentsOf: url),
+      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { exit(1) }
+let req = VNRecognizeTextRequest { req, _ in
+  guard let obs = req.results as? [VNRecognizedTextObservation] else { return }
+  for o in obs {
+    guard let top = o.topCandidates(1).first else { continue }
+    let b = o.boundingBox
+    let imgW = CGFloat(cgImage.width)
+    let imgH = CGFloat(cgImage.height)
+    let x = Int(b.minX * imgW)
+    let y = Int((1 - b.maxY) * imgH)
+    let w = Int(b.width * imgW)
+    let h = Int(b.height * imgH)
+    print("\\(top.string)|\\(top.confidence)|\\(x)|\\(y)|\\(w)|\\(h)")
+  }
+}
+req.recognitionLevel = .accurate
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+try? handler.perform([req])
+`;
+      const swiftFile = path.join(os.tmpdir(), `omni_vision_${Date.now()}.swift`);
+      const fs = await import('fs');
+      fs.writeFileSync(swiftFile, swiftScript);
+      try {
+        const raw = execSync(`swift "${swiftFile}" 2>/dev/null`, { encoding: 'utf-8', timeout: 15000 }).trim();
+        fs.unlinkSync(swiftFile);
+        if (tmpImg) { try { fs.unlinkSync(tmpImg); } catch { /* ignore */ } }
+        if (!raw) return [];
+        const offsetX = region?.x ?? 0;
+        const offsetY = region?.y ?? 0;
+        return raw.split('\n').filter(Boolean).map(line => {
+          const [text, conf, bx, by, bw, bh] = line.split('|');
+          return {
+            text: text ?? '',
+            confidence: parseFloat(conf ?? '1'),
+            bounds: { x: offsetX + parseInt(bx ?? '0'), y: offsetY + parseInt(by ?? '0'), width: parseInt(bw ?? '0'), height: parseInt(bh ?? '0') },
+          };
+        });
+      } catch {
+        fs.unlinkSync(swiftFile);
+      }
+    } catch {
+      // ignore
+    }
+    // Fallback: wrap captureScreen + bridge OCR with confidence 1.0
+    try {
+      const capture = region
+        ? await this.captureRegion(region.x, region.y, region.width, region.height)
+        : await this.captureScreen();
+      const text: string = (bridge as unknown as Record<string, (b: Buffer, w: number, h: number) => string>).performOCR?.(capture.data, capture.width, capture.height) ?? '';
+      if (!text) return [];
+      return [{ text, confidence: 1.0, bounds: { x: region?.x ?? 0, y: region?.y ?? 0, width: capture.width, height: capture.height } }];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Find all instances of searchText on screen, returning locations with confidence. */
+  async findTextOnScreen(searchText: string): Promise<Array<{ text: string; confidence: number; bounds: { x: number; y: number; width: number; height: number } }>> {
+    const all = await this.getTextWithConfidence();
+    const lower = searchText.toLowerCase();
+    return all.filter(r => r.text.toLowerCase().includes(lower));
+  }
+
+  // ── Drag and Drop ──────────────────────────────────────────
+
+  /** Drag from one point to another with optional duration for smooth movement. */
+  async dragAndDrop(fromX: number, fromY: number, toX: number, toY: number, durationMs: number = 300): Promise<void> {
+    // Use existing bridge drag if no custom duration needed
+    if (durationMs <= 0) {
+      bridge.drag(fromX, fromY, toX, toY);
+      return;
+    }
+    // Smooth drag via moveMouseSmooth + click events
+    const steps = Math.max(10, Math.round(durationMs / 16));
+    await this.moveMouseSmooth(fromX, fromY, fromX, fromY, 1);
+    bridge.mouseDown?.('left') ?? bridge.click?.('left');
+    await this.moveMouseSmooth(fromX, fromY, toX, toY, steps);
+    await sleep(Math.min(durationMs, 100));
+    bridge.mouseUp?.('left') ?? bridge.click?.('left');
+  }
+
+  /** Drag a file from the filesystem to screen coordinates using Finder. */
+  async dragFile(filePath: string, toX: number, toY: number): Promise<void> {
+    const { execSync } = await import('child_process');
+    // Reveal file in Finder, then drag to target via cliclick if available; else AppleScript
+    const escaped = filePath.replace(/"/g, '\\"');
+    try {
+      // Try cliclick (brew install cliclick) for precise drag
+      execSync(`which cliclick`, { timeout: 2000 });
+      execSync(`osascript -e 'tell application "Finder" to reveal POSIX file "${escaped}"'`, { timeout: 5000 });
+      execSync(`osascript -e 'tell application "Finder" to activate'`, { timeout: 3000 });
+      await sleep(500);
+      execSync(`cliclick dd:. du:${toX},${toY}`, { timeout: 10000 });
+    } catch {
+      // Fallback: AppleScript drag via Finder
+      const script = `
+        tell application "Finder"
+          set theFile to POSIX file "${escaped}" as alias
+          reveal theFile
+          activate
+        end tell
+        tell application "System Events"
+          set src to {position of front window of application process "Finder"}
+        end tell`;
+      try {
+        execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 8000 });
+      } catch {
+        // Best-effort: use bridge drag from file icon center approximation
+        bridge.drag(200, 200, toX, toY);
+      }
+    }
+  }
+
+  // ── Screenshot Annotation ──────────────────────────────────
+
+  /** Capture a rectangular region to a file, returning the output path. */
+  async captureRegionToFile(x: number, y: number, width: number, height: number, outputPath: string): Promise<string> {
+    const { execSync } = await import('child_process');
+    const os = await import('os');
+    const path = await import('path');
+    const finalPath = outputPath || path.join(os.tmpdir(), `omni_region_${Date.now()}.png`);
+    execSync(`screencapture -x -R${x},${y},${width},${height} "${finalPath}"`, { timeout: 8000 });
+    return finalPath;
+  }
+
+  /** Capture a specific app window to a file (frontmost app if omitted). Returns output path. */
+  async captureWindowToFile(appName?: string, outputPath?: string): Promise<string> {
+    const { execSync } = await import('child_process');
+    const os = await import('os');
+    const path = await import('path');
+    const finalPath = outputPath || path.join(os.tmpdir(), `omni_window_${Date.now()}.png`);
+
+    try {
+      // Get window ID via CGWindowListCopyWindowInfo using osascript/swift
+      const processName = appName ?? (() => {
+        try {
+          return execSync(`osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`, { encoding: 'utf-8', timeout: 3000 }).trim();
+        } catch { return null; }
+      })();
+
+      if (processName) {
+        const swiftSnip = `import AppKit; let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as! [[String:Any]]; for w in list { if let owner = w[kCGWindowOwnerName as String] as? String, owner == "${processName}", let wid = w[kCGWindowNumber as String] as? Int { print(wid); break } }`;
+        try {
+          const wid = execSync(`swift -e '${swiftSnip.replace(/'/g, "'\\''")}'`, { encoding: 'utf-8', timeout: 8000 }).trim();
+          if (wid) {
+            execSync(`screencapture -x -l${wid} "${finalPath}"`, { timeout: 8000 });
+            return finalPath;
+          }
+        } catch { /* fall through */ }
+      }
+    } catch { /* fall through */ }
+
+    // Fallback: capture the focused window with -w flag
+    execSync(`screencapture -x -w "${finalPath}"`, { timeout: 10000 });
+    return finalPath;
   }
 }
 

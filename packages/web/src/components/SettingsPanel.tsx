@@ -22,7 +22,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <section style={{ marginBottom: 24 }}>
       <div className="section-title">{title}</div>
-      <div className="glass" style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.07)", overflow: "hidden" }}>
+      <div className="glow-card" style={{ padding: 0, overflow: "hidden" }}>
         {children}
       </div>
     </section>
@@ -34,18 +34,21 @@ function Divider() {
 }
 
 function StatusBadge({ status }: { status: "ok" | "warn" | "error" | "none" }) {
-  const colors = {
-    ok: { bg: "rgba(34,197,94,0.12)", text: "#22c55e", border: "rgba(34,197,94,0.25)", label: "● Ready" },
-    warn: { bg: "rgba(245,158,11,0.12)", text: "#f59e0b", border: "rgba(245,158,11,0.25)", label: "⚠ Warning" },
-    error: { bg: "rgba(239,68,68,0.12)", text: "#ef4444", border: "rgba(239,68,68,0.25)", label: "✕ Error" },
-    none: { bg: "rgba(90,90,122,0.12)", text: "#5a5a7a", border: "rgba(90,90,122,0.25)", label: "– Unchecked" },
+  const cls = {
+    ok: "neon-badge-ok",
+    warn: "neon-badge-warn",
+    error: "neon-badge-error",
+    none: "neon-badge-accent",
+  }[status];
+  const label = {
+    ok: "● Ready",
+    warn: "⚠ Warning",
+    error: "✕ Error",
+    none: "– Unchecked",
   }[status];
   return (
-    <span style={{
-      fontSize: "0.72rem", fontWeight: 700, padding: "4px 10px", borderRadius: "20px",
-      background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`,
-    }}>
-      {colors.label}
+    <span className={`neon-badge ${cls}`}>
+      {label}
     </span>
   );
 }
@@ -99,12 +102,12 @@ export function SettingsPanel() {
       <div style={{ maxWidth: 680, margin: "0 auto" }}>
 
         {/* Header */}
-        <div className="animate-fade-in" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
+        <div className="hero-gradient animate-fade-in" style={{ marginBottom: 28, display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{
-            width: 44, height: 44, borderRadius: 12,
+            width: 48, height: 48, borderRadius: 14,
             background: "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(139,92,246,0.2))",
             border: "1px solid rgba(99,102,241,0.3)",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22,
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24,
           }}>
             ⚙️
           </div>

@@ -68,6 +68,12 @@ export interface ClipboardEntry {
   timestamp: string;
 }
 
+export interface ClipboardHistoryEntry {
+  text: string;
+  timestamp: number;
+  type: "text" | "image" | "file" | "rtf";
+}
+
 // ---------------------------------------------------------------------------
 // UC-B19 — Font, Locale & Layout
 // ---------------------------------------------------------------------------
@@ -284,6 +290,19 @@ export interface VMStats {
 export class DeepSystemLayer {
   /** In-memory clipboard history for UC-B18. */
   private clipboardHistory: ClipboardEntry[] = [];
+
+  /** Path to persistent clipboard history JSON file. */
+  private readonly clipboardHistoryPath = join(
+    homedir(),
+    ".omnistate",
+    "clipboard-history.json"
+  );
+
+  /** Max entries kept in persistent clipboard history. */
+  private static readonly CLIPBOARD_HISTORY_MAX = 500;
+
+  /** Max bytes stored per clipboard history entry (10 KB). */
+  private static readonly CLIPBOARD_ENTRY_MAX_BYTES = 10 * 1024;
 
   constructor(private readonly deep: DeepLayer) {}
 
@@ -705,6 +724,268 @@ export class DeepSystemLayer {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Save the current clipboard image to a file (macOS only).
+   * Tries `pngpaste` first, then falls back to an inline osascript/Swift snippet.
+   * Returns null when the clipboard contains no image data.
+   */
+  async getClipboardImage(
+    outputPath: string
+  ): Promise<{ saved: boolean; path: string; format: string; size: number } | null> {
+    if (this.os !== "macos") return null;
+    try {
+      // Check whether clipboard has image data
+      const formats = await this.getClipboardFormats();
+      const hasImage = formats.some(
+        (f) =>
+          f.includes("TIFF") ||
+          f.includes("PNG") ||
+          f.includes("JPEG") ||
+          f.includes("GIF") ||
+          f.includes("BMP")
+      );
+      if (!hasImage) return null;
+
+      // Try pngpaste (brew install pngpaste)
+      const hasPngpaste = await this.run("which pngpaste 2>/dev/null");
+      if (hasPngpaste) {
+        const result = await this.run(`pngpaste "${outputPath}" 2>/dev/null`);
+        if (existsSync(outputPath)) {
+          const { size } = statSync(outputPath);
+          return { saved: true, path: outputPath, format: "png", size };
+        }
+        void result;
+      }
+
+      // Fallback: osascript write PNG data
+      const script = [
+        `set imgData to the clipboard as «class PNGf»`,
+        `set f to open for access POSIX file "${outputPath}" with write permission`,
+        `write imgData to f`,
+        `close access f`,
+      ].join("\n");
+      await this.run(`osascript -e '${script.replace(/'/g, "'\\''")}'`);
+      if (existsSync(outputPath)) {
+        const { size } = statSync(outputPath);
+        return { saved: true, path: outputPath, format: "png", size };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Copy a file reference to the macOS clipboard (sets it as a file-URL pasteboard item).
+   * macOS only — uses `osascript`.
+   */
+  async copyFileToClipboard(filePath: string): Promise<boolean> {
+    if (this.os !== "macos") return false;
+    try {
+      const escaped = filePath.replace(/"/g, '\\"');
+      await this.run(
+        `osascript -e 'set the clipboard to POSIX file "${escaped}"'`
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get clipboard content as RTF (macOS only).
+   * Returns null when no RTF data is on the pasteboard.
+   */
+  async getClipboardRTF(): Promise<string | null> {
+    if (this.os !== "macos") return null;
+    try {
+      const out = await this.run(
+        `osascript -e 'the clipboard as «class RTF »' 2>/dev/null`
+      );
+      if (!out) return null;
+      // osascript returns hex-encoded data «data RTF …» — decode it
+      const hex = out.replace(/^«data RTF\s+/, "").replace(/»$/, "");
+      if (hex) {
+        return Buffer.from(hex, "hex").toString("utf-8");
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Set clipboard to RTF content (macOS only).
+   * Writes RTF to a temp file then loads it via osascript.
+   */
+  async setClipboardRTF(rtfContent: string): Promise<boolean> {
+    if (this.os !== "macos") return false;
+    try {
+      const { tmpdir } = await import("node:os");
+      const tmpFile = join(tmpdir(), `omnistate-rtf-${Date.now()}.rtf`);
+      writeFileSync(tmpFile, rtfContent, "utf-8");
+      const escaped = tmpFile.replace(/"/g, '\\"');
+      const script = [
+        `set f to open for access POSIX file "${escaped}"`,
+        `set rtfData to read f as «class RTF »`,
+        `close access f`,
+        `set the clipboard to rtfData`,
+      ].join("\n");
+      await this.run(`osascript -e '${script.replace(/'/g, "'\\''")}'`);
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // ignore cleanup error
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── Persistent Clipboard History ─────────────────────────────────────────
+
+  /**
+   * Read the persistent clipboard history from disk.
+   */
+  private readPersistentHistory(): ClipboardHistoryEntry[] {
+    try {
+      if (!existsSync(this.clipboardHistoryPath)) return [];
+      const raw = readFileSync(this.clipboardHistoryPath, "utf-8");
+      return JSON.parse(raw) as ClipboardHistoryEntry[];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Write the persistent clipboard history to disk (auto-prunes to max 500).
+   */
+  private writePersistentHistory(entries: ClipboardHistoryEntry[]): void {
+    try {
+      const dir = join(homedir(), ".omnistate");
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const pruned = entries.slice(
+        -DeepSystemLayer.CLIPBOARD_HISTORY_MAX
+      );
+      writeFileSync(this.clipboardHistoryPath, JSON.stringify(pruned, null, 2), "utf-8");
+    } catch {
+      // ignore write failures
+    }
+  }
+
+  /**
+   * Snapshot the current clipboard and append it to the persistent history.
+   * Detects text, RTF, image, and file types automatically.
+   */
+  async saveClipboardEntry(): Promise<void> {
+    try {
+      const formats = await this.getClipboardFormats();
+      const hasRTF = formats.some((f) => f.includes("RTF"));
+      const hasImage = formats.some(
+        (f) => f.includes("TIFF") || f.includes("PNG") || f.includes("JPEG") || f.includes("GIF")
+      );
+      const hasFile = formats.some((f) => f.includes("furl") || f.includes("file"));
+
+      let type: ClipboardHistoryEntry["type"] = "text";
+      let text = "";
+
+      if (hasFile) {
+        type = "file";
+        text = await this.getClipboard();
+      } else if (hasImage) {
+        type = "image";
+        text = "[image]";
+      } else if (hasRTF) {
+        type = "rtf";
+        const rtf = await this.getClipboardRTF();
+        text = rtf ?? "";
+      } else {
+        type = "text";
+        text = await this.getClipboard();
+      }
+
+      if (!text && type !== "image") return;
+
+      // Truncate to 10 KB
+      const truncated = text.slice(0, DeepSystemLayer.CLIPBOARD_ENTRY_MAX_BYTES);
+
+      const existing = this.readPersistentHistory();
+
+      // Avoid duplicate consecutive entries
+      const last = existing[existing.length - 1];
+      if (last && last.text === truncated && last.type === type) return;
+
+      existing.push({ text: truncated, timestamp: Date.now(), type });
+      this.writePersistentHistory(existing);
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Return persistent clipboard history entries (most recent last).
+   * @param limit Maximum number of entries to return (default: all).
+   */
+  async getPersistentClipboardHistory(
+    limit?: number
+  ): Promise<ClipboardHistoryEntry[]> {
+    const entries = this.readPersistentHistory();
+    if (limit !== undefined && limit > 0) {
+      return entries.slice(-limit);
+    }
+    return entries;
+  }
+
+  /**
+   * Clear the persistent clipboard history file and in-memory history.
+   */
+  async clearClipboardHistory(): Promise<void> {
+    try {
+      this.clipboardHistory = [];
+      if (existsSync(this.clipboardHistoryPath)) {
+        writeFileSync(this.clipboardHistoryPath, "[]", "utf-8");
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Poll the clipboard at `intervalMs` (default 1 s), save a history entry on change.
+   * Returns an object with a `stop()` function to cancel the watcher.
+   */
+  async startClipboardWatch(
+    intervalMs = 1000
+  ): Promise<{ stop: () => void }> {
+    let lastText = await this.getClipboard();
+    let active = true;
+
+    const tick = async () => {
+      if (!active) return;
+      try {
+        const current = await this.getClipboard();
+        if (current !== lastText) {
+          lastText = current;
+          await this.saveClipboardEntry();
+        }
+      } catch {
+        // ignore tick errors
+      }
+      if (active) {
+        setTimeout(tick, intervalMs);
+      }
+    };
+
+    setTimeout(tick, intervalMs);
+
+    return {
+      stop: () => {
+        active = false;
+      },
+    };
   }
 
   // =========================================================================
@@ -2282,4 +2563,275 @@ end tell`;
       };
     }
   }
-}
+
+  // ---------------------------------------------------------------------------
+  // Real-time system monitoring
+  // ---------------------------------------------------------------------------
+
+  /** Get current CPU usage percentages (user / system / idle / total). */
+  async getCpuUsage(): Promise<{
+    user: number;
+    system: number;
+    idle: number;
+    total: number;
+  }> {
+    const out = await this.run("top -l 1 -n 0 | grep \'CPU usage\'");
+    // Format: "CPU usage: 12.34% user, 5.67% sys, 81.99% idle"
+    const match = out.match(
+      /(\d+(?:\.\d+)?)%\s+user.*?(\d+(?:\.\d+)?)%\s+sys.*?(\d+(?:\.\d+)?)%\s+idle/i
+    );
+    if (match) {
+      const user = parseFloat(match[1]);
+      const system = parseFloat(match[2]);
+      const idle = parseFloat(match[3]);
+      return { user, system, idle, total: user + system };
+    }
+    // Fallback: sysctl loadavg
+    const loadOut = await this.run("sysctl -n vm.loadavg");
+    const parts = loadOut.trim().replace(/[{}]/g, "").trim().split(/\s+/);
+    const total = parseFloat(parts[0] ?? "0") * 100;
+    return { user: total * 0.7, system: total * 0.3, idle: Math.max(0, 100 - total), total };
+  }
+
+  /** Get detailed memory usage in bytes. */
+  async getMemoryUsage(): Promise<{
+    total: number;
+    used: number;
+    free: number;
+    wired: number;
+    compressed: number;
+    cached: number;
+    percentUsed: number;
+  }> {
+    const [vmStatOut, pagesizeOut, totalOut] = await Promise.all([
+      this.run("vm_stat"),
+      this.run("sysctl -n hw.pagesize"),
+      this.run("sysctl -n hw.memsize"),
+    ]);
+
+    const pageSize = parseInt(pagesizeOut.trim()) || 16384;
+    const total = parseInt(totalOut.trim()) || 0;
+
+    const getPages = (key: string): number => {
+      const m = vmStatOut.match(new RegExp(`${key}[^:]*:\\s+(\\d+)`));
+      return m ? parseInt(m[1]) * pageSize : 0;
+    };
+
+    const free = getPages("Pages free");
+    const active = getPages("Pages active");
+    const inactive = getPages("Pages inactive");
+    const wired = getPages("Pages wired down");
+    const compressed = getPages("Pages occupied by compressor");
+    const cached = inactive;
+    const used = active + wired + compressed;
+    const percentUsed = total > 0 ? (used / total) * 100 : 0;
+
+    return { total, used, free, wired, compressed, cached, percentUsed };
+  }
+
+  /** Get network I/O statistics per interface (from `netstat -ib`). */
+  async getNetworkStats(): Promise<
+    {
+      interface: string;
+      bytesIn: number;
+      bytesOut: number;
+      packetsIn: number;
+      packetsOut: number;
+    }[]
+  > {
+    const out = await this.run("netstat -ib");
+    const results: {
+      interface: string;
+      bytesIn: number;
+      bytesOut: number;
+      packetsIn: number;
+      packetsOut: number;
+    }[] = [];
+    const seen = new Set<string>();
+
+    for (const line of out.split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 11) continue;
+      const iface = cols[0];
+      if (seen.has(iface) || iface === "Name") continue;
+      seen.add(iface);
+      // netstat -ib columns: Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll
+      const packetsIn = parseInt(cols[4]) || 0;
+      const bytesIn = parseInt(cols[6]) || 0;
+      const packetsOut = parseInt(cols[7]) || 0;
+      const bytesOut = parseInt(cols[9]) || 0;
+      results.push({ interface: iface, bytesIn, bytesOut, packetsIn, packetsOut });
+    }
+    return results;
+  }
+
+  /** Get thermal state — CPU temperature (°C) and thermal pressure level. */
+  async getThermalState(): Promise<{
+    cpuTemp?: number;
+    thermalPressure: "nominal" | "moderate" | "heavy" | "critical" | "unknown";
+  }> {
+    const therm = await this.run("pmset -g therm");
+    let thermalPressure: "nominal" | "moderate" | "heavy" | "critical" | "unknown" = "unknown";
+    const pressureMatch = therm.match(/CPU_Scheduler_Limit\s*=\s*(\d+)/i);
+    if (pressureMatch) {
+      const limit = parseInt(pressureMatch[1]);
+      if (limit >= 90) thermalPressure = "nominal";
+      else if (limit >= 70) thermalPressure = "moderate";
+      else if (limit >= 50) thermalPressure = "heavy";
+      else thermalPressure = "critical";
+    } else if (therm.toLowerCase().includes("no thermal")) {
+      thermalPressure = "nominal";
+    }
+
+    // powermetrics requires sudo — silently skipped when unavailable
+    const tempOut = await this.run(
+      "sudo powermetrics --samplers smc -n 1 -i 1 2>/dev/null | grep \'CPU die temperature\'"
+    );
+    const tempMatch = tempOut.match(/(\d+(?:\.\d+)?)\s*C/i);
+    const cpuTemp = tempMatch ? parseFloat(tempMatch[1]) : undefined;
+
+    return { cpuTemp, thermalPressure };
+  }
+
+  /** Get system uptime and load averages. */
+  async getSystemUptime(): Promise<{
+    uptime: string;
+    uptimeSeconds: number;
+    loadAverage: { one: number; five: number; fifteen: number };
+  }> {
+    const out = await this.run("uptime");
+    const loadMatch = out.match(/load averages?:\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/i);
+    const one = loadMatch ? parseFloat(loadMatch[1]) : 0;
+    const five = loadMatch ? parseFloat(loadMatch[2]) : 0;
+    const fifteen = loadMatch ? parseFloat(loadMatch[3]) : 0;
+
+    const uptimeMatch = out.match(/up\s+([^,]+(?:,\s*\d+:\d+)?)/i);
+    const uptimeStr = uptimeMatch ? uptimeMatch[1].trim() : out.trim();
+
+    let uptimeSeconds = 0;
+    const daysMatch = uptimeStr.match(/(\d+)\s+day/i);
+    const hhmm = uptimeStr.match(/(\d+):(\d+)/);
+    const minsMatch = uptimeStr.match(/(\d+)\s+min/i);
+    if (daysMatch) uptimeSeconds += parseInt(daysMatch[1]) * 86400;
+    if (hhmm) uptimeSeconds += parseInt(hhmm[1]) * 3600 + parseInt(hhmm[2]) * 60;
+    if (minsMatch && !hhmm) uptimeSeconds += parseInt(minsMatch[1]) * 60;
+
+    return { uptime: uptimeStr, uptimeSeconds, loadAverage: { one, five, fifteen } };
+  }
+
+  /** Get disk I/O rates — second sample delta from `iostat -d -c 2`. */
+  async getDiskIO(): Promise<{
+    readsPerSec: number;
+    writesPerSec: number;
+    readBytesPerSec: number;
+    writeBytesPerSec: number;
+  }> {
+    const out = await this.run("iostat -d -c 2", 10_000);
+    const lines = out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    // Skip header lines containing "KB/t" or "disk"; use last remaining line
+    const dataLines = lines.filter((l) => !/KB\/t|disk/.test(l));
+    const lastLine = dataLines[dataLines.length - 1] ?? "";
+    const cols = lastLine.split(/\s+/);
+
+    // macOS iostat -d columns per disk: KB/t  tps  MB/s  (repeated)
+    let readsPerSec = 0;
+    let readBytesPerSec = 0;
+    for (let i = 0; i + 2 < cols.length; i += 3) {
+      readsPerSec += parseFloat(cols[i + 1]) || 0;
+      readBytesPerSec += (parseFloat(cols[i + 2]) || 0) * 1024 * 1024;
+    }
+
+    return { readsPerSec, writesPerSec: 0, readBytesPerSec, writeBytesPerSec: 0 };
+  }
+
+  /** Get open file descriptor counts, optionally for a specific PID. */
+  async getOpenFiles(pid?: number): Promise<{
+    total: number;
+    limit: number;
+    files?: { fd: number; type: string; name: string }[];
+  }> {
+    const limitOut = await this.run("ulimit -n");
+    const limit = parseInt(limitOut.trim()) || 0;
+
+    if (pid !== undefined) {
+      const out = await this.run(`lsof -p ${pid} 2>/dev/null | head -200`);
+      const lines = out.split("\n").slice(1).filter(Boolean);
+      const files = lines.map((l) => {
+        const cols = l.split(/\s+/);
+        return { fd: parseInt(cols[3]) || 0, type: cols[4] ?? "", name: cols[cols.length - 1] ?? "" };
+      });
+      return { total: files.length, limit, files };
+    }
+
+    const out = await this.run("lsof 2>/dev/null | wc -l");
+    const total = Math.max(0, (parseInt(out.trim()) || 1) - 1);
+    return { total, limit };
+  }
+
+  /** Check CPU, memory, and disk usage against thresholds and return alerts. */
+  async checkResourceAlerts(thresholds?: {
+    cpuPercent?: number;
+    memoryPercent?: number;
+    diskPercent?: number;
+  }): Promise<{
+    alerts: Array<{
+      type: "cpu" | "memory" | "disk";
+      current: number;
+      threshold: number;
+      message: string;
+    }>;
+  }> {
+    const cpuThreshold = thresholds?.cpuPercent ?? 90;
+    const memThreshold = thresholds?.memoryPercent ?? 85;
+    const diskThreshold = thresholds?.diskPercent ?? 90;
+
+    const [cpu, mem, diskOut] = await Promise.all([
+      this.getCpuUsage(),
+      this.getMemoryUsage(),
+      this.run("df -k / 2>/dev/null | tail -1"),
+    ]);
+
+    const alerts: Array<{
+      type: "cpu" | "memory" | "disk";
+      current: number;
+      threshold: number;
+      message: string;
+    }> = [];
+
+    if (cpu.total >= cpuThreshold) {
+      alerts.push({
+        type: "cpu",
+        current: cpu.total,
+        threshold: cpuThreshold,
+        message: `CPU usage is ${cpu.total.toFixed(1)}% (threshold: ${cpuThreshold}%)`,
+      });
+    }
+
+    if (mem.percentUsed >= memThreshold) {
+      alerts.push({
+        type: "memory",
+        current: mem.percentUsed,
+        threshold: memThreshold,
+        message: `Memory usage is ${mem.percentUsed.toFixed(1)}% (threshold: ${memThreshold}%)`,
+      });
+    }
+
+    // df output: Filesystem 512-blocks Used Available Capacity Mounted
+    const dfCols = diskOut.trim().split(/\s+/);
+    const capacityStr = dfCols.find((c) => c.endsWith("%")) ?? "0%";
+    const diskPercent = parseInt(capacityStr) || 0;
+    if (diskPercent >= diskThreshold) {
+      alerts.push({
+        type: "disk",
+        current: diskPercent,
+        threshold: diskThreshold,
+        message: `Disk usage is ${diskPercent}% (threshold: ${diskThreshold}%)`,
+      });
+    }
+
+    return { alerts };
+  }
