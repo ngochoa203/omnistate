@@ -32,3 +32,14 @@ pub fn find_element(query: String) -> Result<serde_json::Value> {
     Ok(serde_json::to_value(&element)
         .map_err(|e| Error::from_reason(e.to_string()))?)
 }
+
+/// Get the full hierarchical UI tree from the focused application.
+/// Returns a JSON object with parent→children structure preserved.
+#[napi]
+pub fn get_ui_tree() -> Result<serde_json::Value> {
+    let tree = omnistate_a11y::get_ui_tree()
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+
+    Ok(serde_json::to_value(&tree)
+        .map_err(|e| Error::from_reason(e.to_string()))?)
+}

@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 omnistate-core = { path = "../omnistate-core" }
+serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

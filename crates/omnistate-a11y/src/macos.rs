@@ -11,6 +11,8 @@ use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::{DetectionMethod, ElementState, ElementType, Rect, UIElement};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::ptr;
 
@@ -63,10 +65,27 @@ unsafe extern "C" {
     ) -> bool;
 }
 
+
 // ── AX Attribute keys ────────────────────────────────────────────────
 
 fn ax_attr(name: &str) -> CFString {
     CFString::new(name)
+}
+
+// ── Hierarchical tree types ──────────────────────────────────────────
+
+/// A single node in the full hierarchical accessibility tree.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UITreeNode {
+    pub id: String,
+    pub role: String,
+    pub title: Option<String>,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub bounds: Rect,
+    pub state: ElementState,
+    pub children: Vec<UITreeNode>,
+    pub attributes: HashMap<String, String>,
 }
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -74,6 +93,52 @@ fn ax_attr(name: &str) -> CFString {
 /// Check if this process has accessibility permissions.
 pub fn is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// Get the frontmost application's PID via `osascript` (O(1), ~50 ms).
+///
+/// Falls back to `None` on any error so the caller can try other strategies.
+fn get_frontmost_pid_via_script() -> Option<i32> {
+    let output = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to get unix id of first process whose frontmost is true",
+        ])
+        .output()
+        .ok()?;
+    let s = String::from_utf8(output.stdout).ok()?;
+    s.trim().parse::<i32>().ok()
+}
+
+/// Resolve the frontmost (active) application element.
+///
+/// Strategy:
+///   1. Try `AXFocusedApplication` on the system-wide element — O(1), works
+///      for native AppKit/Cocoa apps that hold keyboard focus.
+///   2. If that fails or returns null, ask `osascript` for the frontmost PID
+///      — O(1), ~50 ms, covers Electron, browsers, and web-view-based apps.
+///
+/// The previous fallback (iterating all PIDs and probing `AXFrontmost` on
+/// each) was O(n_processes) and took ~3 s; it has been removed.
+fn get_frontmost_app(system_wide: AXUIElementRef) -> OmniResult<AXUIElementRef> {
+    // ── Step 1: AXFocusedApplication (fast path) ─────────────────────
+    if let Ok(app) = get_attribute(system_wide, "AXFocusedApplication") {
+        if !app.is_null() {
+            return Ok(app);
+        }
+    }
+
+    // ── Step 2: osascript frontmost PID (O(1) fallback) ──────────────
+    if let Some(pid) = get_frontmost_pid_via_script() {
+        let app_elem = unsafe { AXUIElementCreateApplication(pid) };
+        if !app_elem.is_null() {
+            return Ok(app_elem);
+        }
+    }
+
+    Err(OmniError::AccessibilityError(
+        "No focused or frontmost application found".into(),
+    ))
 }
 
 /// Get all UI elements from the focused application.
@@ -94,13 +159,9 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
         ));
     }
 
-    // Get the focused application
-    let focused_app = get_attribute(system_wide, "AXFocusedApplication")?;
-    if focused_app.is_null() {
-        return Err(OmniError::AccessibilityError(
-            "No focused application found".into(),
-        ));
-    }
+    // Resolve frontmost app — falls back through AXFrontmost / windows when
+    // AXFocusedApplication returns null (e.g. browser web views).
+    let focused_app = get_frontmost_app(system_wide)?;
 
     // Get the focused window of the application
     let focused_window = get_attribute(focused_app, "AXFocusedWindow");
@@ -108,22 +169,22 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     let mut elements = Vec::new();
     let mut id_counter = 0u32;
 
-    // If we have a focused window, walk its children
+    // If we have a focused window, walk its children (depth 10)
     if let Ok(window) = focused_window {
         if !window.is_null() {
-            walk_element(window, &mut elements, &mut id_counter, 0, 5);
+            walk_element(window, &mut elements, &mut id_counter, 0, 10);
         }
     }
 
-    // Also get the application's children (menus, etc.)
+    // Also get the application's children (menus, etc.) — depth 8
     if let Ok(children_ref) = get_attribute(focused_app, "AXChildren") {
         if !children_ref.is_null() {
             let children: CFArray =
                 unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
-            for i in 0..children.len().min(20) {
+            for i in 0..children.len().min(50) {
                 let child: *const c_void =
                     *children.get(i).unwrap() as *const c_void;
-                walk_element(child, &mut elements, &mut id_counter, 0, 3);
+                walk_element(child, &mut elements, &mut id_counter, 0, 8);
             }
         }
     }
@@ -131,6 +192,37 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     unsafe { core_foundation_sys::base::CFRelease(system_wide as *const _) };
 
     Ok(elements)
+}
+
+/// Get the full UI tree with parent-child hierarchy preserved.
+///
+/// Returns a `UITreeNode` rooted at the focused application.
+pub fn get_ui_tree() -> OmniResult<UITreeNode> {
+    if !is_trusted() {
+        return Err(OmniError::AccessibilityError(
+            "Accessibility permission not granted. Open System Preferences > Privacy & Security > Accessibility and add this app.".to_string(),
+        ));
+    }
+
+    let system_wide = unsafe { AXUIElementCreateSystemWide() };
+
+    // Resolve frontmost app — falls back through AXFrontmost / windows when
+    // AXFocusedApplication returns null (e.g. browser web views).
+    let focused_app = get_frontmost_app(system_wide)?;
+
+    let app_name = get_string_attribute(focused_app, "AXTitle")
+        .unwrap_or_else(|| "Unknown App".to_string());
+
+    let mut id_counter: u32 = 0;
+
+    // Build tree starting from the app
+    let mut root = build_tree_node(focused_app, &mut id_counter, 0, 12);
+    root.role = "AXApplication".to_string();
+    root.title = Some(app_name);
+
+    unsafe { core_foundation_sys::base::CFRelease(system_wide as *const _) };
+
+    Ok(root)
 }
 
 /// Find a UI element by text content or role.
@@ -337,17 +429,147 @@ fn walk_element(
         });
     }
 
-    // Recurse into children
-    if let Ok(children_ref) = get_attribute(element, "AXChildren") {
-        if !children_ref.is_null() {
-            let children: CFArray =
-                unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
-            for i in 0..children.len().min(50) {
-                let child: *const c_void =
-                    *children.get(i).unwrap() as *const c_void;
-                walk_element(child, elements, id_counter, depth + 1, max_depth);
+    // Recurse into children + related AX relations (menu/context/windows)
+    for child in collect_related_children(element) {
+        walk_element(child, elements, id_counter, depth + 1, max_depth);
+    }
+}
+
+fn push_children_from_array_attr(
+    element: AXUIElementRef,
+    attr: &str,
+    out: &mut Vec<AXUIElementRef>,
+    seen: &mut HashSet<usize>,
+    max_items: usize,
+) {
+    if let Ok(children_ref) = get_attribute(element, attr) {
+        if children_ref.is_null() {
+            return;
+        }
+        let children: CFArray = unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+        for i in 0..children.len().min(max_items as isize) {
+            let child: *const c_void = *children.get(i).unwrap() as *const c_void;
+            if child.is_null() {
+                continue;
+            }
+            let key = child as usize;
+            if seen.insert(key) {
+                out.push(child as AXUIElementRef);
             }
         }
+    }
+}
+
+fn push_child_from_single_attr(
+    element: AXUIElementRef,
+    attr: &str,
+    out: &mut Vec<AXUIElementRef>,
+    seen: &mut HashSet<usize>,
+) {
+    if let Ok(child_ref) = get_attribute(element, attr) {
+        if child_ref.is_null() {
+            return;
+        }
+        let key = child_ref as usize;
+        if seen.insert(key) {
+            out.push(child_ref as AXUIElementRef);
+        }
+    }
+}
+
+fn collect_related_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    let mut out: Vec<AXUIElementRef> = Vec::new();
+    let mut seen: HashSet<usize> = HashSet::new();
+
+    // Primary hierarchy
+    push_children_from_array_attr(element, "AXChildren", &mut out, &mut seen, 220);
+
+    // Common web/app container relations (captures menu bar, context menus, windows)
+    push_children_from_array_attr(element, "AXVisibleChildren", &mut out, &mut seen, 120);
+    push_children_from_array_attr(element, "AXWindows", &mut out, &mut seen, 30);
+    push_children_from_array_attr(element, "AXContents", &mut out, &mut seen, 80);
+    push_child_from_single_attr(element, "AXMenuBar", &mut out, &mut seen);
+    push_child_from_single_attr(element, "AXFocusedWindow", &mut out, &mut seen);
+    push_child_from_single_attr(element, "AXMainWindow", &mut out, &mut seen);
+    push_child_from_single_attr(element, "AXExtrasMenuBar", &mut out, &mut seen);
+
+    out
+}
+
+fn build_tree_node(
+    element: AXUIElementRef,
+    id_counter: &mut u32,
+    depth: u32,
+    max_depth: u32,
+) -> UITreeNode {
+    *id_counter += 1;
+    let current_id = format!("ax-{}", id_counter);
+
+    let role = get_string_attribute(element, "AXRole").unwrap_or_else(|| "Unknown".to_string());
+    let title = get_string_attribute(element, "AXTitle");
+    let value = get_string_attribute(element, "AXValue");
+    let description = get_string_attribute(element, "AXDescription");
+
+    let position = get_position(element);
+    let size = get_size(element);
+    let bounds = match (position, size) {
+        (Some((x, y)), Some((w, h))) => Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        },
+        _ => Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        },
+    };
+
+    let state = ElementState {
+        visible: true,
+        enabled: get_bool_attribute(element, "AXEnabled"),
+        focused: get_bool_attribute(element, "AXFocused"),
+        selected: get_bool_attribute(element, "AXSelected"),
+    };
+
+    // Collect useful attributes for fingerprinting
+    let mut attributes = HashMap::new();
+    if let Some(r) = get_string_attribute(element, "AXRoleDescription") {
+        attributes.insert("roleDescription".to_string(), r);
+    }
+    if let Some(r) = get_string_attribute(element, "AXIdentifier") {
+        attributes.insert("identifier".to_string(), r);
+    }
+    if let Some(r) = get_string_attribute(element, "AXSubrole") {
+        attributes.insert("subrole".to_string(), r);
+    }
+    if let Some(r) = get_string_attribute(element, "AXHelp") {
+        attributes.insert("help".to_string(), r);
+    }
+
+    let mut children = Vec::new();
+
+    if depth < max_depth {
+        for child in collect_related_children(element) {
+            if !child.is_null() {
+                let child_node = build_tree_node(child as AXUIElementRef, id_counter, depth + 1, max_depth);
+                children.push(child_node);
+            }
+        }
+    }
+
+    UITreeNode {
+        id: current_id,
+        role,
+        title,
+        value,
+        description,
+        bounds,
+        state,
+        children,
+        attributes,
     }
 }
 
@@ -383,6 +605,21 @@ mod tests {
                         el.text,
                     );
                 }
+            }
+            Err(e) => println!("Error: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_get_ui_tree() {
+        if !is_trusted() {
+            println!("Skipping — accessibility not enabled");
+            return;
+        }
+        match get_ui_tree() {
+            Ok(root) => {
+                println!("Root: {} {:?}", root.role, root.title);
+                println!("  {} top-level children", root.children.len());
             }
             Err(e) => println!("Error: {e}"),
         }

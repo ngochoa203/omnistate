@@ -1,4 +1,5 @@
 import type { ClientMessage, ServerMessage } from "./protocol";
+import { useAuthStore } from "./auth-store";
 
 type EventHandler = (msg: ServerMessage) => void;
 
@@ -24,6 +25,8 @@ export class GatewayClient {
   private handlers: Map<string, Set<EventHandler>> = new Map();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
+  private reconnectAttempts = 0;
+  private readonly maxReconnectAttempts = 10;
   private shouldReconnect = true;
   private _url: string;
 
@@ -41,14 +44,21 @@ export class GatewayClient {
 
   connect(): void {
     this.shouldReconnect = true;
+    this.reconnectAttempts = 0;
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
+    this._doConnect();
+  }
+
+  private _doConnect(): void {
     this.ws = new WebSocket(this._url);
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
-      // Send connect handshake
-      this.send({ type: "connect", auth: {}, role: "ui" });
+      this.reconnectAttempts = 0;
+      // Send connect handshake with auth token
+      const token = useAuthStore.getState().accessToken;
+      this.send({ type: "connect", auth: { token: token || undefined }, role: "ui" });
     };
 
     this.ws.onmessage = (event) => {
@@ -61,7 +71,7 @@ export class GatewayClient {
 
     this.ws.onclose = () => {
       this.emit("_disconnected", { type: "error", message: "disconnected" } as ServerMessage);
-      if (this.shouldReconnect) {
+      if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.scheduleReconnect();
       }
     };
@@ -153,10 +163,12 @@ export class GatewayClient {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    this.reconnectAttempts++;
+    this.emit("reconnecting", { type: "error", message: `reconnecting (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})` } as ServerMessage);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 8000);
-      this.connect();
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
+      this._doConnect();
     }, this.reconnectDelay);
   }
 }

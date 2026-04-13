@@ -94,7 +94,13 @@ pub fn capture_frame(config: &CaptureConfig) -> OmniResult<CapturedFrame> {
 
     // Try IOSurface path first (true zero-copy on Apple Silicon)
     if let Some(io_surface) = pixel_buffer.io_surface() {
-        return capture_from_iosurface(&io_surface, config, timestamp);
+        match capture_from_iosurface(&io_surface, config, timestamp) {
+            Ok(frame) => return Ok(frame),
+            Err(_) => {
+                // Some macOS builds intermittently fail IOSurface lock while
+                // CVPixelBuffer lock still works. Fall back instead of failing hard.
+            }
+        }
     }
 
     // Fallback: CVPixelBuffer direct lock (still fast, but not IOSurface zero-copy)

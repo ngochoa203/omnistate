@@ -33,7 +33,7 @@ export function useGateway() {
 
     unsubs.push(client.on("task.accepted", (msg: ServerMessage) => {
       if (msg.type === "task.accepted") {
-        store.addSystemMessage("Dang xu ly yeu cau...", msg.taskId);
+        store.addSystemMessage("Đang xử lý yêu cầu...", msg.taskId);
       }
     }));
 

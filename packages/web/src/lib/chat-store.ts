@@ -90,6 +90,7 @@ interface ChatStore {
 
 let _id = 0;
 const nextId = () => `msg-${++_id}-${Date.now()}`;
+const CHAT_SNAPSHOT_KEY = "omnistate.chatSnapshot.v1";
 
 function getInitialAppLanguage(): "vi" | "en" {
   if (typeof window === "undefined") return "vi";
@@ -107,6 +108,34 @@ function newConversation(name?: string): Conversation {
     updatedAt: now,
     messageCount: 0,
   };
+}
+
+interface ChatSnapshot {
+  conversations: Conversation[];
+  currentConversationId: string;
+  messagesByConversation: Record<string, ChatMessage[]>;
+}
+
+function loadChatSnapshot(): ChatSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CHAT_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ChatSnapshot;
+    if (!parsed?.conversations?.length) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveChatSnapshot(snapshot: ChatSnapshot): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CHAT_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore storage errors
+  }
 }
 
 function updateConversationStats(conversations: Conversation[], id: string, count: number): Conversation[] {
@@ -133,18 +162,27 @@ function extractReadableContent(result: Record<string, unknown>): string {
   return "";
 }
 
+const defaultConversation: Conversation = {
+  id: "conv-default",
+  name: "Main",
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  messageCount: 0,
+};
+
+const snapshot = loadChatSnapshot();
+const initialConversations = snapshot?.conversations?.length
+  ? snapshot.conversations
+  : [defaultConversation];
+const initialCurrentConversationId = snapshot?.currentConversationId ?? initialConversations[0].id;
+const initialMessagesByConversation = snapshot?.messagesByConversation ?? { [initialConversations[0].id]: [] };
+
 export const useChatStore = create<ChatStore>((set) => ({
   appLanguage: getInitialAppLanguage(),
-  messages: [],
-  conversations: [{
-    id: "conv-default",
-    name: "Main",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    messageCount: 0,
-  }],
-  currentConversationId: "conv-default",
-  messagesByConversation: { "conv-default": [] },
+  messages: initialMessagesByConversation[initialCurrentConversationId] ?? [],
+  conversations: initialConversations,
+  currentConversationId: initialCurrentConversationId,
+  messagesByConversation: initialMessagesByConversation,
   connectionState: "disconnected",
   health: null,
   voiceState: "idle",
@@ -347,3 +385,13 @@ export const useChatStore = create<ChatStore>((set) => ({
   setRuntimeConfig: (runtimeConfig) => set({ runtimeConfig }),
   setRuntimeConfigAck: (runtimeConfigAck) => set({ runtimeConfigAck }),
 }));
+
+if (typeof window !== "undefined") {
+  useChatStore.subscribe((state) => {
+    saveChatSnapshot({
+      conversations: state.conversations,
+      currentConversationId: state.currentConversationId,
+      messagesByConversation: state.messagesByConversation,
+    });
+  });
+}

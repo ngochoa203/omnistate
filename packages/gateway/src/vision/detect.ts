@@ -2,10 +2,11 @@
  * Element detection — multi-strategy pipeline.
  *
  * Priority order:
- * 1. Accessibility API — fast (0-5ms), structured, free, but only a11y-enabled apps
- * 2. Local OCR — medium (100-500ms), text-only, free, works on any app
- * 3. Claude Vision — slow (1-3s), semantic understanding, costs API call
- * 4. Template match — fast (<10ms), but requires pre-cached patterns
+ * 1. Fingerprint — ~0ms, structural identity match, survives visual redesigns
+ * 2. Accessibility API — fast (0-5ms), structured, free, but only a11y-enabled apps
+ * 3. Local OCR — medium (100-500ms), text-only, free, works on any app
+ * 4. Claude Vision — slow (1-3s), semantic understanding, costs API call
+ * 5. Template match — fast (<10ms), but requires pre-cached patterns
  *
  * Each strategy is tried in order. First result above confidence threshold wins.
  */
@@ -14,8 +15,10 @@ import type { DetectedElement } from "../layers/surface.js";
 import * as bridge from "../platform/bridge.js";
 import { ClaudeVisionProvider } from "./providers/claude.js";
 import { LocalVisionProvider } from "./providers/local.js";
+import { findComponent, type ComponentFingerprint } from "./fingerprint.js";
 
 export type DetectionStrategy =
+  | "fingerprint"
   | "accessibility"
   | "vision-model"
   | "ocr"
@@ -28,7 +31,7 @@ export interface DetectionConfig {
 }
 
 const DEFAULT_CONFIG: DetectionConfig = {
-  strategies: ["accessibility", "ocr", "vision-model"],
+  strategies: ["fingerprint", "accessibility", "ocr", "vision-model"],
   confidenceThreshold: 0.7,
   timeoutMs: 5000,
 };
@@ -121,6 +124,8 @@ async function runStrategy(
   query: string
 ): Promise<DetectedElement[]> {
   switch (strategy) {
+    case "fingerprint":
+      return runFingerprintDetection(query);
     case "accessibility":
       return runAccessibility(query);
     case "ocr":
@@ -133,6 +138,83 @@ async function runStrategy(
       return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Fingerprint strategy
+// ---------------------------------------------------------------------------
+
+/**
+ * Find an element using component fingerprinting.
+ *
+ * Fingerprinting uses structural identity (role + position in tree + siblings)
+ * rather than text/visual matching, so it survives colour/theme changes.
+ * The store must be populated first via fingerprintTree() in surface.ts.
+ */
+export function detectByFingerprint(query: string): DetectedElement | null {
+  // 1. Try exact text match.
+  let fp = findComponent({ text: query });
+
+  // 2. Try semantic role match (caller may pass "action-submit", "input-text", …).
+  if (!fp || fp.matchConfidence < 0.3) {
+    fp = findComponent({ semanticRole: query.toLowerCase() });
+  }
+
+  // 3. Try role match (caller may pass "AXButton", "button", …).
+  if (!fp || fp.matchConfidence < 0.3) {
+    fp = findComponent({ role: query });
+  }
+
+  if (!fp || fp.matchConfidence < 0.3) return null;
+
+  return fingerprintToElement(fp);
+}
+
+/**
+ * Internal — run fingerprint detection as a strategy, returning an array
+ * so it plugs into the existing runStrategy() dispatch uniformly.
+ */
+function runFingerprintDetection(query: string): Promise<DetectedElement[]> {
+  const result = detectByFingerprint(query);
+  return Promise.resolve(result ? [result] : []);
+}
+
+/** Convert a ComponentFingerprint to the DetectedElement shape. */
+function fingerprintToElement(fp: ComponentFingerprint): DetectedElement {
+  return {
+    id: fp.id,
+    type: mapRoleToElementType(fp.role),
+    bounds: fp.bounds,
+    text: fp.text ?? undefined,
+    confidence: fp.matchConfidence,
+    detectionMethod: "fingerprint",
+  };
+}
+
+/** Map an accessibility role to a simplified element type string. */
+function mapRoleToElementType(role: string): string {
+  const r = role.toLowerCase();
+  if (r.includes("button")) return "button";
+  if (r.includes("searchfield")) return "input";
+  if (r.includes("textfield") || r.includes("textarea")) return "input";
+  if (r.includes("statictext") || r.includes("label")) return "text";
+  if (r.includes("image") || r.includes("icon")) return "image";
+  if (r.includes("link")) return "link";
+  if (r.includes("checkbox")) return "checkbox";
+  if (r.includes("radiobutton")) return "radio";
+  if (r.includes("combobox") || r.includes("popupbutton")) return "select";
+  if (r.includes("slider")) return "slider";
+  if (r.includes("window")) return "window";
+  if (r.includes("toolbar") || r.includes("tabbar")) return "toolbar";
+  if (r.includes("menubar") || r.includes("menu")) return "menubar";
+  if (r.includes("group") || r.includes("box")) return "group";
+  if (r.includes("list")) return "list";
+  if (r.includes("table") || r.includes("grid")) return "table";
+  return "other";
+}
+
+// ---------------------------------------------------------------------------
+// Accessibility strategy
+// ---------------------------------------------------------------------------
 
 /**
  * Accessibility strategy — query the OS accessibility tree via Rust N-API.

@@ -14,7 +14,14 @@ export type ClientMessage =
   | StatusQueryMessage
   | AdminShutdownMessage
   | VoiceTranscribeMessage
-  | SystemDashboardMessage;
+  | VoiceEnrollMessage
+  | VoiceVerifyMessage
+  | SystemDashboardMessage
+  | TriggerCreateMessage
+  | TriggerListMessage
+  | TriggerUpdateMessage
+  | TriggerDeleteMessage
+  | TriggerHistoryMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -91,6 +98,19 @@ export interface VoiceTranscribeMessage {
   format?: string;
 }
 
+export interface VoiceEnrollMessage {
+  type: "voice.enroll";
+  profileId: string;
+  /** Base64-encoded WAV audio. */
+  audio: string;
+}
+
+export interface VoiceVerifyMessage {
+  type: "voice.verify";
+  /** Base64-encoded WAV audio. */
+  audio: string;
+}
+
 export interface SystemDashboardMessage {
   type: "system.dashboard";
   id: string;
@@ -115,6 +135,10 @@ export type ServerMessage =
   | StatusReplyMessage
   | VoiceTranscriptMessage
   | VoiceErrorMessage
+  | VoiceEnrollResultMessage
+  | VoiceEnrollErrorMessage
+  | VoiceVerifyResultMessage
+  | VoiceVerifyErrorMessage
   | SystemInfoMessage;
 
 export interface ConnectedMessage {
@@ -239,6 +263,31 @@ export interface VoiceErrorMessage {
   error: string;
 }
 
+export interface VoiceEnrollResultMessage {
+  type: "voice.enroll.result";
+  profileId: string;
+  sampleCount: number;
+  isComplete: boolean;
+  required: number;
+}
+
+export interface VoiceEnrollErrorMessage {
+  type: "voice.enroll.error";
+  error: string;
+}
+
+export interface VoiceVerifyResultMessage {
+  type: "voice.verify.result";
+  matched: boolean;
+  profileId: string | null;
+  similarity: number;
+}
+
+export interface VoiceVerifyErrorMessage {
+  type: "voice.verify.error";
+  error: string;
+}
+
 export interface SystemInfoMessage {
   type: "system.info";
   id: string;
@@ -251,4 +300,36 @@ export interface SystemInfoMessage {
     hostname: string;
     error?: string;
   };
+}
+
+// ─── Trigger Messages (client → gateway) ─────────────────────────────────────
+
+export interface TriggerCreateMessage {
+  type: "trigger.create";
+  name: string;
+  description?: string;
+  condition: { type: string; config: Record<string, unknown> };
+  action: { type: "execute_task"; goal: string; layer?: "deep" | "surface" | "auto" };
+  cooldownMs?: number;
+}
+
+export interface TriggerListMessage {
+  type: "trigger.list";
+}
+
+export interface TriggerUpdateMessage {
+  type: "trigger.update";
+  triggerId: string;
+  updates: Record<string, unknown>;
+}
+
+export interface TriggerDeleteMessage {
+  type: "trigger.delete";
+  triggerId: string;
+}
+
+export interface TriggerHistoryMessage {
+  type: "trigger.history";
+  triggerId: string;
+  limit?: number;
 }

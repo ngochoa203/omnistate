@@ -1,6 +1,10 @@
 import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 import { getCopy } from "../lib/i18n";
+import { useAuthStore } from "../lib/auth-store";
+import { signOut } from "../lib/auth-client";
+import { useState } from "react";
+import { PixelAgentLocalPanel } from "./PixelAgentLocalPanel";
 
 function SettingRow({ label, sub, control }: { label: string; sub?: string; control: React.ReactNode }) {
   return (
@@ -54,9 +58,41 @@ export function SettingsPanel() {
   const connectionState = useChatStore((s) => s.connectionState);
   const llmPreflight = useChatStore((s) => s.llmPreflight);
   const endpoint = getClient().url;
+  const user = useAuthStore((s) => s.user);
 
   const connStatus = connectionState === "connected" ? "ok" : connectionState === "connecting" ? "warn" : "error";
   const llmStatus: "ok" | "warn" | "error" | "none" = !llmPreflight ? "none" : llmPreflight.ok ? "ok" : llmPreflight.status === "insufficient_credits" ? "warn" : "error";
+
+  const [sessionLogs, setSessionLogs] = useState<Array<{ name: string; modifiedAt: string; preview: string }>>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState("");
+
+  const loadClaudeMemLogs = async () => {
+    try {
+      setLogsLoading(true);
+      setLogsError("");
+      const res = await fetch("/api/session/logs?source=claude-mem&limit=8");
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.logs)) {
+        setSessionLogs(
+          data.logs.map((x: any) => ({
+            name: String(x.name ?? "unknown"),
+            modifiedAt: String(x.modifiedAt ?? ""),
+            preview: String(x.preview ?? ""),
+          })),
+        );
+      } else {
+        throw new Error(String(data?.error ?? "Invalid logs response"));
+      }
+    } catch (err) {
+      setLogsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLogsLoading(false);
+    }
+  };
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "24px" }}>
@@ -80,7 +116,36 @@ export function SettingsPanel() {
           </div>
         </div>
 
-        {/* Connection */}
+        {/* Profile */}
+        <Section title={appLanguage === "vi" ? "Tài khoản" : "Account"}>
+          <div style={{ padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+                background: "linear-gradient(135deg, #6366f1, #7c3aed)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 16, color: "#fff", fontWeight: 700,
+              }}>
+                {user?.displayName?.charAt(0)?.toUpperCase() ?? "?"}
+              </div>
+              <div>
+                <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", fontWeight: 600 }}>
+                  {user?.displayName ?? "—"}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                  {user?.email ?? "—"}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => signOut()}
+              className="btn-ghost"
+              style={{ padding: "7px 14px", fontSize: "0.78rem", color: "#ef4444", borderColor: "rgba(239,68,68,0.2)" }}
+            >
+              {appLanguage === "vi" ? "Đăng xuất" : "Sign Out"}
+            </button>
+          </div>
+        </Section>
         <Section title={appLanguage === "vi" ? "Kết nối Gateway" : "Gateway Connection"}>
           <SettingRow
             label={appLanguage === "vi" ? "Trạng thái" : "Status"}
@@ -182,6 +247,38 @@ export function SettingsPanel() {
             sub={appLanguage === "vi" ? "Xác thực voiceprint ECAPA-TDNN" : "ECAPA-TDNN voiceprint authentication"}
             control={<StatusBadge status="ok" />}
           />
+        </Section>
+
+        <Section title={appLanguage === "vi" ? "Pixel Agent" : "Pixel Agent"}>
+          <div style={{ padding: "14px 18px" }}>
+            <PixelAgentLocalPanel isVi={appLanguage === "vi"} />
+          </div>
+        </Section>
+
+        <Section title={appLanguage === "vi" ? "Session Logs (claude-mem)" : "Session Logs (claude-mem)"}>
+          <div style={{ padding: "12px 18px" }}>
+            <button onClick={loadClaudeMemLogs} className="btn-ghost" style={{ padding: "7px 14px", fontSize: "0.78rem" }}>
+              {logsLoading
+                ? (appLanguage === "vi" ? "Đang tải..." : "Loading...")
+                : (appLanguage === "vi" ? "Nạp session cũ" : "Load old sessions")}
+            </button>
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              {logsError && (
+                <div style={{ fontSize: "0.75rem", color: "#ef4444" }}>
+                  {appLanguage === "vi" ? "Lỗi tải logs:" : "Failed to load logs:"} {logsError}
+                </div>
+              )}
+              {sessionLogs.map((log) => (
+                <div key={`${log.name}-${log.modifiedAt}`} style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", fontWeight: 600 }}>{log.name}</div>
+                  <div style={{ fontSize: "0.68rem", color: "var(--color-text-muted)", marginTop: 2 }}>{new Date(log.modifiedAt).toLocaleString()}</div>
+                  <div style={{ marginTop: 6, fontSize: "0.72rem", color: "var(--color-text-muted)", whiteSpace: "pre-wrap", maxHeight: 90, overflow: "auto" }}>
+                    {log.preview.slice(0, 400)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </Section>
 
         {/* About */}
