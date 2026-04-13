@@ -48,14 +48,15 @@ struct WebViewContainer: NSViewRepresentable {
 
     private func loadWebUI(_ webView: WKWebView) {
         #if DEBUG
-        // Dev mode: load from Vite dev server
-        if let url = URL(string: "http://localhost:5173") {
+        // Dev mode is opt-in. Set OMNISTATE_USE_DEV_SERVER=1 to force localhost:5173.
+        if ProcessInfo.processInfo.environment["OMNISTATE_USE_DEV_SERVER"] == "1",
+           let url = URL(string: "http://localhost:5173") {
             webView.load(URLRequest(url: url))
             return
         }
         #endif
 
-        // Production: load bundled web assets
+        // Default: load bundled web assets from app resources.
         if let resourcePath = Bundle.main.resourcePath {
             let distPath = "\(resourcePath)/web-dist"
             let indexPath = "\(distPath)/index.html"
@@ -67,7 +68,7 @@ struct WebViewContainer: NSViewRepresentable {
             }
         }
 
-        // Fallback: try localhost
+        // Last fallback: try localhost dev server.
         if let url = URL(string: "http://localhost:5173") {
             webView.load(URLRequest(url: url))
         }
