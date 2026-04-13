@@ -5,8 +5,10 @@ struct ContentView: View {
     @EnvironmentObject var healthChecker: HealthChecker
     @EnvironmentObject var networkMonitor: NetworkMonitor
     @EnvironmentObject var deviceManager: DeviceManager
+    @EnvironmentObject var socketClient: GatewaySocketClient
 
     @State private var selectedDeviceID: String?
+    @State private var promptText = ""
 
     private var statusColor: Color {
         if !gatewayManager.isRunning {
@@ -56,6 +58,7 @@ struct ContentView: View {
                     }
 
                     gatewayCard
+                    assistantCard
                     networkCard
                     devicesCard
 
@@ -74,6 +77,7 @@ struct ContentView: View {
         }
         .task {
             await deviceManager.fetchDevices()
+            socketClient.connect()
         }
     }
 
@@ -140,6 +144,64 @@ struct ContentView: View {
                 }
             }
             .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var assistantCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Assistant")
+                    .font(.title3.weight(.semibold))
+
+                Spacer()
+
+                Label(socketClient.isConnected ? "Connected" : "Disconnected", systemImage: socketClient.isConnected ? "wifi" : "wifi.slash")
+                    .font(.caption)
+                    .foregroundColor(socketClient.isConnected ? .green : .secondary)
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if socketClient.messages.isEmpty {
+                        Text("Nhập yêu cầu để bắt đầu tương tác với gateway giống web chat.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(socketClient.messages) { msg in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(msg.role.uppercased())
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(msg.text)
+                                    .font(.system(.body, design: msg.role == "assistant" ? .monospaced : .default))
+                                    .textSelection(.enabled)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 220, maxHeight: 300)
+
+            HStack(spacing: 8) {
+                TextField("Ví dụ: mở Safari và tìm giá cổ phiếu FPT", text: $promptText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...4)
+
+                Button("Send") {
+                    let text = promptText
+                    promptText = ""
+                    socketClient.sendTask(goal: text)
+                }
+                .disabled(promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))
