@@ -26,6 +26,8 @@ import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
 import { TriggerEngine } from "../triggers/index.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
+import { ApprovalEngine } from "../vision/approval-policy.js";
+import { ClaudeCodeResponder } from "../vision/permission-responder.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -135,10 +137,33 @@ export class OmniStateGateway {
     durationMs: number;
   }> = [];
   private claudeMemStore = new ClaudeMemStore();
+  private approvalEngine?: ApprovalEngine;
+  private claudeCodeResponder?: ClaudeCodeResponder;
 
   constructor(config: GatewayConfig) {
     this.config = config;
     this.orchestrator = new Orchestrator();
+
+    // Wire up permission responder system if approvalPolicy is configured
+    if (config.approvalPolicy) {
+      this.approvalEngine = new ApprovalEngine(config.approvalPolicy);
+      if (config.approvalPolicy.enabled) {
+        this.claudeCodeResponder = new ClaudeCodeResponder(
+          // SurfaceLayer is accessed via the orchestrator's private field;
+          // ClaudeCodeResponder needs a SurfaceLayer — we pass a lazy getter
+          // by constructing with the orchestrator's internal surface reference
+          // cast through the public approval shim fields instead.
+          (this.orchestrator as any).surface,
+          this.approvalEngine,
+          { enabled: true }
+        );
+      }
+      // Wire engine + responder back into the orchestrator so it can use them
+      // in the accessibility recovery path.
+      this.orchestrator.approvalEngine = this.approvalEngine;
+      this.orchestrator.permissionResponder = (this.orchestrator as any).permissionResponder
+        ?? undefined;
+    }
   }
 
   /** Wire in the health monitor for health.query responses. */
@@ -185,6 +210,12 @@ export class OmniStateGateway {
       const taskId = `trigger-${trigger.id}-${crypto.randomUUID()}`;
       this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch(console.error);
     });
+
+    // Start Claude Code permission auto-responder if configured and enabled
+    if (this.claudeCodeResponder) {
+      this.claudeCodeResponder.start();
+      console.log("[OmniState] ClaudeCodeResponder started (permission auto-responder active)");
+    }
   }
 
   /** Gracefully shut down the gateway. */
@@ -204,6 +235,9 @@ export class OmniStateGateway {
     this.siriBridgeServer = null;
     this.wakeManager.stop();
     this.triggerEngine.stop();
+    if (this.claudeCodeResponder?.isRunning) {
+      void this.claudeCodeResponder.stop();
+    }
     console.log("[OmniState] Gateway stopped");
   }
 
@@ -1347,6 +1381,62 @@ export class OmniStateGateway {
       case "trigger.history": {
         const entries = this.triggerEngine.getTriggerHistory(msg.triggerId, msg.limit);
         this.safeSend(ws, { type: "trigger.history.result", triggerId: msg.triggerId, entries } as unknown as ServerMessage);
+        break;
+      }
+
+      // ── Permission responder commands ──────────────────────────────────────
+      case "permission.policy.get": {
+        const policy = this.config.approvalPolicy ?? null;
+        this.safeSend(ws, { type: "permission.policy.report", policy } as unknown as ServerMessage);
+        break;
+      }
+      case "permission.policy.update": {
+        const client = this.clients.get(clientId);
+        if (client?.role !== "ui" && client?.role !== "cli") {
+          this.safeSend(ws, { type: "error", message: "Admin role required to update permission policy" });
+          break;
+        }
+        // Merge the incoming patch into config (runtime only — not persisted to disk)
+        const patch = (msg as unknown as { policy: Record<string, unknown> }).policy ?? {};
+        (this.config as any).approvalPolicy = { ...(this.config.approvalPolicy ?? {}), ...patch };
+        if (this.approvalEngine) {
+          // Re-create the engine with the updated policy
+          this.approvalEngine = new ApprovalEngine(this.config.approvalPolicy!);
+          this.orchestrator.approvalEngine = this.approvalEngine;
+          if (this.claudeCodeResponder) {
+            await this.claudeCodeResponder.stop();
+            this.claudeCodeResponder = new ClaudeCodeResponder(
+              (this.orchestrator as any).surface,
+              this.approvalEngine,
+              { enabled: this.config.approvalPolicy?.enabled ?? false }
+            );
+            if (this.config.approvalPolicy?.enabled) this.claudeCodeResponder.start();
+          }
+        }
+        this.safeSend(ws, { type: "permission.policy.report", policy: this.config.approvalPolicy } as unknown as ServerMessage);
+        break;
+      }
+      case "permission.history": {
+        const history = this.claudeCodeResponder?.getHistory() ?? [];
+        this.safeSend(ws, { type: "permission.history.result", history } as unknown as ServerMessage);
+        break;
+      }
+      case "permission.start": {
+        if (!this.claudeCodeResponder) {
+          this.safeSend(ws, { type: "error", message: "No permission responder configured. Set approvalPolicy in config." });
+          break;
+        }
+        if (!this.claudeCodeResponder.isRunning) {
+          this.claudeCodeResponder.start();
+        }
+        this.safeSend(ws, { type: "permission.status", running: this.claudeCodeResponder.isRunning } as unknown as ServerMessage);
+        break;
+      }
+      case "permission.stop": {
+        if (this.claudeCodeResponder?.isRunning) {
+          await this.claudeCodeResponder.stop();
+        }
+        this.safeSend(ws, { type: "permission.status", running: false } as unknown as ServerMessage);
         break;
       }
 

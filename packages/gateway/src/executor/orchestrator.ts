@@ -11,6 +11,8 @@ import { AdvancedHealthMonitor } from "../health/advanced-health.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import * as HybridTooling from "../hybrid/tooling.js";
 import { AdvancedVision } from "../vision/advanced.js";
+import { ApprovalEngine } from "../vision/approval-policy.js";
+import { PermissionResponder, ClaudeCodeResponder } from "../vision/permission-responder.js";
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,6 +36,11 @@ export class Orchestrator {
   private hybridTools: typeof HybridTooling;
   private vision: AdvancedVision;
   private activeMacroSessionId: string | null;
+
+  // Permission responder system (optional — wired in when approvalPolicy is configured)
+  approvalEngine?: ApprovalEngine;
+  permissionResponder?: PermissionResponder;
+  claudeCodeResponder?: ClaudeCodeResponder;
 
   constructor() {
     this.queue = new ExecutionQueue();
@@ -2034,9 +2041,35 @@ end tell`);
     // Mouse/keyboard/accessibility actions require Accessibility permission.
     const requiresAccessibility = tool.startsWith("ui.");
     if (requiresAccessibility && !this.surface.isAccessibilityTrusted()) {
-      throw new Error(
-        "Accessibility permission is not granted. Enable System Settings -> Privacy & Security -> Accessibility for terminal/Node, then restart OmniState gateway."
-      );
+      // Try to detect if there's a permission dialog on screen we can auto-approve
+      if (this.permissionResponder) {
+        const detected = await this.vision.detectPermissionDialog();
+        if (detected && detected.type === 'macos_system') {
+          const decision = this.approvalEngine!.evaluate({
+            app: detected.app,
+            resource: detected.resource,
+            action: detected.action,
+            dialogType: detected.type,
+            rawText: detected.rawText,
+            timestamp: new Date(),
+          });
+          if (decision.decision === 'allow') {
+            await this.vision.dismissModal('allow');
+            // Wait a moment for permission to take effect
+            await new Promise(r => setTimeout(r, 1000));
+            // Re-check
+            if (!this.surface.isAccessibilityTrusted()) {
+              throw new Error("Permission dialog was approved but accessibility still not granted. Please enable manually in System Settings → Privacy & Security → Accessibility.");
+            }
+          } else {
+            throw new Error(`Accessibility permission needed but policy denied auto-approval: ${decision.reason}`);
+          }
+        } else {
+          throw new Error("Accessibility permission is not granted. Enable in System Settings → Privacy & Security → Accessibility.");
+        }
+      } else {
+        throw new Error("Accessibility permission is not granted. Enable in System Settings → Privacy & Security → Accessibility.");
+      }
     }
 
     switch (tool) {

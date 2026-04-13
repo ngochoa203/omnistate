@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ApprovalPolicySchema } from "../vision/approval-policy.js";
 
 /** Gateway configuration schema, validated at startup with Zod. */
 export const gatewayConfigSchema = z.object({
@@ -52,6 +53,8 @@ export const gatewayConfigSchema = z.object({
     tailscaleOnly: z.boolean().default(true), // reject non-Tailscale remote IPs
     allowedDevices: z.number().int().min(1).default(5), // max registered devices
   }).default({}),
+
+  approvalPolicy: ApprovalPolicySchema.optional(),
 });
 
 export type GatewayConfig = z.infer<typeof gatewayConfigSchema>;

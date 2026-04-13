@@ -20,7 +20,12 @@ export type ClientMessage =
   | VibeVoiceStartMessage
   | VibeVoiceChunkMessage
   | VibeVoiceEndMessage
-  | SystemDashboardMessage;
+  | SystemDashboardMessage
+  | PermissionPolicyGetMessage
+  | PermissionPolicyUpdateMessage
+  | PermissionHistoryMessage
+  | PermissionStartMessage
+  | PermissionStopMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -166,6 +171,30 @@ export interface SystemDashboardMessage {
   id: string;
 }
 
+// ── Permission Responder ──────────────────────────────────────────────────────
+
+export interface PermissionPolicyGetMessage {
+  type: "permission.policy.get";
+}
+
+export interface PermissionPolicyUpdateMessage {
+  type: "permission.policy.update";
+  /** Partial policy fields to merge into the running config. */
+  policy: Record<string, unknown>;
+}
+
+export interface PermissionHistoryMessage {
+  type: "permission.history";
+}
+
+export interface PermissionStartMessage {
+  type: "permission.start";
+}
+
+export interface PermissionStopMessage {
+  type: "permission.stop";
+}
+
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
@@ -191,7 +220,10 @@ export type ServerMessage =
   | VibeVoicePartialMessage
   | VibeVoiceTranscriptMessage
   | VibeVoiceErrorMessage
-  | SystemInfoMessage;
+  | SystemInfoMessage
+  | PermissionPolicyReportMessage
+  | PermissionHistoryResultMessage
+  | PermissionStatusMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -346,6 +378,31 @@ export interface SystemInfoMessage {
     hostname: string;
     error?: string;
   };
+}
+
+// ── Permission Responder (server → client) ────────────────────────────────────
+
+export interface PermissionPolicyReportMessage {
+  type: "permission.policy.report";
+  /** Current approval policy, or null if not configured. */
+  policy: Record<string, unknown> | null;
+}
+
+export interface PermissionHistoryResultMessage {
+  type: "permission.history.result";
+  /** Recent approval events from the ClaudeCodeResponder. */
+  history: Array<{
+    timestamp: string;
+    promptLine: string;
+    action: "allowed" | "denied" | "deferred" | "error";
+    reason: string;
+  }>;
+}
+
+export interface PermissionStatusMessage {
+  type: "permission.status";
+  /** Whether the auto-responder is currently polling. */
+  running: boolean;
 }
 
 // ─── Shared supporting types ─────────────────────────────────────────────────

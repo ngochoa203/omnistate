@@ -22,7 +22,11 @@
     "run:all": "node scripts/run-all.mjs",
     "run:all:one-port": "node scripts/run-all.mjs",
     "usecase:report": "node scripts/usecase-report.mjs",
-    "test:planner": "pnpm --filter @omnistate/gateway test:planner"
+    "test:planner": "pnpm --filter @omnistate/gateway test:planner",
+    "macos:build-web": "pnpm --filter web build && bash apps/macos/build-web.sh",
+    "macos:dev": "cd apps/macos/OmniState && swift build && .build/debug/OmniState",
+    "macos:build": "pnpm run macos:build-web && cd apps/macos/OmniState && swift build -c release",
+    "macos:run": "cd apps/macos/OmniState && .build/release/OmniState"
   },
   "devDependencies": {
     "tsx": "^4.21.0"
