@@ -10,9 +10,9 @@ DIST_APP="$APP_ROOT/dist/$APP_NAME.app"
 CONTENTS_DIR="$DIST_APP/Contents"
 
 echo "[1/5] Build web assets"
-bash "$SCRIPT_DIR/build-web.sh"
+echo "Skipping web asset build (native UI mode)"
 
-echo "[2/5] Build release binary"
+echo "[2/5] Build release binary (native)"
 swift build -c release --package-path "$APP_ROOT"
 
 echo "[3/5] Package .app bundle"
