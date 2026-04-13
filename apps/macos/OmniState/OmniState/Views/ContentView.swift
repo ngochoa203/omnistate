@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 // MARK: - Data models
@@ -966,33 +967,97 @@ struct ContentView: View {
         let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         let role = parts.first.map(String.init) ?? "SYSTEM"
         let text = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : line
-        let isUser = role.lowercased() == "user"
-        let isSystem = role.lowercased() == "system"
+        let normalizedRole = role.lowercased()
+        let isUser = normalizedRole == "user"
+        let isSystem = normalizedRole == "system"
+        let isAssistant = normalizedRole == "assistant"
         let bubbleColor: Color = isUser ? CyberColor.blue : isSystem ? CyberColor.orange : CyberColor.cyan
+        let structuredReply = isAssistant && isStructuredReplyText(text)
+        let renderedText = structuredReply ? prettifyStructuredReply(text) : text
 
         return HStack {
             if isUser { Spacer(minLength: 60) }
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 3) {
-                Text(role.uppercased())
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(bubbleColor.opacity(0.7))
+                HStack(spacing: 6) {
+                    if isAssistant {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.cyan)
+                    } else if isSystem {
+                        Image(systemName: "gearshape.2.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.orange)
+                    } else {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.blue)
+                    }
 
-                Text(text)
-                    .textSelection(.enabled)
-                    .font(.system(size: 13, weight: .regular, design: role.lowercased() == "assistant" ? .monospaced : .default))
-                    .foregroundColor(CyberColor.textPrimary)
-                    .padding(10)
-                    .background(isUser ? CyberColor.blue.opacity(0.12) : CyberColor.cardBg)
-                    .clipShape(RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous)
-                            .stroke(bubbleColor.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: bubbleColor.opacity(0.08), radius: 8)
+                    Text(role.uppercased())
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(bubbleColor.opacity(0.78))
+                }
+
+                Group {
+                    if structuredReply {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(renderedText)
+                                .textSelection(.enabled)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .lineSpacing(2)
+                                .foregroundColor(CyberColor.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .padding(10)
+                                .background(Color.black.opacity(0.22))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(CyberColor.cyan.opacity(0.24), lineWidth: 1)
+                                )
+                        }
+                    } else {
+                        Text(renderedText)
+                            .textSelection(.enabled)
+                            .font(.system(size: 13, weight: .regular, design: isAssistant ? .monospaced : .default))
+                            .lineSpacing(1.8)
+                            .foregroundColor(CyberColor.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .background(isUser ? CyberColor.blue.opacity(0.12) : CyberColor.cardBg)
+                            .clipShape(RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous)
+                                    .stroke(bubbleColor.opacity(0.2), lineWidth: 1)
+                            )
+                            .shadow(color: bubbleColor.opacity(0.08), radius: 8)
+                    }
+                }
+                .frame(maxWidth: isUser ? 420 : 700, alignment: .leading)
             }
 
             if !isUser { Spacer(minLength: 60) }
+        }
+    }
+
+    private func isStructuredReplyText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") { return true }
+        if text.contains("\n") && (text.contains(":") || text.contains("{") || text.contains("}")) { return true }
+        return false
+    }
+
+    private func prettifyStructuredReply(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8) else { return text }
+
+        do {
+            let object = try JSONSerialization.jsonObject(with: data)
+            let prettyData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            return String(data: prettyData, encoding: .utf8) ?? text
+        } catch {
+            return text
         }
     }
 
