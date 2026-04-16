@@ -623,8 +623,8 @@ export class DeepLayer {
 
   // ── Core File Operations ────────────────────────────────────────────────
 
-  /** Read file content as string. */
-  async readFile(filePath: string, encoding: BufferEncoding = "utf-8"): Promise<string> {
+  /** Read file content as string (async variant). */
+  async readFileAsync(filePath: string, encoding: BufferEncoding = "utf-8"): Promise<string> {
     return fsPromises.readFile(filePath, { encoding });
   }
 
@@ -633,8 +633,8 @@ export class DeepLayer {
     return fsPromises.readFile(filePath);
   }
 
-  /** Write string content to file (creates parent dirs if needed). */
-  async writeFile(filePath: string, content: string, encoding: BufferEncoding = "utf-8"): Promise<void> {
+  /** Write string content to file (async variant, creates parent dirs if needed). */
+  async writeFileAsync(filePath: string, content: string, encoding: BufferEncoding = "utf-8"): Promise<void> {
     await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
     await fsPromises.writeFile(filePath, content, { encoding });
   }
@@ -660,11 +660,11 @@ export class DeepLayer {
     await fsPromises.rename(src, dest);
   }
 
-  /** Delete file or directory (recursive). */
+  /** Delete file or directory (recursive when requested). */
   async deleteFile(filePath: string, recursive = false): Promise<void> {
     const stat = await fsPromises.lstat(filePath);
     if (stat.isDirectory()) {
-      await fsPromises.rm(filePath, { recursive: true, force: true });
+      await fsPromises.rm(filePath, { recursive, force: recursive });
     } else {
       await fsPromises.unlink(filePath);
     }
@@ -675,8 +675,8 @@ export class DeepLayer {
     await fsPromises.mkdir(dirPath, { recursive: true });
   }
 
-  /** Check if file or directory exists. */
-  async fileExists(filePath: string): Promise<boolean> {
+  /** Check if file or directory exists (async variant). */
+  async fileExistsAsync(filePath: string): Promise<boolean> {
     try {
       await fsPromises.access(filePath);
       return true;
@@ -714,20 +714,6 @@ export class DeepLayer {
     }
   }
 
-  /** Get system info. */
-  getSystemInfo(): SystemInfo {
-    return {
-      hostname: hostname(),
-      platform: platform() === "darwin" ? "macos" : platform() as any,
-      arch: arch(),
-      cpuModel: cpus()[0]?.model ?? "unknown",
-      cpuCores: cpus().length,
-      totalMemoryMB: Math.round(totalmem() / 1024 / 1024),
-      freeMemoryMB: Math.round(freemem() / 1024 / 1024),
-      nodeVersion: process.version,
-      uptime: process.uptime(),
-    };
-  }
 }
 
 // ------------------------------------------------------------------
