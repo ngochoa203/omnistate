@@ -56,23 +56,50 @@ omnistate/
     └── STATUS.md        # Implementation status
 ```
 
-## Quick Start
+## Quick Start (Non-Tech Friendly)
 
-**Prerequisites:** Node.js 22+, Rust toolchain, pnpm
+### 1) Clone and setup once
+
+**Prerequisites:** Node.js 22+, pnpm.
 
 ```bash
 git clone https://github.com/ngochoa203/omnistate.git
 cd omnistate
+pnpm app:init
+pnpm app:config
+```
 
-pnpm install
-cp .env.example .env   # add your API key
+Then open `.env` and add your API key (`ANTHROPIC_API_KEY=...`).
 
-pnpm build:native      # compile Rust bindings
+### 2) Build the app you need
 
-omnistate start        # start gateway daemon
-omnistate run "check disk space"
+```bash
+# Web dashboard
+pnpm app:build:web
 
-pnpm run:all           # gateway + web dashboard + voice panel
+# macOS native app (SwiftUI)
+pnpm app:build:macos
+
+# Android companion app (requires Android Studio/SDK)
+pnpm app:build:android
+
+# iOS companion app (requires Xcode)
+pnpm app:build:ios
+```
+
+### 3) Run local dev stack (gateway + web)
+
+```bash
+pnpm run:all
+```
+
+### Useful aliases
+
+```bash
+pnpm app:quickstart   # init + config + build web
+pnpm app:run:macos    # package and open OmniState.app
+pnpm app:build:gateway
+pnpm app:build:cli
 ```
 
 **Run tests:**
