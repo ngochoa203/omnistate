@@ -1,29 +1,32 @@
 import { exec, execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile, readdir, stat, writeFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ClientRole, RuntimeConfigSetMessage } from "./protocol.js";
+import type { ClientMessage, ServerMessage, ClientRole, RuntimeConfigSetMessage, TaskAttachment } from "./protocol.js";
 import { authenticateConnection } from "./auth.js";
 import { createAuthRoutes, parseBody, jsonResponse } from "../http/auth-routes.js";
 import { createVoiceRoutes } from "../http/voice-routes.js";
 import { createNetworkRoutes } from "../http/network-routes.js";
 import { createDeviceRoutes } from "../http/device-routes.js";
+import { checkRateLimit } from "../http/rate-limiter.js";
 import { classifyIntent, planFromIntent } from "../planner/intent.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
 import { HealthMonitor } from "../health/monitor.js";
 import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
+import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
+import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { TriggerEngine } from "../triggers/index.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
@@ -33,6 +36,25 @@ const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
 const speechbrainScriptPath = fileURLToPath(new URL("../../scripts/speechbrain_voiceprint.py", import.meta.url));
+const allowedFileRoots = [
+  tmpdir(),
+].filter(Boolean);
+
+function isAllowedFilePath(filePath: string): boolean {
+  const resolvedPath = resolve(filePath);
+  return allowedFileRoots.some((root) => resolvedPath.startsWith(resolve(root) + "/") || resolvedPath === resolve(root));
+}
+
+function mimeForPath(filePath: string): string {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".txt" || ext === ".log" || ext === ".md") return "text/plain; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}
 
 type KnownAudioFormat = "wav" | "webm" | "ogg" | "mp3" | "unknown";
 
@@ -161,8 +183,7 @@ export class OmniStateGateway {
       // Wire engine + responder back into the orchestrator so it can use them
       // in the accessibility recovery path.
       this.orchestrator.approvalEngine = this.approvalEngine;
-      this.orchestrator.permissionResponder = (this.orchestrator as any).permissionResponder
-        ?? undefined;
+      this.orchestrator.permissionResponder = this.claudeCodeResponder;
     }
   }
 
@@ -335,6 +356,11 @@ export class OmniStateGateway {
       return;
     }
 
+    // Rate limiting — check before processing any route
+    if (!checkRateLimit(req, res, requestPath)) {
+      return; // 429 already sent
+    }
+
     // Auth REST routes
     const authRoutes = createAuthRoutes();
     const authHandler = authRoutes.match(req.method!, requestPath);
@@ -427,6 +453,159 @@ export class OmniStateGateway {
         jsonResponse(res, 200, result);
       } catch (err: any) {
         jsonResponse(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // POST /api/voice/clone/train — store enrollment samples and generate RTVC embedding
+    if (req.method === "POST" && requestPath === "/api/voice/clone/train") {
+      const body = await parseBody(req);
+      const profileId = String(body?.profileId ?? "").trim();
+      const audio = String(body?.audio ?? "").trim();
+      const format = String(body?.format ?? "wav").trim();
+      const sampleIndex = Number(body?.sampleIndex ?? 0);
+
+      if (!profileId) {
+        jsonResponse(res, 400, { error: "Missing profileId" });
+        return;
+      }
+
+      if (!audio) {
+        jsonResponse(res, 400, { error: "Missing audio" });
+        return;
+      }
+
+      try {
+        const result = await trainRtvcProfile({
+          profileId,
+          audioBase64: audio,
+          format,
+          sampleIndex: Number.isFinite(sampleIndex) ? sampleIndex : 0,
+        });
+        if (!result.ok) {
+          jsonResponse(res, 500, {
+            error: "Voice clone training failed",
+            details: result.warning ?? "Unknown training error",
+            profileId: result.profileId,
+            samplePath: result.samplePath,
+          });
+          return;
+        }
+        jsonResponse(res, 200, result);
+      } catch (err: any) {
+        jsonResponse(res, 500, {
+          error: "Voice clone training failed",
+          details: err?.message ?? String(err),
+        });
+      }
+      return;
+    }
+
+    // POST /api/voice/clone/tts — proxy request to external voice clone inference service
+    if (req.method === "POST" && (requestPath === "/api/voice/clone/tts" || requestPath === "/voice/clone/tts")) {
+      const body = await parseBody(req);
+      const text = String(body?.text ?? "").trim();
+      const language = String(body?.language ?? "vi").trim() || "vi";
+      const profileId = String(body?.profileId ?? "").trim() || undefined;
+      const endpoint = process.env.OMNISTATE_VOICE_CLONE_TTS_URL?.trim();
+
+      if (!text) {
+        jsonResponse(res, 400, { error: "Missing text" });
+        return;
+      }
+
+      if (!endpoint) {
+        try {
+          const local = await synthesizeRtvcSpeech({ text, language, profileId });
+          res.writeHead(200, {
+            "Content-Type": local.contentType,
+            "Content-Length": String(local.audio.length),
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(local.audio);
+        } catch (err: any) {
+          jsonResponse(res, 503, {
+            error: "Voice clone endpoint is not configured and local RTVC synthesis failed",
+            hint: "Set OMNISTATE_VOICE_CLONE_TTS_URL or configure OMNISTATE_RTC_REPO_DIR (+ optional OMNISTATE_VOICE_CLONE_SPEAKER_WAV)",
+            details: err?.message ?? String(err),
+          });
+        }
+        return;
+      }
+
+      try {
+        const upstream = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ text, language }),
+        });
+
+        if (!upstream.ok) {
+          const errText = await upstream.text();
+          jsonResponse(res, 502, {
+            error: `Voice clone provider error (${upstream.status})`,
+            details: errText.slice(0, 2000),
+          });
+          return;
+        }
+
+        const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
+        if (contentType.startsWith("audio/")) {
+          const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Content-Length": String(audioBuffer.length),
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(audioBuffer);
+          return;
+        }
+
+        const json = await upstream.json();
+        jsonResponse(res, 200, json);
+      } catch (err: any) {
+        jsonResponse(res, 502, {
+          error: "Voice clone provider request failed",
+          details: err?.message ?? String(err),
+        });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && (requestPath === "/api/files/read" || requestPath === "/files/read")) {
+      if (!isLocalRequest) {
+        jsonResponse(res, 403, { error: "Only local requests are allowed" });
+        return;
+      }
+
+      try {
+        const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+        const requestedPath = urlObj.searchParams.get("path") ?? "";
+        if (!requestedPath) {
+          jsonResponse(res, 400, { error: "Missing path" });
+          return;
+        }
+
+        const resolvedPath = resolve(requestedPath);
+        if (!isAllowedFilePath(resolvedPath)) {
+          jsonResponse(res, 403, { error: "File path is not allowed" });
+          return;
+        }
+
+        const file = await readFile(resolvedPath);
+        const fileInfo = await stat(resolvedPath);
+        res.writeHead(200, {
+          "Content-Type": mimeForPath(resolvedPath),
+          "Content-Length": String(fileInfo.size),
+          "Cache-Control": "no-store",
+        });
+        res.end(file);
+      } catch (err: any) {
+        jsonResponse(res, 404, { error: err?.message ?? "File not found" });
       }
       return;
     }
@@ -864,7 +1043,18 @@ export class OmniStateGateway {
         const response: ServerMessage = {
           type: "connected",
           clientId,
-          capabilities: ["task", "health", "fleet", "llm.preflight", "claude.mem"],
+          capabilities: [
+            "task",
+            "health",
+            "system.dashboard",
+            "history.query",
+            "runtime.config",
+            "voice.transcribe",
+            "triggers",
+            "fleet",
+            "llm.preflight",
+            "claude.mem",
+          ],
         };
         ws.send(JSON.stringify(response));
         break;
@@ -899,6 +1089,8 @@ export class OmniStateGateway {
 
       case "task": {
         const taskId = crypto.randomUUID();
+        const requestedMode = String(((msg as { mode?: string }).mode ?? "auto")).toLowerCase();
+        const taskGoal = this.buildGoalWithAttachments(msg.goal, (msg as { attachments?: TaskAttachment[] }).attachments);
 
         const commandResult = tryHandleGatewayCommand(msg.goal, {
           clearTaskHistory: () => this.clearTaskHistory(),
@@ -934,6 +1126,75 @@ export class OmniStateGateway {
           return;
         }
 
+        const shouldChat = requestedMode === "chat"
+          ? true
+          : requestedMode === "task"
+            ? false
+            : await this.shouldUseChatMode(msg.goal);
+
+        if (shouldChat) {
+          const accepted: ServerMessage = {
+            type: "task.accepted",
+            taskId,
+            goal: msg.goal,
+          };
+          this.safeSend(ws, accepted);
+
+          const userGoal = this.unwrapUserGoal(taskGoal);
+          try {
+            const llm = await requestLlmTextWithFallback({
+              system:
+                "You are OmniState chat assistant. Reply naturally, concise, and helpful. If user asks simple math, answer directly with result.",
+              user: userGoal,
+              maxTokens: 220,
+            });
+
+            this.safeSend(ws, {
+              type: "task.complete",
+              taskId,
+              result: {
+                goal: msg.goal,
+                mode: "chat",
+                route: requestedMode,
+                providerId: llm.providerId,
+                model: llm.model,
+                output: llm.text,
+                attachmentCount: Array.isArray((msg as { attachments?: TaskAttachment[] }).attachments)
+                  ? ((msg as { attachments?: TaskAttachment[] }).attachments?.length ?? 0)
+                  : 0,
+              },
+            } as ServerMessage);
+
+            this.taskHistory.unshift({
+              taskId,
+              goal: msg.goal,
+              status: "complete",
+              output: llm.text,
+              intentType: "chat-mode",
+              timestamp: new Date().toISOString(),
+              durationMs: 0,
+            });
+            if (this.taskHistory.length > 100) this.taskHistory.pop();
+            incrementSessionUsage();
+            return;
+          } catch (err) {
+            const fallback = this.fallbackUserFacingOutput(taskGoal, "system-query") ?? "Mình đã nhận câu hỏi, nhưng hiện tại chưa lấy được câu trả lời từ model.";
+            this.safeSend(ws, {
+              type: "task.complete",
+              taskId,
+              result: {
+                goal: msg.goal,
+                mode: "chat",
+                route: requestedMode,
+                output: fallback,
+                warning: err instanceof Error ? err.message : String(err),
+              },
+            } as ServerMessage);
+            incrementSessionUsage();
+            return;
+          }
+        }
+
         // Acknowledge immediately
         const accepted: ServerMessage = {
           type: "task.accepted",
@@ -943,7 +1204,7 @@ export class OmniStateGateway {
         ws.send(JSON.stringify(accepted));
 
         // Run pipeline async — stream progress to client
-        this.executeTaskPipeline(taskId, msg.goal, msg.layer, ws).catch(
+        this.executeTaskPipeline(taskId, taskGoal, msg.layer, ws).catch(
           (err) => {
             const errMsg: ServerMessage = {
               type: "task.error",
@@ -1603,20 +1864,21 @@ export class OmniStateGateway {
     }
 
     // 5. All steps complete — aggregate output
-    // Collect all "output" fields from step data for the final result
-    const outputs = allStepData
-      .map((d) => d.output)
-      .filter((o): o is string => typeof o === "string");
+    // Prefer explicit textual fields returned by steps, then fall back to user goal.
+    const outputs = allStepData.flatMap((d) => this.extractUserFacingTexts(d));
+    const structuredSummary = this.summarizeStructuredStepData(allStepData, goal, intent.type);
+    const combinedOutput = outputs.join("\n").trim() || structuredSummary || this.fallbackUserFacingOutput(goal, intent.type);
 
     this.safeSend(ws, {
       type: "task.complete",
       taskId,
       result: {
         goal,
+        mode: "task",
         stepsCompleted: totalSteps,
         intentType: intent.type,
         confidence: intent.confidence,
-        output: outputs.join("\n") || undefined,
+        output: combinedOutput || undefined,
         stepData: allStepData,
       },
     } as ServerMessage);
@@ -1625,7 +1887,7 @@ export class OmniStateGateway {
       taskId,
       goal,
       status: "complete",
-      output: outputs.join("\n") || undefined,
+      output: combinedOutput || undefined,
       intentType: intent.type,
       timestamp: new Date().toISOString(),
       durationMs: Date.now() - startMs,
@@ -1633,6 +1895,203 @@ export class OmniStateGateway {
     if (this.taskHistory.length > 100) this.taskHistory.pop();
 
     incrementSessionUsage();
+  }
+
+  private extractUserFacingTexts(stepData: Record<string, unknown>): string[] {
+    const preferredKeys = ["output", "message", "response", "answer", "summary", "text", "final"];
+    const results: string[] = [];
+
+    const pushIfValid = (value: unknown): void => {
+      if (typeof value !== "string") return;
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      if (trimmed.includes("[Native Session Context]")) return;
+      if (trimmed.includes("sessionMemorySummary") && trimmed.includes("[Reply Preference]")) return;
+      results.push(trimmed);
+    };
+
+    for (const key of preferredKeys) {
+      pushIfValid(stepData[key]);
+    }
+
+    // Also inspect one level of nested objects for common text keys.
+    for (const value of Object.values(stepData)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const nested = value as Record<string, unknown>;
+      for (const key of preferredKeys) {
+        pushIfValid(nested[key]);
+      }
+    }
+
+    return Array.from(new Set(results));
+  }
+
+  private summarizeStructuredStepData(
+    allStepData: Array<Record<string, unknown>>,
+    goal: string,
+    intentType: string,
+  ): string | undefined {
+    if (allStepData.length === 0) return undefined;
+
+    for (const stepData of allStepData) {
+      const info = stepData.info;
+      if (info && typeof info === "object" && !Array.isArray(info)) {
+        const infoText = this.formatSystemInfoSummary(info as Record<string, unknown>);
+        if (infoText) return infoText;
+      }
+
+      const nestedInfo = Object.values(stepData).find(
+        (value) => value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).info,
+      ) as Record<string, unknown> | undefined;
+      if (nestedInfo?.info && typeof nestedInfo.info === "object" && !Array.isArray(nestedInfo.info)) {
+        const infoText = this.formatSystemInfoSummary(nestedInfo.info as Record<string, unknown>);
+        if (infoText) return infoText;
+      }
+
+      const pathKeys = ["screenshotPath", "filePath", "path", "savedTo", "location", "outputPath"];
+      for (const key of pathKeys) {
+        const value = stepData[key];
+        if (typeof value === "string" && value.trim()) {
+          const path = value.trim();
+          if (/(screenshot|màn\s*hình|man\s*hinh|capture|chụp|chup)/i.test(goal)) {
+            return `Đã chụp màn hình và lưu tại: ${path}`;
+          }
+          return `Đã hoàn tất yêu cầu. Kết quả được lưu tại: ${path}`;
+        }
+      }
+
+      if (stepData.success === true) {
+        const userGoal = this.unwrapUserGoal(goal);
+        if (intentType === "system-query") {
+          return `Đã chạy truy vấn hệ thống cho yêu cầu: ${userGoal}`;
+        }
+        return `Đã hoàn tất xử lý cho yêu cầu: ${userGoal}`;
+      }
+    }
+
+    return undefined;
+  }
+
+  private formatSystemInfoSummary(info: Record<string, unknown>): string | undefined {
+    const hostname = typeof info.hostname === "string" ? info.hostname : undefined;
+    const cpuModel = typeof info.cpuModel === "string" ? info.cpuModel : undefined;
+    const cpuCores = typeof info.cpuCores === "number" ? info.cpuCores : undefined;
+    const totalMemoryMB = typeof info.totalMemoryMB === "number" ? info.totalMemoryMB : undefined;
+    const freeMemoryMB = typeof info.freeMemoryMB === "number" ? info.freeMemoryMB : undefined;
+    const platform = typeof info.platform === "string" ? info.platform : undefined;
+
+    const parts: string[] = [];
+    if (hostname) parts.push(`Máy: ${hostname}`);
+    if (platform) parts.push(`Nền tảng: ${platform}`);
+    if (cpuModel) {
+      const cores = cpuCores ? ` (${cpuCores} cores)` : "";
+      parts.push(`CPU: ${cpuModel}${cores}`);
+    }
+    if (typeof totalMemoryMB === "number") {
+      if (typeof freeMemoryMB === "number") {
+        const usedMemoryMB = Math.max(0, totalMemoryMB - freeMemoryMB);
+        parts.push(`RAM: ${usedMemoryMB}/${totalMemoryMB} MB đang dùng`);
+      } else {
+        parts.push(`RAM tổng: ${totalMemoryMB} MB`);
+      }
+    }
+
+    return parts.length > 0 ? parts.join(" | ") : undefined;
+  }
+
+  private unwrapUserGoal(goal: string): string {
+    const match = goal.match(/\[User Goal\]([\s\S]*)$/);
+    return (match?.[1] ?? goal).trim();
+  }
+
+  private buildGoalWithAttachments(goal: string, attachments?: TaskAttachment[]): string {
+    if (!Array.isArray(attachments) || attachments.length === 0) return goal;
+
+    const chunks = attachments.slice(0, 8).map((att, index) => {
+      const head = `- Attachment ${index + 1}: ${att.name} (${att.mimeType || "unknown"}, ${att.size} bytes, kind=${att.kind})`;
+      if (typeof att.textPreview === "string" && att.textPreview.trim()) {
+        return `${head}\n  Preview: ${att.textPreview.trim().slice(0, 1500)}`;
+      }
+      if (att.kind === "image") {
+        return `${head}\n  Note: image attached by user (binary payload available).`;
+      }
+      return head;
+    });
+
+    return `${goal}\n\n[Attachment Context]\n${chunks.join("\n")}`;
+  }
+
+  private async shouldUseChatMode(goal: string): Promise<boolean> {
+    const text = this.unwrapUserGoal(goal).toLowerCase();
+    if (!text) return false;
+
+    const taskVerbRegex = /(mở|mo\b|đóng|dong\b|tắt|tat\b|bật|bat\b|kiểm tra|kiem tra|check\b|status\b|lấy|lay\b|xem\b|show\b|xoá|xoa\b|xóa|gửi|gui\b|chạy|chay\b|run\b|open\b|close\b|shutdown\b|restart\b|kill\b|install\b|uninstall\b|fetch\b|download\b|upload\b|execute\b|benchmark\b|profile\b|scan\b|sync\b|chụp|chup\b|ghi\s+âm|ghi\sam\b|screenshot\b|capture\b|chup\s+man\s*hinh|chụp\s+màn\s*hình|cpu\b|ram\b|battery\b|pin\b|wifi\b|bluetooth\b|volume\b|brightness\b|permission\b|quyền|quyen\b|process\b|tiến\s+trình|tien\s+trinh|window\b|tab\b)/;
+    const chatCueRegex = /(xin\s+chào|xin\s+chao|chào|chao\b|hello\b|hi\b|bạn\s+nghĩ\s+gì|ban\s+nghi\s+gi|tại\s+sao|tai\s+sao|kể\s+cho|ke\s+cho|giải\s+thích|giai\s+thich|là\s+gì|la\s+gi|1\s*[+\-*/x]\s*1|2\s*[+\-*/x]\s*2)/;
+
+    const hasTaskCue = taskVerbRegex.test(text);
+    const hasChatCue = chatCueRegex.test(text);
+
+    // Strong default: actionable verbs should go to task mode.
+    if (hasTaskCue) {
+      return false;
+    }
+    if (hasChatCue) {
+      return true;
+    }
+
+    // Ambiguous intent: use a tiny LLM classification call on the configured provider chain.
+    try {
+      const classify = await requestLlmTextWithFallback({
+        system:
+          "Classify user input into TASK or MODE. TASK means perform system actions or fetch machine/runtime data. MODE means conversational Q&A, greeting, explanation, or general chat. Reply exactly one token: TASK or MODE.",
+        user: text,
+        maxTokens: 4,
+      });
+      const label = classify.text.trim().toUpperCase();
+      if (label.startsWith("TASK")) {
+        return false;
+      }
+      if (label.startsWith("MODE")) {
+        return true;
+      }
+    } catch {
+      // Fall through to conservative heuristic below.
+    }
+
+    return !hasTaskCue;
+  }
+
+  private fallbackUserFacingOutput(goal: string, intentType: string): string | undefined {
+    const match = goal.match(/\[User Goal\]([\s\S]*)$/);
+    const userGoal = (match?.[1] ?? goal).trim();
+    if (!userGoal) return undefined;
+
+    if (intentType === "system-query") {
+      const normalized = userGoal.toLowerCase();
+
+      if (["hi", "hello", "xin chao", "xin chào", "chao", "chào"].includes(normalized)) {
+        return "Xin chào! Mình đang sẵn sàng hỗ trợ bạn. Bạn muốn mình giúp gì tiếp theo?";
+      }
+
+      const math = normalized.replace(/\s+/g, "").match(/^(-?\d+(?:\.\d+)?)([+\-*/x])(-?\d+(?:\.\d+)?)(=|\?)?$/);
+      if (math) {
+        const left = Number.parseFloat(math[1]);
+        const op = math[2];
+        const right = Number.parseFloat(math[3]);
+        const result = op === "+" ? left + right
+          : op === "-" ? left - right
+          : (op === "*" || op === "x") ? left * right
+          : right === 0 ? Number.NaN : left / right;
+        if (Number.isFinite(result)) {
+          return `${left} ${op === "x" ? "*" : op} ${right} = ${result}`;
+        }
+        return "Không thể tính phép chia cho 0.";
+      }
+
+      return `Mình đã nhận câu hỏi: \"${userGoal}\". Hiện luồng trả lời của gateway chưa trả nội dung cuối, vui lòng thử lại hoặc đổi model/provider.`;
+    }
+
+    return `Đã hoàn tất xử lý cho yêu cầu: ${userGoal}`;
   }
 
   private clearTaskHistory(): number {

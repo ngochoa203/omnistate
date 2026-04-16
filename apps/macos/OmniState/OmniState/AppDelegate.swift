@@ -1,10 +1,13 @@
 import AppKit
-import UserNotifications
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyManager: HotkeyManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            await PermissionBootstrapper.shared.requestAllInitialPermissions(force: true)
+        }
+
         // Auto-start gateway
         GatewayManager.shared.start()
         HealthChecker.shared.startPolling()
@@ -18,13 +21,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Register global hotkey ⌘⇧O
         hotkeyManager = HotkeyManager()
         hotkeyManager?.register()
-
-        // Request notification permission
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error = error {
-                print("[OmniState] Notification permission error: \(error)")
-            }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -6,59 +6,100 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-flight runs for the same branch/PR on new push
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Rust — macOS-only crates (screencapturekit, core-graphics, a11y) need
+  # macOS runners.  ubuntu/windows only check cross-platform crates.
+  # ──────────────────────────────────────────────────────────────────────────
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          # Full workspace — macOS-native crates require Apple silicon runner
+          - os: macos-14
+            full: true
+          # Cross-platform subset only (core + napi stub compile-check)
+          - os: ubuntu-latest
+            full: false
+          - os: windows-latest
+            full: false
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
+      # Rust build cache — keyed per OS and Cargo.lock
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check
+      - name: Check (full workspace)
+        if: matrix.full
         run: cargo check --workspace
-        if: matrix.os == 'macos-latest'
 
-      - name: Check (non-macOS)
+      - name: Check (cross-platform crates only)
+        if: ${{ !matrix.full }}
         run: cargo check -p omnistate-core -p omnistate-napi
-        if: matrix.os != 'macos-latest'
 
-      - name: Clippy
+      - name: Clippy (macOS only)
+        if: matrix.full
         run: cargo clippy --workspace -- -D warnings
-        if: matrix.os == 'macos-latest'
 
-      - name: Test
+      - name: Tests (macOS only)
+        if: matrix.full
         run: cargo test --workspace
-        if: matrix.os == 'macos-latest'
 
       - name: Format check
         run: cargo fmt --all -- --check
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # TypeScript — lint, typecheck, and test all JS/TS packages
+  # ──────────────────────────────────────────────────────────────────────────
   typescript:
-    name: TypeScript Quality
+    name: TypeScript / lint · typecheck · test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
-      - name: Lint (if present)
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Lint — gateway has oxlint; other packages may add it later
+      - name: Lint
         run: pnpm -r --if-present lint
-      - name: Build (typecheck)
+
+      # Build (tsc) — gateway emits JS + declarations; web runs vite build
+      - name: Build
         run: pnpm -r --if-present build
-      - name: Test (if present)
+
+      # Vitest — gateway + web both have vitest test suites
+      - name: Test
         run: pnpm -r --if-present test
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Swift — macOS app (requires macOS runner + Xcode toolchain)
+  # ──────────────────────────────────────────────────────────────────────────
+  swift:
+    name: Swift / macOS app
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Swift package
+        working-directory: apps/macos/OmniState
+        run: swift build

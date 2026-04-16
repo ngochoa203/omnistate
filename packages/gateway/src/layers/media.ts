@@ -106,7 +106,9 @@ export interface VideoInfo {
 // ---------------------------------------------------------------------------
 
 export class MediaLayer {
-  constructor(private readonly deep: DeepLayer) {}
+  constructor(deep: DeepLayer) {
+    void deep;
+  }
 
   // ── helpers ─────────────────────────────────────────────────────────────
 

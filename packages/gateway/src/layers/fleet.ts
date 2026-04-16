@@ -152,27 +152,7 @@ export class FleetLayer {
    */
   async discoverDevices(): Promise<DeviceStatus[]> {
     const dbDevices = this.repo.listDevices();
-    const tsStatus = getTailscaleStatus();
-
-    // Collect Tailscale peer IPs we can map to DB devices
-    const tsPeerIpSet = new Set<string>();
-    if (tsStatus.running) {
-      try {
-        const raw = execSync("tailscale status --json", {
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 5_000,
-          encoding: "utf8",
-        });
-        const parsed = JSON.parse(raw);
-        const peers: Record<string, any> = parsed?.Peer ?? {};
-        for (const peer of Object.values(peers)) {
-          const ips: string[] = peer?.TailscaleIPs ?? [];
-          ips.forEach((ip) => tsPeerIpSet.add(ip));
-        }
-      } catch {
-        // Tailscale query failed — degrade gracefully
-      }
-    }
+    void getTailscaleStatus();
 
     const statuses = await Promise.all(
       dbDevices.map((d) => this.getDeviceStatus(d.id))
@@ -985,7 +965,7 @@ export class FleetLayer {
       if (s.status === "fulfilled") {
         const ts = s.value;
         results.push(ts);
-        if (ts.status === "completed") completed++;
+        if (ts.status === "complete") completed++;
         else if (ts.status === "failed") failed++;
         else pending++;
       } else {
@@ -1135,7 +1115,7 @@ export class FleetLayer {
       cpu?: number;
       memory?: number;
       disk?: number;
-      lastSeen: string;
+      lastSeenAt: string;
     }>;
     aggregate: { avgCpu: number; avgMemory: number; totalTasks: number };
   }> {
@@ -1147,12 +1127,12 @@ export class FleetLayer {
           : null;
         return {
           id: d.deviceId,
-          hostname: d.hostname,
+          hostname: d.deviceName,
           online: d.online,
           cpu: metrics?.cpu,
           memory: metrics?.memory,
           disk: metrics?.disk,
-          lastSeen: d.lastSeen ?? new Date().toISOString(),
+          lastSeenAt: d.lastSeenAt ?? new Date().toISOString(),
         };
       })
     );
@@ -1164,7 +1144,10 @@ export class FleetLayer {
             id: "unknown",
             hostname: "unknown",
             online: false,
-            lastSeen: new Date().toISOString(),
+            cpu: undefined,
+            memory: undefined,
+            disk: undefined,
+            lastSeenAt: new Date().toISOString(),
           }
     );
 
@@ -1227,6 +1210,243 @@ export class FleetLayer {
     offlineMinutes?: number;
   }): Promise<void> {
     this.alertThresholds = { ...this.alertThresholds, ...thresholds };
+  }
+
+  // ── §10 Mesh Networking / Peer-to-Peer ──────────────────────────────────
+
+  private isMeshRelay = false;
+
+  /** Mark this device as a relay node and announce to peers. */
+  async enableMeshRelay(): Promise<void> {
+    this.isMeshRelay = true;
+    const devices = await this.discoverDevices();
+    await Promise.allSettled(
+      devices.filter((d) => d.online).map(async (d) => {
+        const dev = this.repo.getDevice(d.deviceId);
+        if (!dev) return;
+        const url = deviceBaseUrl(dev);
+        try {
+          await fetchWithTimeout(`${url}/api/mesh/relay`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${this._getDeviceToken(dev)}`,
+            },
+            body: JSON.stringify({ relayId: "self", enabled: true }),
+          });
+        } catch {
+          /* offline peer — ignore */
+        }
+      })
+    );
+  }
+
+  /** Return whether this node is currently marked as a mesh relay. */
+  isMeshRelayEnabled(): boolean {
+    return this.isMeshRelay;
+  }
+
+  /**
+   * Build a network topology graph by pinging all device pairs.
+   * Returns nodes and edges suitable for visualization.
+   */
+  async getNetworkTopology(): Promise<{
+    nodes: Array<{
+      id: string;
+      hostname: string;
+      directPeers: string[];
+      latencyMs: Record<string, number>;
+    }>;
+    edges: Array<{
+      from: string;
+      to: string;
+      latencyMs: number;
+      type: "direct" | "relayed";
+    }>;
+  }> {
+    const devices = await this.discoverDevices();
+    const onlineDevices = devices.filter((d) => d.online);
+
+    const nodes: Array<{
+      id: string;
+      hostname: string;
+      directPeers: string[];
+      latencyMs: Record<string, number>;
+    }> = [];
+    const edges: Array<{
+      from: string;
+      to: string;
+      latencyMs: number;
+      type: "direct" | "relayed";
+    }> = [];
+
+    for (const dev of onlineDevices) {
+      const latencies: Record<string, number> = {};
+      const directPeers: string[] = [];
+
+      for (const other of onlineDevices) {
+        if (other.deviceId === dev.deviceId) continue;
+        const start = Date.now();
+        const alive = await this.pingDevice(other.deviceId);
+        const elapsed = Date.now() - start;
+        if (alive) {
+          latencies[other.deviceId] = elapsed;
+          directPeers.push(other.deviceId);
+          // Only add edge once (from < to)
+          if (dev.deviceId < other.deviceId) {
+            edges.push({
+              from: dev.deviceId,
+              to: other.deviceId,
+              latencyMs: elapsed,
+              type: "direct",
+            });
+          }
+        }
+      }
+      nodes.push({
+        id: dev.deviceId,
+        hostname: dev.deviceName,
+        directPeers,
+        latencyMs: latencies,
+      });
+    }
+
+    return { nodes, edges };
+  }
+
+  /**
+   * Find the best (shortest latency) route between two devices.
+   * Uses Dijkstra's algorithm on the topology graph.
+   */
+  async findBestRoute(
+    fromDeviceId: string,
+    toDeviceId: string
+  ): Promise<{
+    route: string[];
+    totalLatencyMs: number;
+    type: "direct" | "relayed";
+  }> {
+    const topo = await this.getNetworkTopology();
+
+    // Build adjacency list
+    const adj = new Map<string, Array<{ to: string; latency: number }>>();
+    for (const node of topo.nodes) {
+      adj.set(node.id, []);
+    }
+    for (const edge of topo.edges) {
+      adj.get(edge.from)?.push({ to: edge.to, latency: edge.latencyMs });
+      adj.get(edge.to)?.push({ to: edge.from, latency: edge.latencyMs });
+    }
+
+    // Dijkstra
+    const dist = new Map<string, number>();
+    const prev = new Map<string, string | null>();
+    const visited = new Set<string>();
+    for (const node of topo.nodes) {
+      dist.set(node.id, node.id === fromDeviceId ? 0 : Infinity);
+      prev.set(node.id, null);
+    }
+
+    for (let i = 0; i < topo.nodes.length; i++) {
+      let u: string | null = null;
+      let uDist = Infinity;
+      for (const [id, d] of dist) {
+        if (!visited.has(id) && d < uDist) {
+          u = id;
+          uDist = d;
+        }
+      }
+      if (u === null || u === toDeviceId) break;
+      visited.add(u);
+
+      for (const neighbor of adj.get(u) ?? []) {
+        const alt = uDist + neighbor.latency;
+        if (alt < (dist.get(neighbor.to) ?? Infinity)) {
+          dist.set(neighbor.to, alt);
+          prev.set(neighbor.to, u);
+        }
+      }
+    }
+
+    // Reconstruct path
+    const route: string[] = [];
+    let cur: string | null | undefined = toDeviceId;
+    while (cur) {
+      route.unshift(cur);
+      cur = prev.get(cur) ?? null;
+    }
+
+    const totalLatency = dist.get(toDeviceId) ?? Infinity;
+    return {
+      route,
+      totalLatencyMs: totalLatency === Infinity ? -1 : totalLatency,
+      type: route.length > 2 ? "relayed" : "direct",
+    };
+  }
+
+  // ── §11 Wake-on-LAN ────────────────────────────────────────────────────
+
+  /** Send a Wake-on-LAN magic packet to wake a sleeping device. */
+  async wakeDevice(deviceId: string): Promise<boolean> {
+    const mac = await this.getDeviceMacAddress(deviceId);
+    if (!mac) return false;
+
+    try {
+      const { createSocket } = await import("node:dgram");
+      const macBytes = mac
+        .replace(/[:-]/g, "")
+        .match(/.{2}/g)!
+        .map((h) => parseInt(h, 16));
+
+      // Magic packet: 6x 0xFF + 16x MAC address
+      const packet = Buffer.alloc(6 + 16 * 6);
+      for (let i = 0; i < 6; i++) packet[i] = 0xff;
+      for (let r = 0; r < 16; r++) {
+        for (let b = 0; b < 6; b++) {
+          packet[6 + r * 6 + b] = macBytes[b];
+        }
+      }
+
+      return new Promise<boolean>((resolve) => {
+        const socket = createSocket("udp4");
+        socket.once("error", () => {
+          socket.close();
+          resolve(false);
+        });
+        socket.bind(() => {
+          socket.setBroadcast(true);
+          socket.send(packet, 0, packet.length, 9, "255.255.255.255", (err) => {
+            socket.close();
+            resolve(!err);
+          });
+        });
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /** Get stored MAC address for a device from arp table or DB. */
+  async getDeviceMacAddress(deviceId: string): Promise<string | null> {
+    const device = this.repo.getDevice(deviceId);
+    if (!device) return null;
+
+    // Try to find MAC from arp table using the device IP
+    const ip = (device as any).tailscaleIp ?? (device as any).lastIp;
+    if (!ip) return null;
+
+    try {
+      const output = execSync(`arp -n ${ip} 2>/dev/null`, {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const match = output.match(
+        /([0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2}/
+      );
+      return match ? match[0] : null;
+    } catch {
+      return null;
+    }
   }
 }
 

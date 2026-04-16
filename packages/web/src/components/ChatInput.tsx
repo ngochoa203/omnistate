@@ -4,21 +4,31 @@ import { useVoice } from "../hooks/useVoice";
 import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 import { getCopy } from "../lib/i18n";
+import type { TaskAttachment } from "../lib/protocol";
+import type { ChatAttachment } from "../lib/chat-store";
 
 interface AttachedFile {
   id: string;
   file: File;
+  previewUrl?: string;
   previewText?: string;
 }
 
+export interface ChatSendPayload {
+  text: string;
+  attachments?: TaskAttachment[];
+  displayAttachments?: ChatAttachment[];
+}
+
 interface ChatInputProps {
-  onSend: (text: string) => void;
+  onSend: (payload: ChatSendPayload) => void;
   disabled?: boolean;
 }
 
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<AttachedFile[]>([]);
+  const MAX_INLINE_IMAGE_BYTES = 8 * 1024 * 1024;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const appLanguage = useChatStore((s) => s.appLanguage);
@@ -52,19 +62,53 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     }
   };
 
-  const handlePickFiles = async (inputFiles: FileList | null) => {
+  const handlePickFiles = async (inputFiles: FileList | File[] | null) => {
     if (!inputFiles || inputFiles.length === 0) return;
+    const pickedFiles = Array.from(inputFiles);
     const next = await Promise.all(
-      Array.from(inputFiles).map(async (file) => ({
+      pickedFiles.map(async (file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         file,
+        previewUrl: file.type.startsWith("image/") && file.size <= MAX_INLINE_IMAGE_BYTES
+          ? URL.createObjectURL(file)
+          : undefined,
         previewText: await readTextPreview(file),
       })),
     );
     setFiles((prev) => [...prev, ...next]);
   };
 
-  const removeFile = (id: string) => setFiles((prev) => prev.filter((f) => f.id !== id));
+  const removeFile = (id: string) => setFiles((prev) => {
+    const target = prev.find((f) => f.id === id);
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    return prev.filter((f) => f.id !== id);
+  });
+
+  const toDataBase64 = async (file: File): Promise<string | undefined> => {
+    if (!file.type.startsWith("image/")) return undefined;
+    if (file.size > MAX_INLINE_IMAGE_BYTES) return undefined;
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  };
+
+  const toImageDataURL = async (file: File, maxBytes = MAX_INLINE_IMAGE_BYTES): Promise<string | undefined> => {
+    if (!file.type.startsWith("image/")) return undefined;
+    if (file.size > maxBytes) return undefined;
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return `data:${file.type || "image/png"};base64,${btoa(binary)}`;
+  };
 
   const buildFileContext = () => {
     if (files.length === 0) return "";
@@ -76,16 +120,61 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     return `\n\n--- Attached Files Context ---\n${chunks.join("\n\n")}`;
   };
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const trimmed = text.trim();
     if ((!trimmed && files.length === 0) || disabled) return;
     const body = trimmed || (isVi ? "Phân tích các file đính kèm này." : "Analyze these attached files.");
-    onSend(`${body}${buildFileContext()}`);
+    const imageBase64ById = new Map<string, string | undefined>();
+    const imageDisplayById = new Map<string, string | undefined>();
+    await Promise.all(files.map(async (f) => {
+      const base64 = await toDataBase64(f.file);
+      imageBase64ById.set(f.id, base64);
+      const display = await toImageDataURL(f.file);
+      imageDisplayById.set(f.id, display);
+    }));
+
+    const displayAttachments: ChatAttachment[] = files.map((f) => ({
+      id: f.id,
+      name: f.file.name,
+      mimeType: f.file.type || "application/octet-stream",
+      size: f.file.size,
+      kind: f.file.type.startsWith("image/") ? "image" : f.previewText ? "text" : "file",
+      previewUrl: imageDisplayById.get(f.id) ?? f.previewUrl,
+    }));
+    const attachments: TaskAttachment[] = files.map((f) => ({
+      id: f.id,
+      name: f.file.name,
+      mimeType: f.file.type || "application/octet-stream",
+      size: f.file.size,
+      kind: f.file.type.startsWith("image/") ? "image" : f.previewText ? "text" : "file",
+      textPreview: f.previewText,
+      dataBase64: imageBase64ById.get(f.id),
+    }));
+
+    onSend({ text: `${body}${buildFileContext()}`, attachments, displayAttachments });
     setText("");
+    files.forEach((f) => {
+      if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+    });
     setFiles([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (fileRef.current) fileRef.current.value = "";
   }, [text, files, disabled, onSend, isVi]);
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items ?? []);
+    const imageItems = items.filter((item) => item.kind === "file" && item.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+
+    const pastedFiles = imageItems
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+
+    if (pastedFiles.length === 0) return;
+    e.preventDefault();
+
+    void handlePickFiles(pastedFiles);
+  }, [handlePickFiles]);
+
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -124,6 +213,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
             value={text}
             onChange={(e) => { setText(e.target.value); handleInput(); }}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={copy.chat.placeholder}
             rows={1}
             disabled={disabled}
@@ -215,10 +305,17 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
                 color: "var(--color-text-secondary)",
                 background: "rgba(255,255,255,0.05)",
                 border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 999,
-                padding: "4px 8px",
+                borderRadius: 10,
+                padding: item.previewUrl ? "4px" : "4px 8px",
               }}
             >
+              {item.previewUrl && item.file.type.startsWith("image/") && (
+                <img
+                  src={item.previewUrl}
+                  alt={item.file.name}
+                  style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,255,255,0.14)" }}
+                />
+              )}
               <span>{item.file.name}</span>
               <button
                 onClick={() => removeFile(item.id)}

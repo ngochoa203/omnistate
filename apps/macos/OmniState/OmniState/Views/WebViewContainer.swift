@@ -23,10 +23,11 @@ struct WebViewContainer: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
 
         // Inject native bridge JS
         let bridgeScript = WKUserScript(
-            source: Self.nativeBridgeJS,
+            source: Self.makeNativeBridgeJS(),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         )
@@ -69,16 +70,69 @@ struct WebViewContainer: NSViewRepresentable {
         }
 
         // Last fallback: try localhost dev server.
+    #if DEBUG
         if let url = URL(string: "http://localhost:5173") {
             webView.load(URLRequest(url: url))
         }
+    #else
+        let html = """
+        <html><body style=\"background:#0b1020;color:#c7d2fe;font-family:-apple-system;padding:24px;\">
+        <h2>OmniState UI assets not found</h2>
+        <p>Bundled web-dist is missing in this build. Please rebuild the app bundle.</p>
+        </body></html>
+        """
+        webView.loadHTMLString(html, baseURL: nil)
+    #endif
+    }
+
+    private static func makeNativeStorageBootstrapJSON() -> String {
+        let all = UserDefaults.standard.dictionaryRepresentation()
+        let filtered = all.reduce(into: [String: String]()) { result, item in
+            guard item.key.hasPrefix("omnistate.") else { return }
+            if let str = item.value as? String {
+                result[item.key] = str
+            }
+        }
+
+        guard let data = try? JSONSerialization.data(withJSONObject: filtered, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+
+        return json
     }
 
     /// JavaScript injected into web view for native bridge
-    private static let nativeBridgeJS = """
+    private static func makeNativeBridgeJS() -> String {
+        let storageJson = makeNativeStorageBootstrapJSON()
+        return """
+    window.__OMNISTATE_NATIVE_STORAGE__ = \(storageJson);
+
     window.omnistateNative = {
         isNative: true,
         platform: 'macos',
+        storageGet: function(key) {
+            const cache = window.__OMNISTATE_NATIVE_STORAGE__ || {};
+            const v = cache[key];
+            return typeof v === 'string' ? v : null;
+        },
+        storageSet: function(key, value) {
+            if (!window.__OMNISTATE_NATIVE_STORAGE__) window.__OMNISTATE_NATIVE_STORAGE__ = {};
+            window.__OMNISTATE_NATIVE_STORAGE__[key] = String(value);
+            window.webkit.messageHandlers.omnistate.postMessage({
+                type: 'storage.set',
+                key: key,
+                value: String(value)
+            });
+        },
+        storageRemove: function(key) {
+            if (!window.__OMNISTATE_NATIVE_STORAGE__) window.__OMNISTATE_NATIVE_STORAGE__ = {};
+            delete window.__OMNISTATE_NATIVE_STORAGE__[key];
+            window.webkit.messageHandlers.omnistate.postMessage({
+                type: 'storage.remove',
+                key: key
+            });
+        },
         sendNotification: function(title, body) {
             window.webkit.messageHandlers.omnistate.postMessage({
                 type: 'notification',
@@ -104,8 +158,9 @@ struct WebViewContainer: NSViewRepresentable {
         window.OMNISTATE_GATEWAY_URL = 'ws://127.0.0.1:19800';
     }
     """
+    }
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any],
                   let type = body["type"] as? String else { return }
@@ -127,6 +182,25 @@ struct WebViewContainer: NSViewRepresentable {
                 let msg = body["message"] as? String ?? ""
                 print("[WebView] \(msg)")
 
+            case "storage.set":
+                guard let key = body["key"] as? String,
+                      let value = body["value"] as? String else {
+                    return
+                }
+                guard key.hasPrefix("omnistate."), key.count <= 160, value.count <= 2_000_000 else {
+                    return
+                }
+                UserDefaults.standard.set(value, forKey: key)
+
+            case "storage.remove":
+                guard let key = body["key"] as? String else {
+                    return
+                }
+                guard key.hasPrefix("omnistate."), key.count <= 160 else {
+                    return
+                }
+                UserDefaults.standard.removeObject(forKey: key)
+
             default:
                 print("[WebView] Unknown message type: \(type)")
             }
@@ -147,6 +221,27 @@ struct WebViewContainer: NSViewRepresentable {
                 if let url = webView.url ?? URL(string: "http://localhost:5173") {
                     webView.load(URLRequest(url: url))
                 }
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runOpenPanelWith parameters: WKOpenPanelParameters,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping ([URL]?) -> Void
+        ) {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.resolvesAliases = true
+
+            panel.begin { response in
+                guard response == .OK else {
+                    completionHandler(nil)
+                    return
+                }
+                completionHandler(panel.urls)
             }
         }
     }

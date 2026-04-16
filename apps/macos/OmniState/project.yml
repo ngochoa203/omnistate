@@ -1,0 +1,64 @@
+name: OmniState
+options:
+  bundleIdPrefix: com.omnistate
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_ENTITLEMENTS: OmniState/OmniState.entitlements
+
+targets:
+  OmniState:
+    type: application
+    platform: macOS
+    sources:
+      - path: OmniState
+        excludes:
+          - Info.plist
+          - OmniState.entitlements
+    resources:
+      - path: OmniState/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.omnistate.app
+        INFOPLIST_FILE: OmniState/Info.plist
+        PRODUCT_NAME: OmniState
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        SWIFT_EMIT_LOC_STRINGS: YES
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          SWIFT_COMPILATION_MODE: "wholemodule"
+    info:
+      path: OmniState/Info.plist
+    entitlements:
+      path: OmniState/OmniState.entitlements
+
+schemes:
+  OmniState:
+    build:
+      targets:
+        OmniState: all
+    run:
+      config: Debug
+      executable: OmniState
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

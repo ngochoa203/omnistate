@@ -6,6 +6,7 @@ export * from "./HealthDashboard.js";
 export * from "./LanguageSwitch.js";
 export * from "./LiveClock.js";
 export * from "./MessageBubble.js";
+export * from "./OnboardingWizard.js";
 export * from "./ScreenTreePage.js";
 export * from "./SettingsPanel.js";
 export * from "./SystemPanel.js";

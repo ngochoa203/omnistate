@@ -22,6 +22,16 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import WebSocket from "ws";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -536,6 +546,162 @@ async function cmdRunAll(): Promise<void> {
   });
 }
 
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd?: string
+): Promise<void> {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn(command, args, {
+      stdio: "inherit",
+      env: process.env,
+      cwd,
+    });
+    child.on("error", rejectPromise);
+    child.on("exit", (code) => {
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`${command} ${args.join(" ")} failed with exit code ${code}`));
+    });
+  });
+}
+
+interface MacAppPaths {
+  repoRoot: string;
+  appRoot: string;
+  appBinary: string;
+  distApp: string;
+  contentsDir: string;
+  infoPlistTemplate: string;
+  resourcesDir: string;
+}
+
+function getMacAppPaths(): MacAppPaths {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const repoRoot = resolve(__dirname, "../../..");
+  const appRoot = resolve(repoRoot, "apps/macos/OmniState");
+  const appName = "OmniState";
+  const distApp = resolve(appRoot, `dist/${appName}.app`);
+  const contentsDir = resolve(distApp, "Contents");
+  return {
+    repoRoot,
+    appRoot,
+    appBinary: resolve(appRoot, `.build/release/${appName}`),
+    distApp,
+    contentsDir,
+    infoPlistTemplate: resolve(appRoot, "OmniState/Info.plist"),
+    resourcesDir: resolve(appRoot, "OmniState/Resources"),
+  };
+}
+
+async function cmdInstall(args: string[]): Promise<void> {
+  const noOpen = args.includes("--no-open");
+  const paths = getMacAppPaths();
+  const appName = "OmniState";
+  const appBundleId = "com.omnistate.app";
+
+  if (process.platform !== "darwin") {
+    console.error(red("✗ `omnistate install` is only supported on macOS."));
+    process.exit(1);
+  }
+
+  console.log("[1/5] Build web assets");
+  console.log("Skipping web asset build (native UI mode)");
+
+  console.log("[2/5] Build release binary (native)");
+  await runCommand("swift", ["build", "-c", "release", "--package-path", paths.appRoot], paths.repoRoot);
+
+  console.log("[3/5] Package .app bundle");
+  rmSync(paths.distApp, { recursive: true, force: true });
+  mkdirSync(resolve(paths.contentsDir, "MacOS"), { recursive: true });
+  mkdirSync(resolve(paths.contentsDir, "Resources"), { recursive: true });
+
+  copyFileSync(paths.appBinary, resolve(paths.contentsDir, "MacOS", appName));
+  chmodSync(resolve(paths.contentsDir, "MacOS", appName), 0o755);
+
+  const infoPlist = readFileSync(paths.infoPlistTemplate, "utf-8")
+    .replaceAll("$(EXECUTABLE_NAME)", appName)
+    .replaceAll("$(PRODUCT_BUNDLE_IDENTIFIER)", appBundleId)
+    .replaceAll("$(PRODUCT_NAME)", appName);
+  writeFileSync(resolve(paths.contentsDir, "Info.plist"), infoPlist, "utf-8");
+
+  cpSync(paths.resourcesDir, resolve(paths.contentsDir, "Resources"), {
+    recursive: true,
+  });
+
+  console.log("[4/5] Codesign (ad-hoc)");
+  await runCommand("codesign", ["--force", "--deep", "--sign", "-", paths.distApp], paths.repoRoot);
+  await runCommand("plutil", ["-lint", resolve(paths.contentsDir, "Info.plist")], paths.repoRoot);
+  await runCommand("codesign", ["--verify", "--deep", "--strict", paths.distApp], paths.repoRoot);
+
+  if (!noOpen) {
+    console.log("[5/5] Open app");
+    await runCommand("open", [paths.distApp], paths.repoRoot);
+  } else {
+    console.log("[5/5] Open app");
+    console.log("Skipped (--no-open)");
+  }
+
+  console.log(`Done: ${paths.distApp}`);
+}
+
+async function cmdApp(args: string[]): Promise<void> {
+  const sub = args[0] ?? "";
+  const paths = getMacAppPaths();
+
+  if (process.platform !== "darwin") {
+    console.error(red("✗ `omnistate app` is only supported on macOS."));
+    process.exit(1);
+  }
+
+  if (sub === "build") {
+    await runCommand("swift", ["build", "-c", "release", "--package-path", paths.appRoot], paths.repoRoot);
+    return;
+  }
+
+  if (sub === "run") {
+    await runCommand(resolve(paths.appRoot, ".build/release/OmniState"), [], paths.appRoot);
+    return;
+  }
+
+  if (sub === "open") {
+    if (!existsSync(paths.distApp)) {
+      console.error(red("✗ App bundle not found. Run: omnistate install"));
+      process.exit(1);
+    }
+    await runCommand("open", [paths.distApp], paths.repoRoot);
+    return;
+  }
+
+  if (sub === "reset-permissions") {
+    const bundleId = "com.omnistate.app";
+    const services = [
+      "Accessibility",
+      "ScreenCapture",
+      "AppleEvents",
+      "Microphone",
+      "Camera",
+      "SpeechRecognition",
+      "ListenEvent",
+    ];
+
+    for (const service of services) {
+      try {
+        await runCommand("tccutil", ["reset", service, bundleId], paths.repoRoot);
+      } catch {
+        // Continue best-effort; some services are unavailable on older macOS versions.
+      }
+    }
+
+    console.log(green(`✓ Reset privacy permissions for ${bundleId}`));
+    console.log(dim("Re-open OmniState and grant permissions again in System Settings if prompted."));
+    return;
+  }
+
+  console.error(red("✗ Usage: omnistate app <build|run|open|reset-permissions>"));
+  process.exit(1);
+}
+
 // ─── Command: config ─────────────────────────────────────────────────────────
 
 async function cmdConfig(args: string[]): Promise<void> {
@@ -875,6 +1041,9 @@ ${bold("COMMANDS")}
   ${cyan("health")}             Run a single health check and print sensor table
   ${cyan("doctor")}             Run diagnostics (gateway, voice backend, python deps)
   ${cyan("voiceprint")}         Enroll/verify voiceprint from audio files
+  ${cyan("install")}            Build, package, sign, and open macOS OmniState app
+    ${dim("--no-open")}          Build/package only (do not auto-open)
+  ${cyan("app")}                macOS app helpers: build | run | open | reset-permissions
 
   ${cyan("model")}              Show or switch active model
   ${cyan("session")}            Show/list/new/use runtime sessions
@@ -905,6 +1074,9 @@ ${bold("EXAMPLES")}
   omnistate wake show
   omnistate health
   omnistate doctor
+  omnistate install
+  omnistate app open
+  omnistate app reset-permissions
   omnistate voiceprint enroll --audio ~/owner.wav --user-id owner --display-name Owner
   omnistate stop
 `);
@@ -1010,6 +1182,14 @@ async function main(): Promise<void> {
 
     case "doctor":
       await cmdDoctor();
+      break;
+
+    case "install":
+      await cmdInstall(rest);
+      break;
+
+    case "app":
+      await cmdApp(rest);
       break;
 
     case "voiceprint":

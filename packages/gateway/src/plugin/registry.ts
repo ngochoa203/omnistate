@@ -73,10 +73,28 @@ export class PluginRegistry {
           continue;
         }
 
-        // TODO: Actually load and register the plugin module
+        // Load the plugin entry point
+        const entryPoint = resolve(this.pluginDir, dir, "index.js");
+        let mod: unknown = null;
+        if (existsSync(entryPoint)) {
+          try {
+            mod = await import(entryPoint);
+            if (typeof (mod as any).activate === "function") {
+              await (mod as any).activate();
+            }
+          } catch (loadErr) {
+            this.plugins.set(manifest.id, {
+              manifest,
+              module: null,
+              status: "error",
+            });
+            continue;
+          }
+        }
+
         this.plugins.set(manifest.id, {
           manifest,
-          module: null,
+          module: mod,
           status: "active",
         });
       } catch {

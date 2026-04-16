@@ -128,7 +128,8 @@ export async function startGateway(): Promise<void> {
   // 3.5. If LLM is required, fail fast on auth/credits/network issues.
   const preflight = await runLlmPreflight();
   if (shouldRequireLlm() && !preflight.ok) {
-    throw new Error(preflight.message);
+    console.warn(`[OmniState] LLM preflight warning: ${preflight.message}`);
+    console.warn("[OmniState] Continuing in degraded mode; LLM-backed tasks may fail until credentials are fixed.");
   }
 
   const available = await isPortAvailable(config.gateway.bind, config.gateway.port);

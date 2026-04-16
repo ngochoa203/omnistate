@@ -1062,17 +1062,10 @@ export class BrowserLayer {
     }
     const port = this._headlessPort;
 
-    // Get the first available target via /json
-    const { stdout: targetsJson } = await execAsync(
-      `curl -s http://localhost:${port}/json`,
-      { timeout: 5_000 }
-    );
-    let targets: Array<{ webSocketDebuggerUrl?: string; id?: string }> = [];
-    try {
-      targets = JSON.parse(targetsJson);
-    } catch {
-      throw new Error("Could not parse CDP targets from headless browser");
-    }
+    // Smoke-test CDP endpoint first so failures are explicit before Python handoff.
+    await execAsync(`curl -s http://localhost:${port}/json >/dev/null`, {
+      timeout: 5_000,
+    });
 
     // Use the Python-based CDP approach since node ws is not guaranteed
     const cdpScript = `python3 -c "
@@ -1453,7 +1446,7 @@ print(json.dumps(result))
   }
 
   /** Add a bookmark via AppleScript. */
-  async addBookmark(url: string, title: string, folder?: string, browser?: string): Promise<void> {
+  async addBookmark(url: string, title: string, _folder?: string, browser?: string): Promise<void> {
     const b = await this.detectBrowser(browser);
     const safeUrl = escapeForAppleScript(url);
     const safeTitle = escapeForAppleScript(title);

@@ -1,29 +1,13 @@
 import type { ClientMessage, ServerMessage } from "./protocol";
 import type { ClaudeMemPayload } from "./protocol";
+import type { TaskAttachment } from "./protocol";
 import { useAuthStore } from "./auth-store";
+import { resolveGatewayWsUrl } from "./runtime-config";
 
 type EventHandler = (msg: ServerMessage) => void;
 
 function resolveGatewayUrl(): string {
-  // If running inside native macOS app (WKWebView), use injected URL
-  if (typeof window !== "undefined" && (window as any).OMNISTATE_GATEWAY_URL) {
-    return (window as any).OMNISTATE_GATEWAY_URL as string;
-  }
-
-  try {
-    const envUrl = (import.meta as unknown as { env?: { VITE_GATEWAY_WS_URL?: string } })
-      .env?.VITE_GATEWAY_WS_URL;
-    if (envUrl) return envUrl;
-  } catch {
-    // ignore env resolution errors and fall back to runtime defaults
-  }
-
-  if (typeof window !== "undefined") {
-    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${scheme}://${window.location.host}/ws`;
-  }
-
-  return "ws://127.0.0.1:19800";
+  return resolveGatewayWsUrl();
 }
 
 export class GatewayClient {
@@ -103,8 +87,8 @@ export class GatewayClient {
     }
   }
 
-  sendTask(goal: string): void {
-    this.send({ type: "task", goal });
+  sendTask(goal: string, options?: { attachments?: TaskAttachment[] }): void {
+    this.send({ type: "task", goal, attachments: options?.attachments });
   }
 
   requestHealth(): void {
@@ -128,8 +112,23 @@ export class GatewayClient {
   }
 
   setRuntimeConfig(
-    key: "provider" | "model" | "baseURL" | "apiKey" | "voice.lowLatency" | "voice.autoExecuteTranscript",
-    value: string | boolean,
+    key:
+      | "provider"
+      | "model"
+      | "baseURL"
+      | "apiKey"
+      | "voice.lowLatency"
+      | "voice.autoExecuteTranscript"
+      | "voice.wake.enabled"
+      | "voice.wake.phrase"
+      | "voice.wake.cooldownMs"
+      | "voice.wake.commandWindowSec"
+      | "voice.siri.enabled"
+      | "voice.siri.mode"
+      | "voice.siri.shortcutName"
+      | "voice.siri.endpoint"
+      | "voice.siri.token",
+    value: string | boolean | number,
   ): void {
     this.send({ type: "runtime.config.set", key, value } as ClientMessage);
   }

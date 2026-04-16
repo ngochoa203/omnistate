@@ -39,8 +39,22 @@ export interface ConnectMessage {
 export interface TaskMessage {
   type: "task";
   goal: string;
+  /** Optional: force routing mode. */
+  mode?: "auto" | "chat" | "task";
   /** Optional: force a specific execution layer. */
   layer?: "deep" | "surface" | "auto";
+  /** Optional attachment payloads from UI clients. */
+  attachments?: TaskAttachment[];
+}
+
+export interface TaskAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "text" | "file";
+  textPreview?: string;
+  dataBase64?: string;
 }
 
 export interface ClaudeMemPayload {

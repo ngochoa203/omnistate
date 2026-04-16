@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  StyleSheet, ActivityIndicator, Alert, ScrollView,
+  StyleSheet, ActivityIndicator, Alert, ScrollView, Platform,
 } from "react-native";
 import { useConnectionStore, SavedGateway } from "../stores/connection-store";
 import { GatewayClientCore } from "@omnistate/mobile-core";
@@ -306,7 +306,7 @@ function LanPanel() {
           body: JSON.stringify({
             pin: trimmedPin,
             deviceName: useConnectionStore.getState().deviceName,
-            deviceType: "android",
+            deviceType: Platform.OS === "ios" ? "ios" : "android",
           }),
         });
         const data = await res.json();

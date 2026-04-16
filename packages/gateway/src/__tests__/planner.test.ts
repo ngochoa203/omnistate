@@ -919,6 +919,14 @@ describe("planFromIntent() — plan structure", () => {
     expect(String(plan.nodes[0]?.action.params?.command ?? "")).toContain("translate.google.com");
   });
 
+  it("screen capture intent should map to screen.capture instead of ui.click", async () => {
+    const intent = await classifyIntent("screen capture my macbook and send in here");
+    const plan = await planFromIntent(intent);
+
+    expect(intent.type).toBe("ui-interaction");
+    expect(plan.nodes[0]?.action.tool).toBe("screen.capture");
+  });
+
   it("install app intent maps to brew install flow", async () => {
     const intent = {
       type: "package-management",

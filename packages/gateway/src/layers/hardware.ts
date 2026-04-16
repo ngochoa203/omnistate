@@ -88,7 +88,9 @@ export interface SleepSettings {
 // ---------------------------------------------------------------------------
 
 export class HardwareLayer {
-  constructor(private readonly deep: DeepLayer) {}
+  constructor(deep: DeepLayer) {
+    void deep;
+  }
 
   // ── helpers ─────────────────────────────────────────────────────────────
 

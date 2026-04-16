@@ -195,7 +195,7 @@ export class DeepLayer {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Detect common macOS permission issues
-      if (msg.includes("not allowed") || msg.includes("-1743") || msg.includes("timed out") || msg.includes("ETIMEDOUT")) {
+      if (msg.includes("not allowed") || msg.includes("-1743")) {
         throw new Error(
           `AppleScript blocked by macOS. Grant permission: System Settings → Privacy & Security → Automation → Terminal → enable the target app.`
         );
@@ -620,6 +620,100 @@ export class DeepLayer {
       throw new Error(`compareFiles failed: ${(err as Error).message}`);
     }
   }
+
+  // ── Core File Operations ────────────────────────────────────────────────
+
+  /** Read file content as string (async variant). */
+  async readFileAsync(filePath: string, encoding: BufferEncoding = "utf-8"): Promise<string> {
+    return fsPromises.readFile(filePath, { encoding });
+  }
+
+  /** Read file as Buffer (for binary). */
+  async readFileBuffer(filePath: string): Promise<Buffer> {
+    return fsPromises.readFile(filePath);
+  }
+
+  /** Write string content to file (async variant, creates parent dirs if needed). */
+  async writeFileAsync(filePath: string, content: string, encoding: BufferEncoding = "utf-8"): Promise<void> {
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+    await fsPromises.writeFile(filePath, content, { encoding });
+  }
+
+  /** Append content to file. */
+  async appendFile(filePath: string, content: string): Promise<void> {
+    await fsPromises.appendFile(filePath, content, "utf-8");
+  }
+
+  /** Copy file (or directory recursively). */
+  async copyFile(src: string, dest: string, recursive = false): Promise<void> {
+    if (recursive) {
+      await fsPromises.cp(src, dest, { recursive: true });
+    } else {
+      await fsPromises.mkdir(path.dirname(dest), { recursive: true });
+      await fsPromises.copyFile(src, dest);
+    }
+  }
+
+  /** Move / rename file or directory. */
+  async moveFile(src: string, dest: string): Promise<void> {
+    await fsPromises.mkdir(path.dirname(dest), { recursive: true });
+    await fsPromises.rename(src, dest);
+  }
+
+  /** Delete file or directory (recursive when requested). */
+  async deleteFile(filePath: string, recursive = false): Promise<void> {
+    const stat = await fsPromises.lstat(filePath);
+    if (stat.isDirectory()) {
+      await fsPromises.rm(filePath, { recursive, force: recursive });
+    } else {
+      await fsPromises.unlink(filePath);
+    }
+  }
+
+  /** Create directory (recursive). */
+  async createDirectory(dirPath: string): Promise<void> {
+    await fsPromises.mkdir(dirPath, { recursive: true });
+  }
+
+  /** Check if file or directory exists (async variant). */
+  async fileExistsAsync(filePath: string): Promise<boolean> {
+    try {
+      await fsPromises.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Get file size in bytes. */
+  async getFileSize(filePath: string): Promise<number> {
+    const stat = await fsPromises.stat(filePath);
+    return stat.size;
+  }
+
+  /** Rename file or directory. */
+  async renameFile(oldPath: string, newPath: string): Promise<void> {
+    await fsPromises.rename(oldPath, newPath);
+  }
+
+  /** Get file hash (sha256 by default). */
+  async getFileHash(filePath: string, algorithm = "sha256"): Promise<string> {
+    const { createHash } = await import("node:crypto");
+    const content = await fsPromises.readFile(filePath);
+    return createHash(algorithm).update(content).digest("hex");
+  }
+
+  /** Touch file (update mtime or create empty). */
+  async touchFile(filePath: string): Promise<void> {
+    try {
+      const now = new Date();
+      await fsPromises.utimes(filePath, now, now);
+    } catch {
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+      await fsPromises.writeFile(filePath, "");
+    }
+  }
+
 }
 
 // ------------------------------------------------------------------

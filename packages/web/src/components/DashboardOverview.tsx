@@ -108,6 +108,10 @@ export function DashboardOverview({ onNavigate }: Props) {
 
   const quickOps = [
     {
+      title: isVi ? "Chụp màn hình hiện tại" : "Capture current screen",
+      command: "screen capture now",
+    },
+    {
       title: isVi ? "Phân tích log lỗi mới nhất" : "Analyze latest error logs",
       command: "analyze the latest system logs and summarize critical errors",
     },
@@ -128,6 +132,14 @@ export function DashboardOverview({ onNavigate }: Props) {
       title: isVi ? "Mở voice chat" : "Open voice chat",
       command: "",
       openVoice: true,
+    },
+    {
+      title: isVi ? "Mở quyền Accessibility" : "Open Accessibility permissions",
+      command: "open \"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility\"",
+    },
+    {
+      title: isVi ? "Mở quyền Screen Recording" : "Open Screen Recording permissions",
+      command: "open \"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture\"",
     },
   ];
 

@@ -82,6 +82,48 @@ pub fn key_tap(key: Key, modifiers: Modifiers) -> OmniResult<()> {
     return android::key_tap(key, modifiers);
 }
 
+/// Press a key down without releasing it.
+/// Platforms that do not expose low-level key state fall back to key_tap.
+pub fn key_down(key: Key, modifiers: Modifiers) -> OmniResult<()> {
+    #[cfg(target_os = "macos")]
+    return macos::key_down(key, modifiers);
+    #[cfg(target_os = "windows")]
+    return windows::key_tap(key, modifiers);
+    #[cfg(target_os = "linux")]
+    return linux::key_tap(key, modifiers);
+    #[cfg(target_os = "ios")]
+    return ios::key_tap(key, modifiers);
+    #[cfg(target_os = "android")]
+    return android::key_tap(key, modifiers);
+}
+
+/// Release a previously pressed key.
+/// Platforms that do not expose low-level key state return Ok(()).
+pub fn key_up(key: Key, modifiers: Modifiers) -> OmniResult<()> {
+    #[cfg(target_os = "macos")]
+    return macos::key_up(key, modifiers);
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (key, modifiers);
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (key, modifiers);
+        return Ok(());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (key, modifiers);
+        return Ok(());
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = (key, modifiers);
+        return Ok(());
+    }
+}
+
 /// Type a string of text character by character.
 pub fn type_text(text: &str) -> OmniResult<()> {
     #[cfg(target_os = "macos")]

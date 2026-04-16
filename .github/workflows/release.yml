@@ -4,31 +4,212 @@ on:
   push:
     tags: ["v*"]
 
+# No concurrency cancellation on release — let every tag complete
+concurrency:
+  group: release-${{ github.ref }}
+
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build the N-API native binary for each platform/arch target.
+  # The cdylib is renamed to the Node.js convention used by copy-native.mjs:
+  #   omnistate.<platform>-<arch>.node
+  # ──────────────────────────────────────────────────────────────────────────
   build-native:
-    name: Build native (${{ matrix.os }})
+    name: Native / ${{ matrix.target-label }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: macos-14          # Apple Silicon host
+            rust-target: aarch64-apple-darwin
+            node-arch: arm64
+            lib-prefix: libomnistate_napi
+            lib-ext: dylib
+            target-label: darwin-arm64
+
+          - os: macos-13          # Intel host for cross-compile check
+            rust-target: x86_64-apple-darwin
+            node-arch: x64
+            lib-prefix: libomnistate_napi
+            lib-ext: dylib
+            target-label: darwin-x64
+
+          - os: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+            node-arch: x64
+            lib-prefix: libomnistate_napi
+            lib-ext: so
+            target-label: linux-x64
+
+          - os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            node-arch: x64
+            lib-prefix: omnistate_napi
+            lib-ext: dll
+            target-label: win32-x64
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.rust-target }}
+
+      - name: Build N-API binary
+        run: cargo build --release -p omnistate-napi --target ${{ matrix.rust-target }}
+
+      # Rename to Node.js native module convention (target-label = darwin-arm64, linux-x64, …)
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist-native
+          cp target/${{ matrix.rust-target }}/release/${{ matrix.lib-prefix }}.${{ matrix.lib-ext }} \
+             dist-native/omnistate.${{ matrix.target-label }}.node
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-native | Out-Null
+          Copy-Item "target\${{ matrix.rust-target }}\release\${{ matrix.lib-prefix }}.${{ matrix.lib-ext }}" `
+                    "dist-native\omnistate.${{ matrix.target-label }}.node"
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target-label }}
+          path: dist-native/*.node
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build the gateway (TypeScript → JS) and package as a tarball
+  # ──────────────────────────────────────────────────────────────────────────
+  build-gateway:
+    name: Build / gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
-      - run: cargo build --release -p omnistate-napi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - name: Upload native artifact
+      - name: Build gateway
+        run: pnpm --filter @omnistate/gateway build
+
+      - name: Package gateway
+        run: |
+          cd packages/gateway
+          tar -czf ../../gateway-dist.tar.gz dist/ package.json
+
+      - name: Upload gateway artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-${{ matrix.os }}
-          path: target/release/*.node
-          if-no-files-found: ignore
+          name: gateway-dist
+          path: gateway-dist.tar.gz
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build the web UI (Vite → static assets)
+  # ──────────────────────────────────────────────────────────────────────────
+  build-web:
+    name: Build / web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm --filter @omnistate/web build
+
+      - name: Package web
+        run: |
+          cd packages/web
+          tar -czf ../../web-dist.tar.gz dist/
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist.tar.gz
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Create GitHub Release — gathers all artifacts and publishes
+  # ──────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-native, build-gateway, build-web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create releases and upload assets
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download every artifact into ./release-assets/
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: List artifacts
+        run: find release-assets -type f | sort
+
+      # Flatten directory structure: release-assets/<artifact-name>/<file> → release-assets/<file>
+      - name: Flatten artifacts
+        run: |
+          find release-assets -mindepth 2 -type f -exec mv {} release-assets/ \;
+          find release-assets -type d -empty -delete
+
+      # Parse changelog for this tag's release notes (between first two ## headings)
+      - name: Extract release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES=$(awk "/^## \[?${TAG#v}/,/^## /" CHANGELOG.md 2>/dev/null | head -n -1 | tail -n +2 || echo "")
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${TAG}"
+          fi
+          # Write to file to avoid quoting issues
+          echo "$NOTES" > release-notes.md
+          cat release-notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: OmniState ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}  # e.g. v1.0.0-beta.1 → prerelease
+          files: |
+            release-assets/omnistate.darwin-arm64.node
+            release-assets/omnistate.darwin-x64.node
+            release-assets/omnistate.linux-x64.node
+            release-assets/omnistate.win32-x64.node
+            release-assets/gateway-dist.tar.gz
+            release-assets/web-dist.tar.gz

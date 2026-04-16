@@ -155,7 +155,9 @@ export interface DockerResult {
 // ---------------------------------------------------------------------------
 
 export class DeveloperLayer {
-  constructor(private readonly _deep: DeepLayer) {}
+  constructor(deep: DeepLayer) {
+    void deep;
+  }
 
   // ── helpers ─────────────────────────────────────────────────────────────
 

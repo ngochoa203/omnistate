@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { buildClaudeMemPayloadFromState, useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 import { ChatInput } from "./ChatInput";
+import type { ChatSendPayload } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
 import { getCopy } from "../lib/i18n";
 import { buildTaskGoalWithMemory } from "../lib/session-memory";
@@ -13,6 +14,7 @@ type RuntimeProvider = {
 };
 
 const QUICK_CMDS = [
+  { label: "Screen capture", cmd: "screen capture now", icon: "📸" },
   { label: "Disk space", cmd: "check disk space", icon: "💾" },
   { label: "CPU usage", cmd: "show CPU usage and top processes", icon: "🖥️" },
   { label: "Memory", cmd: "how much memory is available?", icon: "🧠" },
@@ -129,13 +131,14 @@ export function ChatView() {
     setMemoryLogDraft(sharedMemoryLog.join("\n"));
   }, [sharedMemorySummary, sharedMemoryLog]);
 
-  const handleSend = useCallback((text: string) => {
+  const handleSend = useCallback((payload: ChatSendPayload) => {
     const state = useChatStore.getState();
     const sessionState = state.sessionStateByConversation[state.currentConversationId];
     const provider = sessionState?.provider || llmPreflight?.providerId || "anthropic";
     const model = sessionState?.model || llmPreflight?.model || "";
+    const text = payload.text;
 
-    state.addUserMessage(text);
+    state.addUserMessage(text, payload.displayAttachments);
     state.noteOutboundTaskRequest(state.currentConversationId);
 
     if (provider) getClient().setRuntimeConfig("provider", provider);
@@ -148,8 +151,12 @@ export function ChatView() {
       sharedMemorySummary: state.sharedMemorySummary,
       sessionMemorySummary: sessionState?.memorySummary ?? "",
     });
-    getClient().sendTask(contextualGoal);
+    getClient().sendTask(contextualGoal, { attachments: payload.attachments });
   }, [llmPreflight?.model, llmPreflight?.providerId]);
+
+  const handleSendText = useCallback((text: string) => {
+    handleSend({ text });
+  }, [handleSend]);
 
   const handleClear = useCallback(() => {
     useChatStore.getState().clearMessages();
@@ -298,7 +305,7 @@ export function ChatView() {
         </div>
 
         {messages.length === 0 ? (
-          <EmptyState onSend={handleSend} disabled={!isConnected} />
+          <EmptyState onSend={handleSendText} disabled={!isConnected} />
         ) : (
           <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
             <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>

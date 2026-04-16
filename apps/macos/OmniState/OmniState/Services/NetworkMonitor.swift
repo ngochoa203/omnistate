@@ -13,10 +13,28 @@ class NetworkMonitor: ObservableObject {
     @Published var httpPort: Int = 19801
 
     private var timer: Timer?
-    private let baseURL = "http://127.0.0.1:19801"
     private let interval: TimeInterval = 30.0
 
     private init() {}
+
+    private var runtimeConfigPath: String {
+        NSHomeDirectory() + "/.omnistate/llm.runtime.json"
+    }
+
+    private var baseURL: String {
+        guard let data = FileManager.default.contents(atPath: runtimeConfigPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let voice = json["voice"] as? [String: Any],
+              let siri = voice["siri"] as? [String: Any],
+              let endpoint = siri["endpoint"] as? String,
+              let endpointURL = URL(string: endpoint),
+              let host = endpointURL.host,
+              let port = endpointURL.port
+        else {
+            return "http://127.0.0.1:19801"
+        }
+        return "http://\(host):\(port)"
+    }
 
     func startMonitoring() {
         fetch()

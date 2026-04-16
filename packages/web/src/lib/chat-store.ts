@@ -1,16 +1,27 @@
 import { create } from "zustand";
 import { buildMemoryEntry, summarizeMemory } from "./session-memory";
 import type { ClaudeMemPayload } from "./protocol";
+import { storageGetItem, storageSetItem } from "./native-storage";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "system";
   content: string;
   timestamp: number;
+  attachments?: ChatAttachment[];
   taskId?: string;
   steps?: StepInfo[];
   status?: "pending" | "streaming" | "complete" | "failed";
   data?: Record<string, unknown>;
+}
+
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "text" | "file";
+  previewUrl?: string;
 }
 
 export interface StepInfo {
@@ -91,7 +102,7 @@ interface ChatStore {
   applyClaudeMemState: (payload: ClaudeMemPayload) => void;
   noteOutboundTaskRequest: (conversationId: string) => void;
   setConnectionState: (state: ChatStore["connectionState"]) => void;
-  addUserMessage: (content: string) => string;
+  addUserMessage: (content: string, attachments?: ChatAttachment[]) => string;
   addSystemMessage: (content: string, taskId?: string) => string;
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   addStep: (taskId: string, step: StepInfo) => void;
@@ -113,8 +124,16 @@ const CHAT_SNAPSHOT_KEY = "omnistate.chatSnapshot.v2";
 
 function getInitialAppLanguage(): "vi" | "en" {
   if (typeof window === "undefined") return "vi";
-  const saved = window.localStorage.getItem("omnistate.appLanguage");
+  const saved = storageGetItem("omnistate.appLanguage");
   return saved === "en" ? "en" : "vi";
+}
+
+function getInitialTtsEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  const saved = storageGetItem("omnistate.ttsEnabled");
+  if (saved === "1") return true;
+  if (saved === "0") return false;
+  return Boolean(window.omnistateNative?.isNative);
 }
 
 function newConversation(name?: string): Conversation {
@@ -162,11 +181,26 @@ function ensureSessionStates(
 function loadChatSnapshot(): ChatSnapshot | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(CHAT_SNAPSHOT_KEY);
+    const raw = storageGetItem(CHAT_SNAPSHOT_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ChatSnapshot;
     if (!parsed?.conversations?.length) return null;
-    return parsed;
+
+    const normalizedMessagesByConversation: Record<string, ChatMessage[]> = {};
+    for (const conv of parsed.conversations) {
+      const messages = parsed.messagesByConversation?.[conv.id];
+      normalizedMessagesByConversation[conv.id] = Array.isArray(messages) ? messages : [];
+    }
+
+    const currentConversationId = parsed.conversations.some((conv) => conv.id === parsed.currentConversationId)
+      ? parsed.currentConversationId
+      : parsed.conversations[0].id;
+
+    return {
+      ...parsed,
+      currentConversationId,
+      messagesByConversation: normalizedMessagesByConversation,
+    };
   } catch {
     return null;
   }
@@ -175,7 +209,7 @@ function loadChatSnapshot(): ChatSnapshot | null {
 function saveChatSnapshot(snapshot: ChatSnapshot): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(CHAT_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    storageSetItem(CHAT_SNAPSHOT_KEY, JSON.stringify(snapshot));
   } catch {
     // ignore storage errors
   }
@@ -272,7 +306,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   connectionState: "disconnected",
   health: null,
   voiceState: "idle",
-  ttsEnabled: false,
+  ttsEnabled: getInitialTtsEnabled(),
   systemInfo: null,
   llmPreflight: null,
   runtimeConfig: null,
@@ -280,7 +314,7 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   setAppLanguage: (appLanguage) => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem("omnistate.appLanguage", appLanguage);
+      storageSetItem("omnistate.appLanguage", appLanguage);
     }
     set({ appLanguage });
   },
@@ -411,15 +445,22 @@ export const useChatStore = create<ChatStore>((set) => ({
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
-  addUserMessage: (content) => {
+  addUserMessage: (content, attachments) => {
     const id = nextId();
+    const message: ChatMessage = {
+      id,
+      role: "user",
+      content,
+      timestamp: Date.now(),
+      ...(attachments?.length ? { attachments } : {}),
+    };
     set((s) => ({
-      messages: [...s.messages, { id, role: "user", content, timestamp: Date.now() }],
+      messages: [...s.messages, message],
       messagesByConversation: {
         ...s.messagesByConversation,
         [s.currentConversationId]: [
           ...(s.messagesByConversation[s.currentConversationId] ?? []),
-          { id, role: "user", content, timestamp: Date.now() },
+          message,
         ],
       },
       conversations: updateConversationStats(
@@ -481,11 +522,17 @@ export const useChatStore = create<ChatStore>((set) => ({
       },
     })),
 
-  addStep: (taskId) => {
+  addStep: (taskId, step) => {
     set((s) => {
       const conversationId = s.taskConversationMap[taskId] ?? s.currentConversationId;
       const nextMessages = (s.messagesByConversation[conversationId] ?? []).map((m) =>
-        m.taskId === taskId ? { ...m, status: "streaming" as const } : m,
+        m.taskId === taskId
+          ? {
+              ...m,
+              status: "streaming" as const,
+              steps: [...(m.steps ?? []), step],
+            }
+          : m,
       );
       return {
         messages: s.currentConversationId === conversationId ? nextMessages : s.messages,
@@ -573,7 +620,10 @@ export const useChatStore = create<ChatStore>((set) => ({
       conversations: updateConversationStats(s.conversations, s.currentConversationId, 0),
     })),
   setVoiceState: (voiceState) => set({ voiceState }),
-  setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
+  setTtsEnabled: (ttsEnabled) => {
+    storageSetItem("omnistate.ttsEnabled", ttsEnabled ? "1" : "0");
+    set({ ttsEnabled });
+  },
   setSystemInfo: (systemInfo) => set({ systemInfo }),
   setLlmPreflight: (llmPreflight) => set({ llmPreflight }),
   setRuntimeConfig: (runtimeConfig) => set({ runtimeConfig }),

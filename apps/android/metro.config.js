@@ -4,6 +4,9 @@ const path = require("path");
 const projectRoot = __dirname;
 const monorepoRoot = path.resolve(projectRoot, "../..");
 
+// Metro serves both Android (apps/android/android/) and iOS (apps/android/ios/).
+// The watchFolders and nodeModulesPaths config ensures that workspace packages
+// (@omnistate/mobile-core, @omnistate/shared) are resolvable from both platforms.
 const config = {
   watchFolders: [monorepoRoot],
   resolver: {
@@ -11,7 +14,7 @@ const config = {
       path.resolve(projectRoot, "node_modules"),
       path.resolve(monorepoRoot, "node_modules"),
     ],
-    // Don't try to resolve native-only packages in shared code
+    // Let default resolver handle platform-specific extensions (.ios.ts, .android.ts)
     resolveRequest: (context, moduleName, platform) => {
       // Let default resolver handle it
       return context.resolveRequest(context, moduleName, platform);

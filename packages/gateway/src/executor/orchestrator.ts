@@ -28,6 +28,97 @@ function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeToolAlias(
+  tool: string,
+  params: Record<string, unknown>
+): { tool: string; params: Record<string, unknown> } {
+  const action = String(params.action ?? params.op ?? "").toLowerCase();
+
+  if (tool === "app.control") {
+    if (["move", "mouse_move", "mousemove"].includes(action)) return { tool: "ui.move", params };
+    if (["click", "tap"].includes(action)) return { tool: "ui.click", params };
+    if (["doubleclick", "double_click", "double-tap"].includes(action)) return { tool: "ui.doubleClickAt", params };
+    if (["drag", "dragdrop", "drag_drop"].includes(action)) return { tool: "ui.drag", params };
+    if (["type", "text", "input", "write"].includes(action)) return { tool: "ui.type", params };
+    if (["key", "keypress", "hotkey"].includes(action)) return { tool: "ui.key", params };
+    if (["scroll", "wheel"].includes(action)) return { tool: "ui.scroll", params };
+    if (["find", "locate"].includes(action)) return { tool: "ui.find", params };
+    return { tool: "ui.click", params };
+  }
+
+  if (tool === "app.keyboard") {
+    if (["key", "keypress", "hotkey", "shortcut"].includes(action) || typeof params.key === "string") {
+      return { tool: "ui.key", params };
+    }
+    return { tool: "ui.type", params };
+  }
+
+  if (tool === "app.mouse") {
+    if (["move", "mousemove"].includes(action)) return { tool: "ui.move", params };
+    if (["drag", "dragdrop", "drag_drop"].includes(action)) return { tool: "ui.drag", params };
+    if (["scroll", "wheel"].includes(action)) return { tool: "ui.scroll", params };
+    if (["doubleclick", "double_click"].includes(action)) return { tool: "ui.doubleClickAt", params };
+    return { tool: "ui.click", params };
+  }
+
+  if (tool === "app.clipboard") {
+    if (["clear"].includes(action)) return { tool: "clipboard.clear", params };
+    if (["history"].includes(action)) return { tool: "clipboard.history", params };
+    if (
+      ["set", "write", "copy"].includes(action) ||
+      typeof params.content === "string" ||
+      typeof params.text === "string"
+    ) {
+      const next = { ...params };
+      if (typeof next.content !== "string" && typeof next.text === "string") {
+        next.content = next.text;
+      }
+      return { tool: "clipboard.set", params: next };
+    }
+    return { tool: "clipboard.get", params };
+  }
+
+  if (tool.startsWith("app.clipboard.")) {
+    return { tool: tool.replace("app.clipboard.", "clipboard."), params };
+  }
+
+  if (tool.startsWith("app.keyboard.")) {
+    const suffix = tool.slice("app.keyboard.".length);
+    if (["key", "press", "tap", "hotkey", "shortcut"].includes(suffix)) {
+      return { tool: "ui.key", params };
+    }
+    return { tool: "ui.type", params };
+  }
+
+  if (tool.startsWith("app.mouse.")) {
+    const suffix = tool.slice("app.mouse.".length);
+    const map: Record<string, string> = {
+      move: "ui.move",
+      click: "ui.click",
+      doubleclick: "ui.doubleClickAt",
+      drag: "ui.drag",
+      scroll: "ui.scroll",
+    };
+    return { tool: map[suffix] ?? "ui.click", params };
+  }
+
+  if (tool === "app.screen") {
+    if (["record.start", "start_record", "start-record", "record-start"].includes(action)) {
+      return { tool: "screen.record.start", params };
+    }
+    if (["record.stop", "stop_record", "stop-record", "record-stop"].includes(action)) {
+      return { tool: "screen.record.stop", params };
+    }
+    return { tool: "screen.capture", params };
+  }
+
+  if (tool.startsWith("app.screen.")) {
+    return { tool: tool.replace("app.screen.", "screen."), params };
+  }
+
+  return { tool, params };
+}
+
 /**
  * Execution Orchestrator — coordinates the three execution layers.
  *
@@ -57,7 +148,7 @@ export class Orchestrator {
 
   // Permission responder system (optional — wired in when approvalPolicy is configured)
   approvalEngine?: ApprovalEngine;
-  permissionResponder?: PermissionResponder;
+  permissionResponder?: PermissionResponder | ClaudeCodeResponder;
   claudeCodeResponder?: ClaudeCodeResponder;
 
   constructor() {
@@ -71,8 +162,8 @@ export class Orchestrator {
     this.communication = new CommunicationLayer();
     this.software = new SoftwareLayer(this.deep);
     this.browser = new BrowserLayer(this.surface);
-    this.developer = new DeveloperLayer();
-    this.maintenance = new MaintenanceLayer();
+    this.developer = new DeveloperLayer(this.deep);
+    this.maintenance = new MaintenanceLayer(this.deep);
     this.media = new MediaLayer(this.deep);
     this.fleet = new FleetLayer(new DeviceRepository(getDb()));
     this.health = new AdvancedHealthMonitor();
@@ -136,9 +227,19 @@ export class Orchestrator {
     node: StateNode,
     _context: Map<string, StepResult>
   ): Promise<StepResult> {
-    const layer = this.selectLayer(node);
-    const params = node.action.params;
-    const tool = node.action.tool;
+    const normalized = normalizeToolAlias(node.action.tool, node.action.params);
+    const effectiveNode: StateNode = {
+      ...node,
+      action: {
+        ...node.action,
+        tool: normalized.tool,
+        params: normalized.params,
+      },
+    };
+
+    const layer = this.selectLayer(effectiveNode);
+    const params = effectiveNode.action.params;
+    const tool = effectiveNode.action.tool;
 
     const startMs = Date.now();
     let data: Record<string, unknown> = {};
@@ -1354,6 +1455,77 @@ end tell`);
         return { success: true, path: desktop, output: orgOut };
       }
 
+      // ── File system extended operations ──────────────────────────────
+      case "file.list": {
+        const entries = await this.deep.listDirectory(String(params.path), params as any);
+        return { entries };
+      }
+      case "file.metadata": {
+        const metadata = await this.deep.getMetadata(String(params.path));
+        return { metadata };
+      }
+      case "file.exists": {
+        const exists = await this.deep.fileExists(String(params.path));
+        return { exists };
+      }
+      case "file.size": {
+        const size = await this.deep.getFileSize(String(params.path));
+        return { size };
+      }
+      case "file.hash": {
+        const hash = await this.deep.getFileHash(String(params.path), params.algorithm as string | undefined);
+        return { hash };
+      }
+      case "file.touch": {
+        await this.deep.touchFile(String(params.path));
+        return { success: true };
+      }
+      case "file.append": {
+        await this.deep.appendFile(String(params.path), String(params.content));
+        return { success: true };
+      }
+      case "file.symlink": {
+        await this.deep.createSymlink(String(params.target), String(params.linkPath));
+        return { success: true };
+      }
+      case "file.resolveSymlink": {
+        const resolved = await this.deep.resolveSymlink(String(params.path));
+        return { resolved };
+      }
+      case "file.diskSpace": {
+        const space = await this.deep.getDiskSpace(params.path as string | undefined);
+        return space;
+      }
+      case "file.compare": {
+        const result = await this.deep.compareFiles(String(params.pathA), String(params.pathB));
+        return result;
+      }
+      case "file.mkdir": {
+        await this.deep.createDirectory(String(params.path));
+        return { success: true };
+      }
+      case "file.readBuffer": {
+        const buffer = await this.deep.readFileBuffer(String(params.path));
+        return { data: buffer.toString("base64"), size: buffer.length };
+      }
+      case "file.getPermissions": {
+        const perms = await this.deep.getPermissions(String(params.path));
+        return perms;
+      }
+      case "file.setPermissions": {
+        await this.deep.setPermissions(String(params.path), String(params.mode));
+        return { success: true };
+      }
+      case "file.watch": {
+        const watcher = await this.deep.watchDirectory(String(params.path), () => {});
+        // Auto-stop after timeout
+        setTimeout(() => watcher.stop(), (params.timeoutMs as number) ?? 30000);
+        return { success: true, note: "Watching started" };
+      }
+      case "system.info": {
+        return this.deep.getSystemInfo() as unknown as Record<string, unknown>;
+      }
+
       // ── UC4.1: Open URL / Tab management ─────────────────────────────
       case "browser.open": {
         const url = String(params.url ?? "");
@@ -2084,6 +2256,12 @@ end tell`);
     // Mouse/keyboard/accessibility actions require Accessibility permission.
     const requiresAccessibility = tool.startsWith("ui.");
     if (requiresAccessibility && !this.surface.isAccessibilityTrusted()) {
+      // macOS can report stale trust state right after user grants permission.
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (this.surface.isAccessibilityTrusted()) {
+        return this.executeSurface(tool, params);
+      }
+
       // Try to detect if there's a permission dialog on screen we can auto-approve
       if (this.permissionResponder) {
         const detected = await this.vision.detectPermissionDialog();
@@ -2102,23 +2280,33 @@ end tell`);
             await new Promise(r => setTimeout(r, 1000));
             // Re-check
             if (!this.surface.isAccessibilityTrusted()) {
-              throw new Error("Permission dialog was approved but accessibility still not granted. Please enable manually in System Settings → Privacy & Security → Accessibility.");
+              throw new Error("Permission dialog was approved but accessibility is still unavailable for the current gateway process. Enable System Settings → Privacy & Security → Accessibility for your terminal/node host, then restart gateway.");
             }
           } else {
             throw new Error(`Accessibility permission needed but policy denied auto-approval: ${decision.reason}`);
           }
         } else {
-          throw new Error("Accessibility permission is not granted. Enable in System Settings → Privacy & Security → Accessibility.");
+          throw new Error("Accessibility permission is not granted for the current gateway process. Enable in System Settings → Privacy & Security → Accessibility and restart gateway.");
         }
       } else {
-        throw new Error("Accessibility permission is not granted. Enable in System Settings → Privacy & Security → Accessibility.");
+        throw new Error("Accessibility permission is not granted for the current gateway process. Enable in System Settings → Privacy & Security → Accessibility and restart gateway.");
       }
     }
 
     switch (tool) {
       case "screen.capture": {
         const capture = await this.surface.captureScreen();
+        const outputPath = typeof params.outputPath === "string" && params.outputPath.trim()
+          ? params.outputPath.trim()
+          : `/tmp/omnistate-capture-${Date.now()}.png`;
+        const escapedOutputPath = outputPath.replace(/"/g, '\\"');
+        try {
+          await this.deep.execAsync(`screencapture -x "${escapedOutputPath}"`, 8000);
+        } catch {
+          // Keep metadata-only fallback if shell capture fails.
+        }
         return {
+          screenshotPath: outputPath,
           width: capture.width,
           height: capture.height,
           timestampMs: capture.timestampMs,
@@ -2134,7 +2322,21 @@ end tell`);
           params.width as number,
           params.height as number,
         );
+        const outputPath = typeof params.outputPath === "string" && params.outputPath.trim()
+          ? params.outputPath.trim()
+          : `/tmp/omnistate-capture-region-${Date.now()}.png`;
+        const escapedOutputPath = outputPath.replace(/"/g, '\\"');
+        try {
+          const x = Math.max(0, Math.round((params.x as number) || 0));
+          const y = Math.max(0, Math.round((params.y as number) || 0));
+          const w = Math.max(1, Math.round((params.width as number) || capture.width));
+          const h = Math.max(1, Math.round((params.height as number) || capture.height));
+          await this.deep.execAsync(`screencapture -x -R${x},${y},${w},${h} "${escapedOutputPath}"`, 8000);
+        } catch {
+          // Keep metadata-only fallback if shell capture fails.
+        }
         return {
+          screenshotPath: outputPath,
           width: capture.width,
           height: capture.height,
           timestampMs: capture.timestampMs,
@@ -2145,7 +2347,17 @@ end tell`);
       }
       case "screen.capture.window": {
         const capture = await this.surface.captureWindow(params.windowId as number);
+        const outputPath = typeof params.outputPath === "string" && params.outputPath.trim()
+          ? params.outputPath.trim()
+          : `/tmp/omnistate-capture-window-${Date.now()}.png`;
+        const escapedOutputPath = outputPath.replace(/"/g, '\\"');
+        try {
+          await this.deep.execAsync(`screencapture -x "${escapedOutputPath}"`, 8000);
+        } catch {
+          // Keep metadata-only fallback if shell capture fails.
+        }
         return {
+          screenshotPath: outputPath,
           width: capture.width,
           height: capture.height,
           timestampMs: capture.timestampMs,
@@ -2493,10 +2705,18 @@ end tell`);
       case "comm.getContactDetails": { const contact = await this.communication.getContactDetails(params.contactId as string); return { contact }; }
       case "comm.addContact": { await this.communication.addContact(params as unknown as Parameters<typeof this.communication.addContact>[0]); return { success: true }; }
       case "comm.getContactGroups": { const groups = await this.communication.getContactGroups(); return { groups }; }
-      case "comm.sendEmailWithAttachment": { await this.communication.sendEmailWithAttachment(params as unknown as Parameters<typeof this.communication.sendEmailWithAttachment>[0]); return { success: true }; }
+      case "comm.sendEmailWithAttachment": {
+        await this.communication.sendEmailWithAttachment(
+          params.to as string,
+          params.subject as string,
+          params.body as string,
+          params.attachmentPath as string
+        );
+        return { success: true };
+      }
       case "comm.getEmailAccounts": { const accounts = await this.communication.getEmailAccounts(); return { accounts }; }
       case "comm.moveEmail": { await this.communication.moveEmail(params.messageId as string, params.mailbox as string); return { success: true }; }
-      case "comm.flagEmail": { await this.communication.flagEmail(params.messageId as string, params.flagged as boolean | undefined); return { success: true }; }
+      case "comm.flagEmail": { await this.communication.flagEmail(params.messageId as string, Boolean(params.flagged)); return { success: true }; }
       case "comm.startFaceTimeCall": { await this.communication.startFaceTimeCall(params.contact as string); return { success: true }; }
       case "comm.endFaceTimeCall": { await this.communication.endFaceTimeCall(); return { success: true }; }
       case "comm.isFaceTimeActive": { const active = await this.communication.isFaceTimeActive(); return { active }; }
@@ -2506,7 +2726,14 @@ end tell`);
       case "comm.getReminderLists": { const lists = await this.communication.getReminderLists(); return { lists }; }
       case "comm.deleteReminder": { await this.communication.deleteReminder(params.reminderId as string); return { success: true }; }
       case "comm.getNotes": { const notes = await this.communication.getNotes(params.folder as string | undefined); return { notes }; }
-      case "comm.createNote": { await this.communication.createNote(params as unknown as Parameters<typeof this.communication.createNote>[0]); return { success: true }; }
+      case "comm.createNote": {
+        await this.communication.createNote(
+          params.title as string,
+          params.body as string,
+          params.folder as string | undefined
+        );
+        return { success: true };
+      }
       case "comm.searchNotes": { const notes = await this.communication.searchNotes(params.query as string); return { notes }; }
       case "comm.getNoteFolders": { const folders = await this.communication.getNoteFolders(); return { folders }; }
       default: throw new Error(`Unknown communication tool: ${tool}`);
@@ -2557,8 +2784,8 @@ end tell`);
       case "software.getPythonVersions": { const versions = await this.software.getPythonVersions(); return { versions }; }
       case "software.setPythonVersion": { await this.software.setPythonVersion(params.version as string); return { success: true }; }
       case "software.getRubyVersions": { const versions = await this.software.getRubyVersions(); return { versions }; }
-      case "software.caskInstall": { const result = await this.software.caskInstall(params.packages as string[]); return result as unknown as Record<string, unknown>; }
-      case "software.caskUninstall": { await this.software.caskUninstall(params.packages as string[]); return { success: true }; }
+      case "software.caskInstall": { const result = await this.software.caskInstall(params.name as string); return result as unknown as Record<string, unknown>; }
+      case "software.caskUninstall": { const result = await this.software.caskUninstall(params.name as string); return result as unknown as Record<string, unknown>; }
       case "software.caskList": { const packages = await this.software.caskList(); return { packages }; }
       case "software.caskSearch": { const packages = await this.software.caskSearch(params.query as string); return { packages }; }
       case "software.getInstalledApps": { const apps = await this.software.getInstalledApps(); return { apps }; }
@@ -2603,24 +2830,29 @@ end tell`);
       case "browser.setLocalStorage": { await this.browser.setLocalStorage(params.key as string, params.value as string, browser); return { success: true }; }
       case "browser.screenshot": { const buffer = await this.browser.capturePageScreenshot(browser); return { data: buffer.toString("base64"), format: "png" }; }
       case "browser.savePdf": { await this.browser.savePageAsPdf(params.outputPath as string, browser); return { success: true }; }
-      case "browser.startHeadless": { const result = await this.browser.startHeadless(params as unknown as Parameters<typeof this.browser.startHeadless>[0]); return result as unknown as Record<string, unknown>; }
-      case "browser.stopHeadless": { await this.browser.stopHeadless(params.sessionId as string | undefined); return { success: true }; }
-      case "browser.isHeadlessRunning": { const running = await this.browser.isHeadlessRunning(params.sessionId as string | undefined); return { running }; }
-      case "browser.executeInHeadless": { const result = await this.browser.executeInHeadless(params.script as string, params.sessionId as string | undefined); return { result }; }
+      case "browser.startHeadless": {
+        const result = await this.browser.startHeadlessBrowser(
+          params as unknown as Parameters<typeof this.browser.startHeadlessBrowser>[0]
+        );
+        return result as unknown as Record<string, unknown>;
+      }
+      case "browser.stopHeadless": { await this.browser.stopHeadlessBrowser(); return { success: true }; }
+      case "browser.isHeadlessRunning": { const running = await this.browser.isHeadlessRunning(); return { running }; }
+      case "browser.executeInHeadless": { const result = await this.browser.executeInHeadless(params.url as string, params.script as string); return { result }; }
       case "browser.pinTab": { await this.browser.pinTab(params.tabIndex as number | undefined, browser); return { success: true }; }
       case "browser.muteTab": { await this.browser.muteTab(params.tabIndex as number | undefined, browser); return { success: true }; }
       case "browser.unmuteTab": { await this.browser.unmuteTab(params.tabIndex as number | undefined, browser); return { success: true }; }
-      case "browser.getTabMemory": { const memory = await this.browser.getTabMemory(params.tabIndex as number | undefined, browser); return { memory }; }
-      case "browser.getDownloads": { const downloads = await this.browser.getDownloads(browser); return { downloads }; }
+      case "browser.getTabMemory": { const memory = await this.browser.getTabMemory(); return { memory }; }
+      case "browser.getDownloads": { const downloads = await this.browser.getDownloads(params.limit as number | undefined, browser); return { downloads }; }
       case "browser.clearDownloads": { await this.browser.clearDownloads(browser); return { success: true }; }
       case "browser.getDownloadDirectory": { const directory = await this.browser.getDownloadDirectory(browser); return { directory }; }
       case "browser.getBookmarks": { const bookmarks = await this.browser.getBookmarks(params.folder as string | undefined, browser); return { bookmarks }; }
-      case "browser.addBookmark": { await this.browser.addBookmark(params.url as string, params.title as string | undefined, params.folder as string | undefined, browser); return { success: true }; }
+      case "browser.addBookmark": { await this.browser.addBookmark(params.url as string, (params.title as string | undefined) ?? "Bookmark", params.folder as string | undefined, browser); return { success: true }; }
       case "browser.searchBookmarks": { const bookmarks = await this.browser.searchBookmarks(params.query as string, browser); return { bookmarks }; }
-      case "browser.getHistory": { const history = await this.browser.getHistory(params.limit as number | undefined, params.query as string | undefined, browser); return { history }; }
-      case "browser.getPageLoadTime": { const loadTime = await this.browser.getPageLoadTime(browser); return { loadTime }; }
-      case "browser.getNetworkRequests": { const requests = await this.browser.getNetworkRequests(browser); return { requests }; }
-      case "browser.blockUrls": { await this.browser.blockUrls(params.patterns as string[], browser); return { success: true }; }
+      case "browser.getHistory": { const history = await this.browser.getHistory(params.limit as number | undefined, undefined, browser); return { history }; }
+      case "browser.getPageLoadTime": { const loadTime = await this.browser.getPageLoadTime(undefined, browser); return { loadTime }; }
+      case "browser.getNetworkRequests": { const requests = await this.browser.getNetworkRequests(undefined, browser); return { requests }; }
+      case "browser.blockUrls": { await this.browser.blockUrls(params.patterns as string[]); return { success: true }; }
       default: throw new Error(`Unknown browser tool: ${tool}`);
     }
   }
@@ -2635,7 +2867,7 @@ end tell`);
       case "dev.runCommand": { const result = await this.developer.runCommand(params.command as string, params as unknown as Parameters<typeof this.developer.runCommand>[1]); return result as unknown as Record<string, unknown>; }
       case "dev.runCommandAsync": { const result = await this.developer.runCommandAsync(params.command as string, params as unknown as Parameters<typeof this.developer.runCommandAsync>[1]); return result as unknown as Record<string, unknown>; }
       case "dev.getRunningShells": { const shells = await this.developer.getRunningShells(); return { shells }; }
-      case "dev.getShellHistory": { const history = await this.developer.getShellHistory(params.limit as number | undefined); return { history }; }
+      case "dev.getShellHistory": { const history = await this.developer.getShellHistory((params.shell as "zsh" | "bash" | undefined) ?? "zsh", params.limit as number | undefined); return { history }; }
       case "dev.getEnvironment": { const env = await this.developer.getEnvironment(); return { env }; }
       case "dev.gitStatus": { const status = await this.developer.gitStatus(params.repoPath as string | undefined); return status as unknown as Record<string, unknown>; }
       case "dev.gitLog": { const log = await this.developer.gitLog(params.repoPath as string | undefined, params.limit as number | undefined); return { log }; }
@@ -2645,12 +2877,31 @@ end tell`);
       case "dev.gitPush": { const result = await this.developer.gitPush(params.repoPath as string | undefined, params.remote as string | undefined, params.branch as string | undefined); return result as unknown as Record<string, unknown>; }
       case "dev.gitPull": { const result = await this.developer.gitPull(params.repoPath as string | undefined, params.remote as string | undefined); return result as unknown as Record<string, unknown>; }
       case "dev.gitClone": { const result = await this.developer.gitClone(params.url as string, params.destination as string | undefined); return result as unknown as Record<string, unknown>; }
-      case "dev.openInEditor": { await this.developer.openInEditor(params.path as string, params.editor as string | undefined); return { success: true }; }
-      case "dev.openProject": { await this.developer.openProject(params.path as string, params.editor as string | undefined); return { success: true }; }
+      case "dev.openInEditor": {
+        await this.developer.openInEditor(
+          params.path as string,
+          params.editor as Parameters<typeof this.developer.openInEditor>[1]
+        );
+        return { success: true };
+      }
+      case "dev.openProject": {
+        await this.developer.openProject(
+          params.path as string,
+          params.editor as Parameters<typeof this.developer.openProject>[1]
+        );
+        return { success: true };
+      }
       case "dev.getOpenEditors": { const editors = await this.developer.getOpenEditors(); return { editors }; }
-      case "dev.searchInProject": { const results = await this.developer.searchInProject(params.query as string, params.projectPath as string | undefined, params.options as unknown as Parameters<typeof this.developer.searchInProject>[2]); return { results }; }
+      case "dev.searchInProject": {
+        const results = await this.developer.searchInProject(
+          params.query as string,
+          (params.projectPath as string | undefined) ?? process.cwd(),
+          params.options as unknown as Parameters<typeof this.developer.searchInProject>[2]
+        );
+        return { results };
+      }
       case "dev.getProjectStructure": { const structure = await this.developer.getProjectStructure(params.path as string, params.depth as number | undefined); return { structure }; }
-      case "dev.dockerPs": { const containers = await this.developer.dockerPs(params.all as boolean | undefined); return { containers }; }
+      case "dev.dockerPs": { const containers = await this.developer.dockerPs(); return { containers }; }
       case "dev.dockerImages": { const images = await this.developer.dockerImages(); return { images }; }
       case "dev.dockerRun": { const result = await this.developer.dockerRun(params as unknown as Parameters<typeof this.developer.dockerRun>[0]); return result as unknown as Record<string, unknown>; }
       case "dev.dockerStop": { await this.developer.dockerStop(params.containerId as string); return { success: true }; }
@@ -2681,7 +2932,7 @@ end tell`);
       case "maint.killProcess": { const result = await this.maintenance.killProcess(params.pid as number, params.force as boolean | undefined); return result as unknown as Record<string, unknown>; }
       case "maint.killByName": { const result = await this.maintenance.killByName(params.name as string, params.force as boolean | undefined); return result as unknown as Record<string, unknown>; }
       case "maint.getProcessInfo": { const info = await this.maintenance.getProcessInfo(params.pid as number); return { info }; }
-      case "maint.getResourceHogs": { const hogs = await this.maintenance.getResourceHogs(params.limit as number | undefined); return { hogs }; }
+      case "maint.getResourceHogs": { const hogs = await this.maintenance.getResourceHogs((params.type as "cpu" | "memory" | undefined) ?? "cpu", params.limit as number | undefined); return { hogs }; }
       case "maint.getZombieProcesses": { const zombies = await this.maintenance.getZombieProcesses(); return { zombies }; }
       case "maint.getSystemLogs": { const logs = await this.maintenance.getSystemLogs(params.limit as number | undefined, params.since as string | undefined); return { logs }; }
       case "maint.getAppLogs": { const logs = await this.maintenance.getAppLogs(params.appName as string, params.limit as number | undefined); return { logs }; }
@@ -2715,15 +2966,15 @@ end tell`);
       case "media.setAudioOutput": { await this.media.setAudioOutput(params.deviceName as string); return { success: true }; }
       case "media.getPlaylists": { const playlists = await this.media.getPlaylists(params.app as "music" | "spotify" | undefined); return { playlists }; }
       case "media.playPlaylist": { await this.media.playPlaylist(params.name as string, params.app as "music" | "spotify" | undefined); return { success: true }; }
-      case "media.addToPlaylist": { await this.media.addToPlaylist(params.playlistName as string, params.trackId as string, params.app as "music" | "spotify" | undefined); return { success: true }; }
-      case "media.createPlaylist": { const playlist = await this.media.createPlaylist(params.name as string, params.app as "music" | "spotify" | undefined); return { playlist }; }
+      case "media.addToPlaylist": { await this.media.addToPlaylist(params.trackName as string, params.playlistName as string); return { success: true }; }
+      case "media.createPlaylist": { await this.media.createPlaylist(params.name as string, params.app as "music" | "spotify" | undefined); return { success: true }; }
       case "media.searchTracks": { const results = await this.media.searchTracks(params.query as string, params.app as "music" | "spotify" | undefined); return { results }; }
       case "media.getAirPlayDevices": { const devices = await this.media.getAirPlayDevices(); return { devices }; }
       case "media.setAirPlayDevice": { await this.media.setAirPlayDevice(params.deviceName as string); return { success: true }; }
       case "media.isAirPlaying": { const playing = await this.media.isAirPlaying(); return { playing }; }
       case "media.stopAirPlay": { await this.media.stopAirPlay(); return { success: true }; }
       case "media.getVideoPlayers": { const players = await this.media.getVideoPlayers(); return { players }; }
-      case "media.controlVideo": { const result = await this.media.controlVideo(params.action as Parameters<typeof this.media.controlVideo>[0], params.value as number | undefined); return result as unknown as Record<string, unknown>; }
+      case "media.controlVideo": { await this.media.controlVideo(params.action as Parameters<typeof this.media.controlVideo>[0]); return { success: true }; }
       case "media.getVideoInfo": { const info = await this.media.getVideoInfo(); return { info }; }
       case "media.setVideoPosition": { await this.media.setVideoPosition(params.seconds as number); return { success: true }; }
       default: throw new Error(`Unknown media tool: ${tool}`);
@@ -2742,20 +2993,69 @@ end tell`);
       case "fleet.listOnlineDevices": { const devices = await this.fleet.listOnlineDevices(); return { devices }; }
       case "fleet.getFleetOverview": { const overview = await this.fleet.getFleetOverview(); return { overview }; }
       case "fleet.sendTask": { const result = await this.fleet.sendTask(params.deviceId as string, params.task as Parameters<typeof this.fleet.sendTask>[1]); return result as unknown as Record<string, unknown>; }
-      case "fleet.broadcastTask": { const results = await this.fleet.broadcastTask(params.task as Parameters<typeof this.fleet.broadcastTask>[0], params.deviceIds as string[] | undefined); return { results }; }
+      case "fleet.broadcastTask": {
+        const results = await this.fleet.broadcastTask(
+          params.task as Parameters<typeof this.fleet.broadcastTask>[0],
+          params.filter as Parameters<typeof this.fleet.broadcastTask>[1]
+        );
+        return { results };
+      }
       case "fleet.getTaskStatus": { const status = await this.fleet.getTaskStatus(params.deviceId as string, params.taskId as string); return { status }; }
       case "fleet.cancelTask": { const success = await this.fleet.cancelTask(params.deviceId as string, params.taskId as string); return { success }; }
       case "fleet.collectResults": { const results = await this.fleet.collectResults(params.taskId as string); return { results }; }
       case "fleet.sendFile": { const result = await this.fleet.sendFile(params.deviceId as string, params.localPath as string, params.remotePath as string); return result as unknown as Record<string, unknown>; }
       case "fleet.requestFile": { const result = await this.fleet.requestFile(params.deviceId as string, params.remotePath as string, params.localPath as string); return result as unknown as Record<string, unknown>; }
-      case "fleet.syncDirectory": { const result = await this.fleet.syncDirectory(params.deviceId as string, params.localDir as string, params.remoteDir as string, params.options as Parameters<typeof this.fleet.syncDirectory>[3] | undefined); return result as unknown as Record<string, unknown>; }
+      case "fleet.syncDirectory": {
+        const result = await this.fleet.syncDirectory(
+          params.deviceId as string,
+          params.localDir as string,
+          params.remoteDir as string,
+          (params.direction as Parameters<typeof this.fleet.syncDirectory>[3] | undefined) ?? "push"
+        );
+        return result as unknown as Record<string, unknown>;
+      }
       case "fleet.getRemoteFileList": { const files = await this.fleet.getRemoteFileList(params.deviceId as string, params.remotePath as string); return { files }; }
       case "fleet.syncClipboard": { const result = await this.fleet.syncClipboard(params.deviceId as string, params.direction as Parameters<typeof this.fleet.syncClipboard>[1]); return result as unknown as Record<string, unknown>; }
-      case "fleet.sendNotification": { const result = await this.fleet.sendNotification(params.deviceId as string, params.notification as Parameters<typeof this.fleet.sendNotification>[1]); return result as unknown as Record<string, unknown>; }
+      case "fleet.sendNotification": {
+        const result = await this.fleet.sendNotification(
+          params.deviceId as string,
+          String(params.title ?? ""),
+          String(params.body ?? "")
+        );
+        return result as unknown as Record<string, unknown>;
+      }
       case "fleet.getRemoteClipboard": { const content = await this.fleet.getRemoteClipboard(params.deviceId as string); return { content }; }
       case "fleet.startHeartbeat": { this.fleet.startHeartbeat(params.intervalMs as number | undefined); return { success: true }; }
       case "fleet.stopHeartbeat": { this.fleet.stopHeartbeat(); return { success: true }; }
       case "fleet.getHealthHistory": { const history = this.fleet.getHealthHistory(params.deviceId as string); return { history }; }
+      case "fleet.createTaskGroup": {
+        const result = await this.fleet.createTaskGroup(
+          params.tasks as Parameters<typeof this.fleet.createTaskGroup>[0],
+          params.options as Parameters<typeof this.fleet.createTaskGroup>[1]
+        );
+        return result as unknown as Record<string, unknown>;
+      }
+      case "fleet.getTaskGroupStatus": { const status = await this.fleet.getTaskGroupStatus(params.groupId as string); return { status }; }
+      case "fleet.cancelTaskGroup": { const result = await this.fleet.cancelTaskGroup(params.groupId as string); return result as unknown as Record<string, unknown>; }
+      case "fleet.scheduleTask": {
+        const result = await this.fleet.scheduleTask(
+          params.deviceId as string,
+          params.task as Parameters<typeof this.fleet.scheduleTask>[1],
+          params.cronExpression as string
+        );
+        return result as unknown as Record<string, unknown>;
+      }
+      case "fleet.syncConfig": { await this.fleet.syncConfig(params.deviceId as string, params.config as Record<string, unknown>); return { success: true }; }
+      case "fleet.getRemoteConfig": { const config = await this.fleet.getRemoteConfig(params.deviceId as string); return { config }; }
+      case "fleet.broadcastConfig": { const result = await this.fleet.broadcastConfig(params.config as Record<string, unknown>); return result as unknown as Record<string, unknown>; }
+      case "fleet.getFleetMetrics": { const metrics = await this.fleet.getFleetMetrics(); return { metrics }; }
+      case "fleet.getDeviceMetrics": { const metrics = await this.fleet.getDeviceMetrics(params.deviceId as string); return { metrics }; }
+      case "fleet.setAlertThresholds": { await this.fleet.setAlertThresholds(params.thresholds as Parameters<typeof this.fleet.setAlertThresholds>[0]); return { success: true }; }
+      case "fleet.enableMeshRelay": { await this.fleet.enableMeshRelay(); return { success: true }; }
+      case "fleet.getNetworkTopology": { const topology = await this.fleet.getNetworkTopology(); return { topology }; }
+      case "fleet.findBestRoute": { const route = await this.fleet.findBestRoute(params.fromDeviceId as string, params.toDeviceId as string); return { route }; }
+      case "fleet.wakeDevice": { const success = await this.fleet.wakeDevice(params.deviceId as string); return { success }; }
+      case "fleet.getDeviceMacAddress": { const mac = await this.fleet.getDeviceMacAddress(params.deviceId as string); return { mac }; }
       default: throw new Error(`Unknown fleet tool: ${tool}`);
     }
   }
@@ -2770,7 +3070,7 @@ end tell`);
   private selectLayer(node: StateNode): ExecutionLayer {
     if (node.layer !== "auto") return node.layer;
 
-    const prefix = node.action.tool.split(".")[0];
+    const prefix = normalizeToolAlias(node.action.tool, node.action.params).tool.split(".")[0];
     const surfacePrefixes = new Set(["screen", "ui", "vision"]);
     return surfacePrefixes.has(prefix) ? "surface" : "deep";
   }

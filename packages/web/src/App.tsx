@@ -17,6 +17,7 @@ import { AuthPage } from "./components/AuthPage";
 import { useAuthStore } from "./lib/auth-store";
 import { initAuth } from "./lib/auth-client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { OnboardingWizard, shouldShowOnboarding, markOnboardingComplete } from "./components/OnboardingWizard";
 
 type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers";
 
@@ -127,6 +128,7 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
 export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(shouldShowOnboarding);
 
   const currentProfile = useAuthStore((s) => s.currentProfile);
 
@@ -192,6 +194,19 @@ export function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", position: "relative" }}>
+      {/* Onboarding wizard — shown once on first visit */}
+      {showOnboarding && (
+        <OnboardingWizard
+          onComplete={() => {
+            markOnboardingComplete();
+            setShowOnboarding(false);
+          }}
+          onNavigateToVoice={() => {
+            setShowOnboarding(false);
+            setView("voice");
+          }}
+        />
+      )}
       {/* Background Effects */}
       <div className="bg-orb" style={{ width: 600, height: 600, top: -200, left: -200, background: "radial-gradient(circle, #6366f1, transparent)" }} />
       <div className="bg-orb" style={{ width: 500, height: 500, bottom: -150, right: -100, background: "radial-gradient(circle, #7c3aed, transparent)", opacity: 0.08 }} />
