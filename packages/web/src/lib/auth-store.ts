@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { storageGetItem, storageRemoveItem, storageSetItem } from "./native-storage";
 
 export interface VoiceProfile {
   id: string;
@@ -41,14 +42,27 @@ interface AuthState {
 
 function getStoredProfile(): VoiceProfile | null {
   if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem("omnistate.currentProfile");
-  return stored ? JSON.parse(stored) : null;
+  const stored = storageGetItem("omnistate.currentProfile");
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as VoiceProfile;
+  } catch {
+    storageRemoveItem("omnistate.currentProfile");
+    return null;
+  }
 }
 
 function getStoredProfiles(): VoiceProfile[] {
   if (typeof window === "undefined") return [];
-  const stored = localStorage.getItem("omnistate.profiles");
-  return stored ? JSON.parse(stored) : [];
+  const stored = storageGetItem("omnistate.profiles");
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? (parsed as VoiceProfile[]) : [];
+  } catch {
+    storageRemoveItem("omnistate.profiles");
+    return [];
+  }
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -64,17 +78,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   enrollmentLanguage: "en",
 
   setCurrentProfile: (profile) => {
-    localStorage.setItem("omnistate.currentProfile", JSON.stringify(profile));
+    storageSetItem("omnistate.currentProfile", JSON.stringify(profile));
     set({ currentProfile: profile, isEnrolled: profile.isEnrolled });
   },
 
   setProfiles: (profiles) => {
-    localStorage.setItem("omnistate.profiles", JSON.stringify(profiles));
+    storageSetItem("omnistate.profiles", JSON.stringify(profiles));
     set({ profiles });
   },
 
   clearCurrentProfile: () => {
-    localStorage.removeItem("omnistate.currentProfile");
+    storageRemoveItem("omnistate.currentProfile");
     set({ currentProfile: null, isEnrolled: false });
   },
 
@@ -87,10 +101,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   setEnrollmentLanguage: (enrollmentLanguage) => set({ enrollmentLanguage }),
 
   completeEnrollment: (profile) => {
-    localStorage.setItem("omnistate.currentProfile", JSON.stringify(profile));
+    storageSetItem("omnistate.currentProfile", JSON.stringify(profile));
     const profiles = getStoredProfiles();
     const updated = [...profiles.filter((p) => p.id !== profile.id), profile];
-    localStorage.setItem("omnistate.profiles", JSON.stringify(updated));
+    storageSetItem("omnistate.profiles", JSON.stringify(updated));
     set({
       currentProfile: profile,
       profiles: updated,

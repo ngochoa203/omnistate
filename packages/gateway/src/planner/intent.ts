@@ -43,6 +43,7 @@ const INTENT_TYPES = [
   "power-management",
   "hardware-control",
   "security-management",
+  "peripheral-management",
   "container-management",
   "display-audio",
   "backup-restore",
@@ -333,7 +334,7 @@ const QUICK_INTENT_MAP: Record<string, { type: string; confidence: number }> = {
 // Regex patterns for common phrases
 const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b.*\b(?:zalo|telegram|discord|slack|messages|imessage)\b/i, "app-control"],
-  [/\b(?:email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i, "app-control"],
+  [/\b(?:send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i, "app-control"],
   [/\b(?:calendar|schedule|meeting|appointment|event|lịch|lịch\s*hẹn|cuộc\s*họp)\b/i, "app-control"],
   [/\b(?:reminder|nhắc\s*nhở|alarm|báo\s*thức|timer|hẹn\s*giờ|đếm\s*ngược)\b/i, "app-control"],
   [/\b(?:split|tile|snap|arrange)\b.*\b(?:window|windows)\b/i, "app-control"],
@@ -384,7 +385,7 @@ const HEURISTIC_RULES: Array<{
   entityExtractor?: (m: RegExpMatchArray) => Record<string, Entity>;
 }> = [
   {
-    pattern: /\b(email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i,
+    pattern: /\b(send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i,
     type: "app-control",
     entityExtractor: () => ({ app: { type: "app", value: "Mail" } }),
   },
@@ -466,7 +467,7 @@ const HEURISTIC_RULES: Array<{
   {
     // Messaging actions in chat apps
     pattern:
-      /\b(message|send\s+message|chat\s+with|text\s+to|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b/i,
+      /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b/i,
     type: "app-control",
     entityExtractor: () => ({}),
   },
@@ -560,9 +561,115 @@ function classifyWithHeuristics(text: string): LLMClassificationResult {
 export async function classifyIntent(text: string): Promise<Intent> {
   const forceUiInteraction = /\b(mouse|cursor|click|double\s*click|right\s*click|drag|drop|scroll|move\s+mouse|click\s+at|x\s*\d+\s*y\s*\d+|k[ée]o|nh[aá]p|chu[ộo]t|cu[ộo]n)\b/i.test(text);
   const strictLlm = isLlmRequired();
+  const normalized = text.toLowerCase().trim();
+
+  // Deterministic high-signal routing to keep critical planner paths stable
+  // even when LLM output drifts or provider/network is unavailable.
+  const preLlmRules: Array<{ pattern: RegExp; type: IntentType; confidence: number }> = [
+    {
+      pattern: /\b(?:run|execute)\b.*\b(?:npm|pnpm|yarn|git|python|node|bash|sh|make|cargo)\b/i,
+      type: "shell-command",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+        {
+          pattern: /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i,
+          type: "app-control",
+          confidence: 0.94,
+        },
+    {
+      pattern: /\b(split|tile|snap|arrange)\b.{0,30}\b(window|windows)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(vault|bitwarden|1password|autofill\s+password|password\s+manager|điền\s+mật\s+khẩu)\b/i,
+      type: "security-management",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\bopen\s+.+\s+on\s+youtube\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:on|in)\s+safari\b/i,
+      type: "app-control",
+      confidence: 0.92,
+    },
+    {
+      pattern: /\b(?:switch|mirror|extend|external\s+display|monitor)\b.*\b(display|screen|monitor)\b/i,
+      type: "display-audio",
+      confidence: 0.93,
+    },
+    {
+      pattern: /(?:\b(?:bluetooth|\bbt\b)\b.*\b(?:toggle|turn\s*off|disable|tắt)\b)|(?:\b(?:toggle|turn\s*off|disable|tắt)\b.*\b(?:bluetooth|\bbt\b)\b)/i,
+      type: "peripheral-management",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(bookmark|save\s+page|lưu\s+trang\s+dấu|d[ấa]u\s+trang)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(open|show|view)\b.*\b(history)\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(clear|delete|x[oó]a|d[ọo]n)\b.*\b(history|cache|cookies|browsing data)\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:defrag|trimforce|trim\s*ssd|ssd\s*trim|disk\s*optimization|optimi[sz]e\s*disk|lên\s*lịch\s*tối\s*ưu\s*đĩa)\b/i,
+      type: "disk-cleanup",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:summari[sz]e\b.*\b(?:context|workspace|work)\b|context\s*summary|t[oó]m\s*tắt\b.*\b(?:ng[ữu]\s*cảnh|màn\s*hình|công\s*việc)\b)\b/i,
+      type: "system-query",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:connect|join|kết\s*nối)\b.*\b(?:wifi|wi-fi|wireless)\b/i,
+      type: "network-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:translate\s*(?:screen|this|selection|text)|dịch\s*(?:màn\s*hình|đoạn\s*này|văn\s*bản|nội\s*dung))\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:screenshot|screen\s*capture|capture\s*screen|chụp\s*màn\s*hình|chup\s*man\s*hinh)\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+  ];
+
+  for (const rule of preLlmRules) {
+    if (rule.pattern.test(text)) {
+      return {
+        type: rule.type,
+        entities: {},
+        confidence: rule.confidence,
+        rawText: text,
+      };
+    }
+  }
 
   // Quick match for single-word commands
-  const normalized = text.toLowerCase().trim();
   const quickMatch = QUICK_INTENT_MAP[normalized];
   if (!strictLlm && quickMatch) {
     return {
@@ -646,9 +753,74 @@ interface DecomposedStep {
   tool: string;
 }
 
+const LEGACY_TOOL_ALIASES: Record<string, string> = {
+  "app.control": "app.script",
+  "keyboard.shortcut": "ui.key",
+  "keyboard.press": "ui.key",
+  "keyboard.type": "ui.type",
+  "mouse.click": "ui.click",
+  "mouse.move": "ui.move",
+  "mouse.scroll": "ui.scroll",
+  "screen.screenshot": "screen.capture",
+  "screen.shot": "screen.capture",
+  "ui.prompt": "generic.execute",
+  "system.query": "generic.execute",
+};
+
+const SUPPORTED_DECOMPOSED_TOOLS = new Set<string>([
+  "shell.exec",
+  "app.launch",
+  "app.activate",
+  "app.quit",
+  "app.script",
+  "file.read",
+  "file.write",
+  "ui.find",
+  "ui.move",
+  "ui.click",
+  "ui.type",
+  "ui.key",
+  "ui.scroll",
+  "screen.capture",
+  "system.info",
+  "generic.execute",
+]);
+
+function defaultToolForIntentType(type: IntentType): string {
+  switch (type) {
+    case "shell-command":
+      return "shell.exec";
+    case "app-launch":
+      return "app.launch";
+    case "app-control":
+      return "app.script";
+    case "file-operation":
+      return "file.read";
+    case "ui-interaction":
+      return "ui.click";
+    case "system-query":
+      return "system.info";
+    default:
+      return "generic.execute";
+  }
+}
+
+function normalizeStepTool(rawTool: string, type: IntentType): string {
+  const tool = rawTool.trim();
+  const mapped = LEGACY_TOOL_ALIASES[tool] ?? tool;
+  if (SUPPORTED_DECOMPOSED_TOOLS.has(mapped)) {
+    return mapped;
+  }
+  return defaultToolForIntentType(type);
+}
+
 async function decomposeMultiStep(
   text: string,
 ): Promise<DecomposedStep[] | null> {
+  if (!isLlmRequired()) {
+    return null;
+  }
+
   const budget = resolveEffectiveBudget();
 
   try {
@@ -732,6 +904,40 @@ function verifyNode(
     estimatedDurationMs: 3000,
     priority: "normal",
   };
+}
+
+function inferStepParamsForTool(
+  tool: string,
+  description: string,
+  type: IntentType,
+): Record<string, unknown> {
+  const text = description.trim();
+
+  if (tool === "shell.exec") {
+    return { command: text || "echo 'No command provided'", stepType: type };
+  }
+
+  if (tool === "generic.execute") {
+    return { goal: text, stepType: type };
+  }
+
+  if (tool === "ui.click" || tool === "ui.find") {
+    return { query: text, stepType: type };
+  }
+
+  if (tool === "ui.type") {
+    return { text: text || "", stepType: type };
+  }
+
+  if (tool === "app.launch" || tool === "app.activate" || tool === "app.quit") {
+    return { name: text, stepType: type };
+  }
+
+  if (tool === "file.read" || tool === "file.write") {
+    return { path: text, stepType: type };
+  }
+
+  return { stepType: type, query: text };
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,6 +1598,11 @@ const KNOWN_APPS = [
 function extractAppName(intent: Intent): string | null {
   const raw = intent.rawText;
 
+  // Web target flows should still control a browser app.
+  if (/\bopen\b.+\bon\s+youtube\b/i.test(raw)) {
+    return "safari";
+  }
+
   const contextMatch = raw.match(/\b(?:on|in|from)\s+([a-zA-Z][\w\s.-]{1,40}?)(?=\s+(?:and|then|to|for)\b|$)/i);
   const contextCandidate = contextMatch?.[1]?.trim();
   const contextBrowser = contextCandidate
@@ -1678,10 +1889,14 @@ function buildDataEntryWorkflowNodes(intent: Intent): StateNode[] {
 }
 
 function isMessagingIntentText(text: string): boolean {
-  return /\b(message|send\s+message|chat\s+with|text\s+to|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b/i.test(text);
+  return /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i.test(text);
 }
 
 async function buildMessagingScriptWithLLM(intent: Intent): Promise<string> {
+  if (!isLlmRequired()) {
+    throw new Error("No enabled LLM providers configured for messaging script generation.");
+  }
+
   const runtime = loadLlmRuntimeConfig();
 
   const appRaw = extractAppName(intent) ?? "Zalo";
@@ -1737,7 +1952,7 @@ function buildAppControlScript(intent: Intent): string | null {
   const isBrowser = app ? BROWSERS.includes(app.toLowerCase()) || BROWSERS.some(b => app.toLowerCase().includes(b)) : false;
 
   // ── Quick email compose/send (UC6.2) ──
-  if (/\b(email|mail|send\s+email|g[iử]i\s*email|thư\s*điện\s*tử)\b/i.test(text)) {
+  if (/\b(send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i.test(text)) {
     const toMatch = intent.rawText.match(/\bto\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i)
       ?? intent.rawText.match(/\b(?:cho|tới)\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i);
     const subjectMatch = intent.rawText.match(/\bsubject\s*[:=]\s*(.+?)(?=\b(?:body|content|message)\b|$)/i)
@@ -2601,6 +2816,15 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
           },
         };
       }
+      if (/(bluetooth|\bbt\b).*(toggle|switch)/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "if command -v blueutil >/dev/null 2>&1; then blueutil --power 0 && echo 'Bluetooth toggled off'; else open 'x-apple.systempreferences:com.apple.BluetoothSettings' && echo 'Install blueutil for CLI toggle.'; fi",
+          },
+        };
+      }
       if (/bluetooth|bt/.test(text)) return { name: "shell.exec", params: { command: "system_profiler SPBluetoothDataType 2>/dev/null | head -30" } };
       if (/usb/.test(text)) return { name: "shell.exec", params: { command: "system_profiler SPUSBDataType | head -40" } };
       return { name: "shell.exec", params: { command: "system_profiler SPBluetoothDataType SPUSBDataType 2>/dev/null | head -40" } };
@@ -2814,6 +3038,15 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Display/audio combined ──────────────────────────────────────────
     case "display-audio": {
+      if (/switch|external|monitor|display\s*mode|mirror|extend/.test(text)) {
+        return {
+          name: "shell.exec",
+          params: {
+            command:
+              "open 'x-apple.systempreferences:com.apple.Displays-Settings.extension' && echo 'Use Displays settings or displayplacer profile to switch physical displays.'",
+          },
+        };
+      }
       if (/audio|volume|sound/.test(text)) return { name: "audio.volume", params: {} };
       return { name: "display.list", params: {} };
     }
@@ -2963,7 +3196,13 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     // ── app-control ─────────────────────────────────────────────────────────
     case "app-control": {
       const branchStartLen = nodes.length;
-      const appRaw = extractAppName(intent);
+      let appRaw = extractAppName(intent);
+      if (!appRaw && /\b(?:on|in)\s+safari\b/i.test(intent.rawText)) {
+        appRaw = "safari";
+      }
+      if (!appRaw && /\bopen\s+.+\s+on\s+youtube\b/i.test(intent.rawText)) {
+        appRaw = "safari";
+      }
       const app = appRaw ? normalizeAppName(appRaw) : null;
       const text = intent.rawText.toLowerCase();
       const isQuit = /\b(quit|exit)\b/i.test(text);
@@ -3068,6 +3307,19 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     case "ui-interaction": {
       const raw = intent.rawText;
       const coords = extractCoordinatePairs(intent.rawText);
+
+      if (/\b(?:screenshot|screen\s*capture|capture\s*screen|chụp\s*màn\s*hình|chup\s*man\s*hinh)\b/i.test(raw)) {
+        nodes.push(
+          actionNode(
+            "interact",
+            raw,
+            "screen.capture",
+            "surface",
+            { entities: intent.entities },
+          ),
+        );
+        break;
+      }
 
       if (/\b(translate\s*(?:screen|this|selection|text)|dịch\s*(?:màn\s*hình|đoạn\s*này|văn\s*bản|nội\s*dung))\b/i.test(raw)) {
         nodes.push(
@@ -3339,6 +3591,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           "power-management": "deep",
           "hardware-control": "deep",
           "security-management": "deep",
+          "peripheral-management": "deep",
           "container-management": "deep",
           "display-audio": "deep",
           "backup-restore": "deep",
@@ -3366,13 +3619,14 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           const step = steps[i];
           const nodeId = `step-${i}`;
           const nextId = i < steps.length - 1 ? `step-${i + 1}` : null;
+          const normalizedTool = normalizeStepTool(step.tool, step.type);
           nodes.push(
             actionNode(
               nodeId,
               step.description,
-              step.tool,
+              normalizedTool,
               layerFor[step.type],
-              { stepType: step.type },
+              inferStepParamsForTool(normalizedTool, step.description, step.type),
               prevId ? [prevId] : [],
               nextId,
             ),

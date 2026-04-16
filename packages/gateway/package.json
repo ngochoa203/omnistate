@@ -11,6 +11,7 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist *.tsbuildinfo",
     "lint": "oxlint src/",
+    "rtvc:check": "test -d vendor/Real-Time-Voice-Cloning && echo 'RTVC vendored: OK'",
     "test": "vitest run",
     "test:planner": "vitest run src/__tests__/planner.test.ts --testTimeout=30000",
     "test:parser-bench": "vitest run src/__tests__/parser-latency.benchmark.test.ts --testTimeout=60000",

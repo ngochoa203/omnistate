@@ -13,7 +13,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -138,7 +138,9 @@ function runJson<T>(cmd: string, fallback: T): T {
 // ---------------------------------------------------------------------------
 
 export class SoftwareLayer {
-  constructor(private readonly deep: DeepLayer) {}
+  constructor(deep: DeepLayer) {
+    void deep;
+  }
 
   // =========================================================================
   // UC8.1 — Homebrew

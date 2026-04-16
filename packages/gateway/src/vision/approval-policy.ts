@@ -777,4 +777,165 @@ export class ApprovalEngine {
   getPolicy(): Readonly<ApprovalPolicy> {
     return this.policy;
   }
+
+  // ── §6 Sandbox Profiles ─────────────────────────────────────────────────
+
+  private sandboxProfiles = new Map<
+    string,
+    {
+      allowedTools: string[];
+      allowedPaths: string[];
+      deniedPaths: string[];
+      maxRequestsPerMinute: number;
+      timeWindow?: { start: string; end: string };
+      networkAccess?: boolean;
+    }
+  >();
+
+  /** Define a reusable named sandbox profile. */
+  addSandboxProfile(
+    profileName: string,
+    config: {
+      allowedTools: string[];
+      allowedPaths: string[];
+      deniedPaths: string[];
+      maxRequestsPerMinute: number;
+      timeWindow?: { start: string; end: string };
+      networkAccess?: boolean;
+    }
+  ): void {
+    this.sandboxProfiles.set(profileName, config);
+  }
+
+  /** Apply a named sandbox profile to an app (wraps addAppScope). */
+  applySandboxProfile(appName: string, profileName: string): void {
+    const profile = this.sandboxProfiles.get(profileName);
+    if (!profile) throw new Error(`Sandbox profile "${profileName}" not found`);
+    this.addAppScope(appName, {
+      allowedPaths: profile.allowedPaths,
+      deniedPaths: profile.deniedPaths,
+      allowedTools: profile.allowedTools,
+      deniedTools: [],
+      maxRequestsPerMinute: profile.maxRequestsPerMinute,
+    });
+  }
+
+  /** List all defined sandbox profiles. */
+  listSandboxProfiles(): Array<{ name: string; config: any }> {
+    return Array.from(this.sandboxProfiles.entries()).map(([name, config]) => ({
+      name,
+      config,
+    }));
+  }
+
+  // ── §7 Policy Templates ────────────────────────────────────────────────
+
+  /**
+   * Load a predefined policy template.
+   * - `strict`:     deny by default, only allowlist passes, 5 req/min
+   * - `moderate`:   blocklist critical paths, allow dev tools, 30 req/min
+   * - `permissive`: block only secrets dirs, allow everything, no rate limit
+   */
+  loadPolicyTemplate(template: "strict" | "moderate" | "permissive"): void {
+    const home = homedir();
+    switch (template) {
+      case "strict":
+        this.updatePolicy({
+          enabled: true,
+          defaultAction: "deny",
+          blocklist: {
+            paths: [
+              "~/.ssh/**",
+              "~/.aws/**",
+              "~/.gnupg/**",
+              "~/.config/gcloud/**",
+              "/etc/shadow",
+              "/etc/passwd",
+            ],
+            apps: [],
+          },
+          allowlist: {
+            paths: [],
+            apps: ["Terminal", "claude"],
+            tools: ["Read", "Glob", "Grep"],
+          },
+          rateLimit: { maxPerMinute: 5 },
+        });
+        break;
+      case "moderate":
+        this.updatePolicy({
+          enabled: true,
+          defaultAction: "allow",
+          blocklist: {
+            paths: [
+              "~/.ssh/**",
+              "~/.aws/**",
+              "~/.gnupg/**",
+              "~/.config/gcloud/**",
+              `${home}/Documents/Private/**`,
+            ],
+            apps: [],
+          },
+          allowlist: {
+            paths: [`${home}/Projects/**`, `${home}/Developer/**`, "/tmp/**"],
+            apps: ["Terminal", "iTerm2", "claude", "Code", "Cursor"],
+            tools: [
+              "Read",
+              "Write",
+              "Edit",
+              "Glob",
+              "Grep",
+              "Bash",
+              "NotebookEdit",
+            ],
+          },
+          rateLimit: { maxPerMinute: 30 },
+        });
+        break;
+      case "permissive":
+        this.updatePolicy({
+          enabled: true,
+          defaultAction: "allow",
+          blocklist: {
+            paths: ["~/.ssh/**", "~/.aws/**", "~/.gnupg/**"],
+            apps: [],
+          },
+          allowlist: {
+            paths: ["**"],
+            apps: ["*"],
+            tools: ["*"],
+          },
+          rateLimit: { maxPerMinute: 0 },
+        });
+        break;
+    }
+  }
+
+  /** Serialize the entire current policy (including app scopes and sandbox profiles) to JSON. */
+  exportPolicy(): string {
+    const data = {
+      policy: this.policy,
+      appScopes: Object.fromEntries(this.appScopes),
+      sandboxProfiles: Object.fromEntries(this.sandboxProfiles),
+    };
+    return JSON.stringify(data, null, 2);
+  }
+
+  /** Import and apply a previously-exported policy JSON string. */
+  importPolicy(json: string): void {
+    const data = JSON.parse(json);
+    if (data.policy) {
+      this.updatePolicy(data.policy);
+    }
+    if (data.appScopes) {
+      for (const [app, scope] of Object.entries(data.appScopes)) {
+        this.addAppScope(app, scope as AppScope);
+      }
+    }
+    if (data.sandboxProfiles) {
+      for (const [name, config] of Object.entries(data.sandboxProfiles)) {
+        this.addSandboxProfile(name, config as any);
+      }
+    }
+  }
 }

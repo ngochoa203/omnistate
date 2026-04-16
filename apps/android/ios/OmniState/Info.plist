@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>OmniState</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.omnistate.mobile</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- ── Supported orientations ─────────────────────────────────────── -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- ── Status bar ──────────────────────────────────────────────────── -->
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+
+	<!-- ── Launch screen ───────────────────────────────────────────────── -->
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+
+	<!-- ── App Transport Security: allow LAN WebSocket connections ─────── -->
+	<!-- OmniState connects to a local gateway over ws:// on the LAN.        -->
+	<!-- NSAllowsLocalNetworking lets ws://192.168.x.x work without HTTPS.   -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<!-- Tailscale addresses (100.x.x.x) for remote mode -->
+			<key>100.64.0.0/10</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+
+	<!-- ── Privacy usage descriptions (required by App Store) ─────────── -->
+
+	<!-- Microphone: voice enrollment + Hold-to-Speak feature (VoiceScreen) -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OmniState uses your microphone to record voice commands that are dispatched as tasks to your Mac.</string>
+
+	<!-- Camera: reserved for future QR-code gateway pairing -->
+	<key>NSCameraUsageDescription</key>
+	<string>OmniState may use the camera to scan a QR code when pairing with a gateway.</string>
+
+	<!-- Local Network: mDNS/Bonjour scan for OmniState gateway on LAN -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OmniState scans your local network to discover and connect to the OmniState gateway running on your Mac.</string>
+
+	<!-- Bonjour service types used by react-native-zeroconf -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_omnistate._tcp</string>
+	</array>
+
+	<!-- Speech Recognition: future on-device STT -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>OmniState may use speech recognition to transcribe your voice commands locally.</string>
+
+	<!-- Accessibility / assistive tech (future automation features) -->
+	<!-- No usage description key needed for accessibility APIs, but     -->
+	<!-- the entitlement com.apple.developer.accessibility.automation     -->
+	<!-- must be requested from Apple for automation features.            -->
+
+	<!-- ── Background modes ────────────────────────────────────────────── -->
+	<!-- fetch + remote-notification keep the gateway WebSocket alive      -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+	</array>
+
+	<!-- ── Face ID (future biometric lock) ────────────────────────────── -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>OmniState can use Face ID to protect access to sensitive settings.</string>
+</dict>
+</plist>

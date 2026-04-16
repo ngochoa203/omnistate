@@ -8,6 +8,33 @@ struct NativeChatMessage: Identifiable {
     let timestamp = Date()
 }
 
+struct NativeTaskAttachment: Equatable {
+    let id: String
+    let name: String
+    let mimeType: String
+    let size: Int
+    let kind: String
+    let textPreview: String?
+    let dataBase64: String?
+
+    func toPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "id": id,
+            "name": name,
+            "mimeType": mimeType,
+            "size": size,
+            "kind": kind
+        ]
+        if let textPreview, !textPreview.isEmpty {
+            payload["textPreview"] = textPreview
+        }
+        if let dataBase64, !dataBase64.isEmpty {
+            payload["dataBase64"] = dataBase64
+        }
+        return payload
+    }
+}
+
 struct NativeHistoryEntry: Identifiable {
     let taskId: String
     let goal: String
@@ -127,7 +154,7 @@ final class GatewaySocketClient: ObservableObject {
     @Published var voiceWakeCooldownMs = 1200
     @Published var voiceWakeCommandWindowSec = 16
     @Published var voiceSiriEnabled = false
-    @Published var voiceSiriMode = "command"
+    @Published var voiceSiriMode = "hybrid"
     @Published var voiceSiriShortcutName = ""
     @Published var voiceSiriEndpoint = ""
     @Published var voiceSiriToken = ""
@@ -149,13 +176,30 @@ final class GatewaySocketClient: ObservableObject {
     private var socket: URLSessionWebSocketTask?
     private let url = URL(string: "ws://127.0.0.1:19800")!
     private var hasConnected = false
+    private var reconnectTask: Task<Void, Never>?
+    private var connectHandshakeTask: Task<Void, Never>?
     private var pendingConversationId: String?
     private var taskConversationMap: [String: String] = [:]
 
-    private init() {}
+    private var runtimeConfigPath: String {
+        NSHomeDirectory() + "/.omnistate/llm.runtime.json"
+    }
+
+    private init() {
+        runtimeProviderOptions = defaultRuntimeProviderOptions()
+        runtimeProvider = runtimeProviderOptions.first?.id ?? ""
+        runtimeModel = runtimeProviderOptions.first?.models.first ?? ""
+        runtimeModelOptions = runtimeProviderOptions.first?.models ?? []
+        bootstrapRuntimeStateFromDisk()
+    }
 
     func connect() {
         if hasConnected && isConnected { return }
+
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        connectHandshakeTask?.cancel()
+        connectHandshakeTask = nil
 
         if socket != nil && !isConnected {
             socket?.cancel(with: .goingAway, reason: nil)
@@ -167,34 +211,53 @@ final class GatewaySocketClient: ObservableObject {
         let session = URLSession(configuration: .default)
         socket = session.webSocketTask(with: url)
         socket?.resume()
+        guard let activeSocket = socket else { return }
 
-        sendRaw([
-            "type": "connect",
-            "auth": [:],
-            "role": "ui"
-        ])
-
-        receiveLoop()
+        receiveLoop(for: activeSocket)
+        beginConnectHandshake(for: activeSocket)
     }
 
     func disconnect() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        connectHandshakeTask?.cancel()
+        connectHandshakeTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         hasConnected = false
         isConnected = false
     }
 
-    func sendTask(goal: String, conversationId: String? = nil) {
+    func sendTask(
+        goal: String,
+        conversationId: String? = nil,
+        routeMode: String = "auto",
+        attachments: [NativeTaskAttachment] = []
+    ) {
         let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         pendingConversationId = conversationId
         activeConversationIdForLatestMessage = conversationId
-        messages.append(NativeChatMessage(role: "user", text: trimmed))
-        sendRaw([
+        let userText: String
+        if attachments.isEmpty {
+            userText = trimmed
+        } else {
+            let list = attachments.prefix(8).map { "- \($0.name) [\($0.kind)]" }.joined(separator: "\n")
+            userText = "\(trimmed)\n\n[Attachments]\n\(list)"
+        }
+        messages.append(NativeChatMessage(role: "user", text: userText))
+        var payload: [String: Any] = [
             "type": "task",
-            "goal": trimmed
-        ])
+            "goal": trimmed,
+            "mode": routeMode
+        ]
+
+        if !attachments.isEmpty {
+            payload["attachments"] = attachments.prefix(8).map { $0.toPayload() }
+        }
+
+        sendRaw(payload)
     }
 
     func queryHistory(limit: Int = 30) {
@@ -215,6 +278,34 @@ final class GatewaySocketClient: ObservableObject {
             "type": "runtime.config.set",
             "key": key,
             "value": value
+        ])
+    }
+
+    func upsertRuntimeProvider(
+        id: String,
+        kind: String,
+        baseURL: String,
+        apiKey: String,
+        model: String,
+        models: [String],
+        activate: Bool,
+        addToFallback: Bool
+    ) {
+        let normalizedKind = kind == "anthropic" ? "anthropic" : "openai-compatible"
+        let trimmedModels = models.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        sendRaw([
+            "type": "runtime.config.upsertProvider",
+            "provider": [
+                "id": id,
+                "kind": normalizedKind,
+                "baseURL": baseURL,
+                "apiKey": apiKey,
+                "model": model,
+                "models": trimmedModels,
+                "enabled": true
+            ],
+            "activate": activate,
+            "addToFallback": addToFallback
         ])
     }
 
@@ -305,20 +396,24 @@ final class GatewaySocketClient: ObservableObject {
 
     // MARK: - Receive loop
 
-    private func receiveLoop() {
-        socket?.receive { [weak self] result in
+    private func receiveLoop(for socketTask: URLSessionWebSocketTask) {
+        socketTask.receive { [weak self] result in
             guard let self else { return }
 
             switch result {
             case .failure(let error):
                 Task { @MainActor in
+                    guard self.socket === socketTask else { return }
                     self.isConnected = false
-                    self.hasConnected = false
                     self.socket = nil
+                    self.connectHandshakeTask?.cancel()
+                    self.connectHandshakeTask = nil
                     self.messages.append(NativeChatMessage(role: "system", text: "Socket disconnected: \(error.localizedDescription)"))
+                    self.scheduleReconnect()
                 }
             case .success(let message):
                 Task { @MainActor in
+                    guard self.socket === socketTask else { return }
                     switch message {
                     case .string(let text):
                         self.handleIncoming(text)
@@ -329,7 +424,7 @@ final class GatewaySocketClient: ObservableObject {
                     @unknown default:
                         break
                     }
-                    self.receiveLoop()
+                    self.receiveLoop(for: socketTask)
                 }
             }
         }
@@ -347,6 +442,8 @@ final class GatewaySocketClient: ObservableObject {
         switch type {
         case "connected":
             isConnected = true
+            connectHandshakeTask?.cancel()
+            connectHandshakeTask = nil
             messages.append(NativeChatMessage(role: "system", text: "Connected to gateway"))
             queryHistory(limit: 30)
             queryRuntimeConfig()
@@ -363,7 +460,17 @@ final class GatewaySocketClient: ObservableObject {
             }
             pendingConversationId = nil
             let goal = json["goal"] as? String ?? ""
-            messages.append(NativeChatMessage(role: "assistant", text: "⚡ Task accepted: \(goal)"))
+            let mode = (json["mode"] as? String ?? json["routeMode"] as? String ?? "auto").lowercased()
+            let acceptedLabel: String
+            if mode == "chat" {
+                acceptedLabel = "💬 Chat request accepted"
+            } else if mode == "task" {
+                acceptedLabel = "⚡ Task request accepted"
+            } else {
+                acceptedLabel = "✅ Request accepted"
+            }
+            let suffix = goal.isEmpty ? "" : ": \(goal)"
+            messages.append(NativeChatMessage(role: "system", text: acceptedLabel + suffix))
 
         case "task.step":
             if let taskId = json["taskId"] as? String,
@@ -391,10 +498,12 @@ final class GatewaySocketClient: ObservableObject {
             }
             currentTaskId = nil
             if let result = json["result"] {
-                let pretty = prettyJSON(result) ?? "Task completed"
-                messages.append(NativeChatMessage(role: "assistant", text: pretty))
+                let reply = userFacingReplyText(from: result)
+                let mode = replyModeMarker(from: result)
+                let decorated = mode == nil ? reply : "[[mode:\(mode!)]] \(reply)"
+                messages.append(NativeChatMessage(role: "assistant", text: decorated))
             } else {
-                messages.append(NativeChatMessage(role: "assistant", text: "Task completed"))
+                messages.append(NativeChatMessage(role: "assistant", text: "Task completed."))
             }
             queryHistory(limit: 30)
 
@@ -568,6 +677,14 @@ final class GatewaySocketClient: ObservableObject {
                 let kind = provider["kind"] as? String
                 let apiKey = provider["apiKey"] as? String
                 let model = (provider["model"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let modelsList: [String]
+                if let arr = provider["models"] as? [String] {
+                    modelsList = arr.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                } else if let csv = provider["models"] as? String {
+                    modelsList = csv.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                } else {
+                    modelsList = []
+                }
                 let enabled = provider["enabled"] as? Bool ?? true
 
                 let label: String
@@ -585,21 +702,34 @@ final class GatewaySocketClient: ObservableObject {
                     baseURL: baseURL,
                     kind: kind,
                     apiKey: apiKey,
-                    models: model.map { [$0] } ?? [],
+                    models: modelsList.isEmpty ? (model.map { [$0] } ?? []) : modelsList,
                     enabled: enabled
                 )
             }
 
-            runtimeProviderOptions = parsedOptions
+            runtimeProviderOptions = parsedOptions.isEmpty ? defaultRuntimeProviderOptions() : parsedOptions
 
             if let active = parsedOptions.first(where: { $0.id == runtimeProvider }) {
                 runtimeModelOptions = active.models
             } else {
-                runtimeModelOptions = Array(Set(parsedOptions.flatMap { $0.models })).sorted()
+                runtimeModelOptions = Array(Set(runtimeProviderOptions.flatMap { $0.models })).sorted()
             }
 
             if runtimeModelOptions.isEmpty {
                 runtimeModelOptions = [runtimeModel].filter { !$0.isEmpty }
+            }
+
+            if runtimeProvider.isEmpty, let first = runtimeProviderOptions.first {
+                runtimeProvider = first.id
+            }
+
+            if runtimeModel.isEmpty {
+                let selectedProvider = runtimeProviderOptions.first(where: { $0.id == runtimeProvider })
+                runtimeModel = selectedProvider?.models.first ?? runtimeProviderOptions.first?.models.first ?? runtimeModel
+            }
+
+            if runtimeModelOptions.isEmpty, !runtimeModel.isEmpty {
+                runtimeModelOptions = [runtimeModel]
             }
         }
 
@@ -640,6 +770,103 @@ final class GatewaySocketClient: ObservableObject {
         }
     }
 
+    private func scheduleReconnect() {
+        guard hasConnected else { return }
+        guard reconnectTask == nil else { return }
+
+        reconnectTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                guard let self else { return }
+                self.reconnectTask = nil
+                if self.hasConnected && !self.isConnected {
+                    self.connect()
+                }
+            }
+        }
+    }
+
+    private func beginConnectHandshake(for socketTask: URLSessionWebSocketTask) {
+        connectHandshakeTask?.cancel()
+
+        connectHandshakeTask = Task { [weak self] in
+            guard let self else { return }
+
+            for _ in 0..<10 {
+                if Task.isCancelled { return }
+
+                await MainActor.run {
+                    guard self.socket === socketTask else { return }
+                    guard !self.isConnected else { return }
+                    self.sendRaw([
+                        "type": "connect",
+                        "auth": [:],
+                        "role": "ui"
+                    ])
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 800_000_000)
+                } catch {
+                    return
+                }
+
+                if await MainActor.run(resultType: Bool.self, body: { self.isConnected || self.socket !== socketTask }) {
+                    return
+                }
+            }
+
+            await MainActor.run {
+                guard self.socket === socketTask else { return }
+                if !self.isConnected {
+                    self.messages.append(NativeChatMessage(role: "system", text: "Handshake timeout, reconnecting..."))
+                    self.socket?.cancel(with: .goingAway, reason: nil)
+                    self.socket = nil
+                    self.scheduleReconnect()
+                }
+            }
+        }
+    }
+
+    private func bootstrapRuntimeStateFromDisk() {
+        guard let data = FileManager.default.contents(atPath: runtimeConfigPath),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        parseRuntimeConfigReport(["config": raw])
+    }
+
+    private func defaultRuntimeProviderOptions() -> [RuntimeProviderOption] {
+        [
+            RuntimeProviderOption(
+                id: "anthropic",
+                label: "trollLLM",
+                baseURL: "https://chat.trollllm.xyz",
+                kind: "anthropic",
+                apiKey: nil,
+                models: ["claude-haiku-4.5", "claude-sonnet-4.6", "claude-opus-4.6"],
+                enabled: true
+            ),
+            RuntimeProviderOption(
+                id: "router9",
+                label: "9router",
+                baseURL: "http://localhost:20128/v1",
+                kind: "openai-compatible",
+                apiKey: nil,
+                models: ["cx/gpt-5.4", "kr/deepseek-3.2", "gh/claude-sonnet-4.6", "gh/gemini-3-flash-preview"],
+                enabled: true
+            )
+        ]
+    }
+
     private func parseClaudeMemState(_ json: [String: Any]) {
         guard let payload = json["payload"] as? [String: Any] else { return }
         sharedMemorySummary = payload["sharedMemorySummary"] as? String ?? ""
@@ -667,5 +894,67 @@ final class GatewaySocketClient: ObservableObject {
             return nil
         }
         return str
+    }
+
+    private func userFacingReplyText(from value: Any) -> String {
+        if let text = value as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "Task completed." : trimmed
+        }
+
+        guard let dict = value as? [String: Any] else {
+            return prettyJSON(value) ?? "Task completed."
+        }
+
+        let candidateKeys = ["reply", "response", "summary", "answer", "final", "finalAnswer", "output", "message", "text"]
+        for key in candidateKeys {
+            if let candidate = dict[key] as? String {
+                let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+
+        if let result = dict["result"] as? String {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        // Planner/internal payloads are not user-facing; return a clean completion line.
+        if isInternalPlannerPayload(dict) {
+            return "Task completed."
+        }
+
+        return prettyJSON(value) ?? "Task completed."
+    }
+
+    private func isInternalPlannerPayload(_ dict: [String: Any]) -> Bool {
+        let intent = (dict["intentType"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let goal = (dict["goal"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasStepData = dict["stepData"] != nil
+        let hasInternalContext = goal.contains("[Native Session Context]")
+            || goal.contains("sessionMemorySummary")
+            || goal.contains("[Reply Preference]")
+        return !intent.isEmpty && hasStepData && hasInternalContext
+    }
+
+    private func replyModeMarker(from value: Any) -> String? {
+        guard let dict = value as? [String: Any] else { return nil }
+        if let mode = dict["mode"] as? String {
+            let normalized = mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized == "chat" || normalized == "task" {
+                return normalized
+            }
+        }
+        if let command = dict["command"] as? Bool, command {
+            return "task"
+        }
+        if let intent = dict["intentType"] as? String, !intent.isEmpty {
+            return intent == "system-query" ? "chat" : "task"
+        }
+        return nil
     }
 }

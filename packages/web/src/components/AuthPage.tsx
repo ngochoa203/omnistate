@@ -3,6 +3,7 @@ import { useAuthStore } from "../lib/auth-store";
 import type { VoiceProfile } from "../lib/auth-store";
 import { createProfile, getProfile, markProfileEnrolled } from "../lib/auth-client";
 import { encodeWav, blobToBase64 } from "../lib/audio-utils";
+import { resolveGatewayHttpBaseUrl } from "../lib/runtime-config";
 
 const ENROLLMENT_PHRASES = [
   "Hey OmniState, open my favorite apps",
@@ -40,8 +41,7 @@ export function AuthPage() {
   // Pending profile created in step 1 (before samples are sent)
   const pendingProfileRef = useRef<{ id: string } | null>(null);
 
-  // Gateway WebSocket URL for sending enrollment audio
-  const wsUrl = (import.meta as any).env?.VITE_GATEWAY_URL || "ws://127.0.0.1:19800";
+  const gatewayHttpBaseUrl = resolveGatewayHttpBaseUrl();
 
   // --- Audio capture helpers (raw, without useVoice's send path) ---
   const streamRef = useRef<MediaStream | null>(null);
@@ -112,8 +112,7 @@ export function AuthPage() {
 
   // Send enrollment sample via HTTP (not WS, since it's one-shot)
   const sendEnrollmentSample = useCallback(async (profileId: string, sampleIndex: number, audioBase64: string) => {
-    const httpUrl = wsUrl.replace(/^ws/, "http").replace(/\/ws\/?$/, "");
-    const res = await fetch(`${httpUrl}/api/voice/enroll`, {
+    const res = await fetch(`${gatewayHttpBaseUrl}/api/voice/enroll`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profileId, sampleIndex, audio: audioBase64 }),
@@ -122,12 +121,23 @@ export function AuthPage() {
       const d = await res.json().catch(() => ({}));
       throw new Error((d as any).error || `HTTP ${res.status}`);
     }
+
+    // Best-effort: also feed sample to Real-Time-Voice-Cloning training pipeline.
+    try {
+      await fetch(`${gatewayHttpBaseUrl}/api/voice/clone/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId, sampleIndex, audio: audioBase64, format: "wav" }),
+      });
+    } catch {
+      // Ignore clone training failures during enrollment so UX remains unblocked.
+    }
+
     return res.json();
-  }, [wsUrl]);
+  }, [gatewayHttpBaseUrl]);
 
   const sendVerifySample = useCallback(async (profileId: string, audioBase64: string) => {
-    const httpUrl = wsUrl.replace(/^ws/, "http").replace(/\/ws\/?$/, "");
-    const res = await fetch(`${httpUrl}/api/voice/verify`, {
+    const res = await fetch(`${gatewayHttpBaseUrl}/api/voice/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profileId, audio: audioBase64 }),
@@ -137,7 +147,7 @@ export function AuthPage() {
       throw new Error((d as any).error || `HTTP ${res.status}`);
     }
     return res.json();
-  }, [wsUrl]);
+  }, [gatewayHttpBaseUrl]);
 
   // ---- Step handlers ----
 

@@ -4,7 +4,6 @@ import { getCopy } from "../lib/i18n";
 import { useAuthStore } from "../lib/auth-store";
 import { signOut } from "../lib/auth-client";
 import { useState } from "react";
-import { PixelAgentLocalPanel } from "./PixelAgentLocalPanel";
 
 function SettingRow({ label, sub, control }: { label: string; sub?: string; control: React.ReactNode }) {
   return (
@@ -70,11 +69,16 @@ export function SettingsPanel() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState("");
 
+  const runPermissionTask = (goal: string) => {
+    useChatStore.getState().addUserMessage(goal);
+    getClient().sendTask(goal);
+  };
+
   const loadClaudeMemLogs = async () => {
     try {
       setLogsLoading(true);
       setLogsError("");
-      const res = await fetch("/api/session/logs?source=claude-mem&limit=8");
+      const res = await fetch("/session/logs?source=claude-mem&limit=8");
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -252,10 +256,48 @@ export function SettingsPanel() {
           />
         </Section>
 
-        <Section title={appLanguage === "vi" ? "Pixel Agent" : "Pixel Agent"}>
-          <div style={{ padding: "14px 18px" }}>
-            <PixelAgentLocalPanel isVi={appLanguage === "vi"} />
-          </div>
+        <Section title={appLanguage === "vi" ? "Quyền macOS" : "macOS Permissions"}>
+          <SettingRow
+            label={appLanguage === "vi" ? "Accessibility" : "Accessibility"}
+            sub={appLanguage === "vi" ? "Cho phép điều khiển chuột/bàn phím và UI automation" : "Required for mouse/keyboard and UI automation"}
+            control={
+              <button
+                className="btn-ghost"
+                style={{ padding: "6px 10px", fontSize: "0.72rem" }}
+                onClick={() => runPermissionTask('open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"')}
+              >
+                {appLanguage === "vi" ? "Mở quyền" : "Open"}
+              </button>
+            }
+          />
+          <Divider />
+          <SettingRow
+            label={appLanguage === "vi" ? "Screen Recording" : "Screen Recording"}
+            sub={appLanguage === "vi" ? "Cho phép chụp màn hình cho vision/screenshot" : "Required for screen capture and vision"}
+            control={
+              <button
+                className="btn-ghost"
+                style={{ padding: "6px 10px", fontSize: "0.72rem" }}
+                onClick={() => runPermissionTask('open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"')}
+              >
+                {appLanguage === "vi" ? "Mở quyền" : "Open"}
+              </button>
+            }
+          />
+          <Divider />
+          <SettingRow
+            label={appLanguage === "vi" ? "Microphone" : "Microphone"}
+            sub={appLanguage === "vi" ? "Cho voice command và voiceprint" : "Required for voice command and voiceprint"}
+            control={
+              <button
+                className="btn-ghost"
+                style={{ padding: "6px 10px", fontSize: "0.72rem" }}
+                onClick={() => runPermissionTask('open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"')}
+              >
+                {appLanguage === "vi" ? "Mở quyền" : "Open"}
+              </button>
+            }
+          />
         </Section>
 
         <Section title={appLanguage === "vi" ? "Session Logs (claude-mem)" : "Session Logs (claude-mem)"}>

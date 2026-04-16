@@ -325,16 +325,12 @@ export class SurfaceLayer {
   // ── Keyboard (raw key events) ──────────────────────────────
   async keyDown(key: string, modifiers: Modifiers = []): Promise<void> {
     const bridge = await import('../platform/bridge.js');
-    const code = this.keyNameToCode(key);
-    const flags = this.modifiersToFlags(modifiers);
-    bridge.keyDown(code, flags);
+    bridge.keyDown(key, this.modifiersToBridge(modifiers));
   }
 
   async keyUp(key: string, modifiers: Modifiers = []): Promise<void> {
     const bridge = await import('../platform/bridge.js');
-    const code = this.keyNameToCode(key);
-    const flags = this.modifiersToFlags(modifiers);
-    bridge.keyUp(code, flags);
+    bridge.keyUp(key, this.modifiersToBridge(modifiers));
   }
 
   async holdKey(key: string, durationMs: number, modifiers: Modifiers = []): Promise<void> {
@@ -403,41 +399,18 @@ export class SurfaceLayer {
   }
 
   // ── Private helpers for keyboard ───────────────────────────
-  private keyNameToCode(name: string): number {
-    const MAP: Record<string, number> = {
-      'a': 0, 'b': 11, 'c': 8, 'd': 2, 'e': 14, 'f': 3, 'g': 5,
-      'h': 4, 'i': 34, 'j': 38, 'k': 40, 'l': 37, 'm': 46, 'n': 45,
-      'o': 31, 'p': 35, 'q': 12, 'r': 15, 's': 1, 't': 17, 'u': 32,
-      'v': 9, 'w': 13, 'x': 7, 'y': 16, 'z': 6,
-      '0': 29, '1': 18, '2': 19, '3': 20, '4': 21,
-      '5': 23, '6': 22, '7': 26, '8': 28, '9': 25,
-      'return': 36, 'enter': 36, 'tab': 48, 'space': 49,
-      'delete': 51, 'backspace': 51, 'escape': 53, 'esc': 53,
-      'up': 126, 'down': 125, 'left': 123, 'right': 124,
-      'f1': 122, 'f2': 120, 'f3': 99, 'f4': 118, 'f5': 96,
-      'f6': 97, 'f7': 98, 'f8': 100, 'f9': 101, 'f10': 109,
-      'f11': 103, 'f12': 111,
-      'home': 115, 'end': 119, 'pageup': 116, 'pagedown': 121,
-      'forwarddelete': 117,
-      'minus': 27, 'equal': 24, 'leftbracket': 33, 'rightbracket': 30,
-      'semicolon': 41, 'quote': 39, 'comma': 43, 'period': 47,
-      'slash': 44, 'backslash': 42, 'grave': 50,
+  private modifiersToBridge(mods: Modifiers): {
+    shift?: boolean;
+    control?: boolean;
+    alt?: boolean;
+    meta?: boolean;
+  } {
+    return {
+      shift: mods.includes('shift'),
+      control: mods.includes('control'),
+      alt: mods.includes('option'),
+      meta: mods.includes('command'),
     };
-    return MAP[name.toLowerCase()] ?? 0;
-  }
-
-  private modifiersToFlags(mods: Modifiers): number {
-    let flags = 0;
-    for (const m of mods) {
-      switch (m) {
-        case 'command':  flags |= (1 << 20); break; // kCGEventFlagMaskCommand
-        case 'shift':    flags |= (1 << 17); break; // kCGEventFlagMaskShift
-        case 'option':   flags |= (1 << 19); break; // kCGEventFlagMaskAlternate
-        case 'control':  flags |= (1 << 18); break; // kCGEventFlagMaskControl
-        case 'fn':       flags |= (1 << 23); break; // kCGEventFlagMaskSecondaryFn
-      }
-    }
-    return flags;
   }
 
   /** Type a string of text with human-like delays. */
@@ -671,13 +644,9 @@ try? handler.perform([req])
       bridge.drag(fromX, fromY, toX, toY);
       return;
     }
-    // Smooth drag via moveMouseSmooth + click events
-    const steps = Math.max(10, Math.round(durationMs / 16));
+    // Native bridge exposes drag as a full gesture; use it for reliability.
     await this.moveMouseSmooth(fromX, fromY, fromX, fromY, 1);
-    bridge.mouseDown?.('left') ?? bridge.click?.('left');
-    await this.moveMouseSmooth(fromX, fromY, toX, toY, steps);
-    await sleep(Math.min(durationMs, 100));
-    bridge.mouseUp?.('left') ?? bridge.click?.('left');
+    bridge.drag(fromX, fromY, toX, toY);
   }
 
   /** Drag a file from the filesystem to screen coordinates using Finder. */

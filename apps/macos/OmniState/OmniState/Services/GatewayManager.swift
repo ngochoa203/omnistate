@@ -13,8 +13,14 @@ class GatewayManager: ObservableObject {
     private var errorPipe: Pipe?
     private var restartCount = 0
     private let maxRestarts = 5
+    private var stopRequested = false
+    private var launchStartedAt: Date?
 
     private init() {}
+
+    private var runtimeConfigPath: String {
+        NSHomeDirectory() + "/.omnistate/llm.runtime.json"
+    }
 
     /// Path to the gateway entry point
     private var gatewayPath: String {
@@ -76,8 +82,78 @@ class GatewayManager: ObservableObject {
         return NSHomeDirectory() + "/Projects/omnistate"
     }
 
+    private func siriHTTPPort() -> Int {
+        guard let data = FileManager.default.contents(atPath: runtimeConfigPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let voice = json["voice"] as? [String: Any],
+              let siri = voice["siri"] as? [String: Any],
+              let endpoint = siri["endpoint"] as? String,
+              let url = URL(string: endpoint),
+              let port = url.port
+        else {
+            return 19801
+        }
+        return port
+    }
+
+    private func pidsListening(on port: Int) -> [pid_t] {
+        let proc = Process()
+        let pipe = Pipe()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        proc.arguments = ["-ti", "tcp:\(port)"]
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return []
+        }
+
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return output
+            .split(whereSeparator: \.isNewline)
+            .compactMap { pid_t(Int32(String($0)) ?? -1) }
+            .filter { $0 > 0 }
+    }
+
+    private func cleanupGatewayPorts() {
+        let ports = [19800, siriHTTPPort()]
+        let ownPid = getpid()
+        var pids = Set<pid_t>()
+
+        for port in ports {
+            for pid in pidsListening(on: port) where pid != ownPid {
+                pids.insert(pid)
+            }
+        }
+
+        if pids.isEmpty { return }
+
+        for pid in pids {
+            _ = kill(pid, SIGTERM)
+        }
+
+        usleep(350_000)
+
+        var stubborn = Set<pid_t>()
+        for port in ports {
+            for pid in pidsListening(on: port) where pid != ownPid {
+                stubborn.insert(pid)
+            }
+        }
+
+        for pid in stubborn {
+            _ = kill(pid, SIGKILL)
+        }
+    }
+
     func start() {
         guard !isRunning else { return }
+
+        stopRequested = false
+        cleanupGatewayPorts()
 
         let gateway = gatewayPath
         guard FileManager.default.fileExists(atPath: gateway) else {
@@ -132,6 +208,14 @@ class GatewayManager: ObservableObject {
             DispatchQueue.main.async {
                 self?.isRunning = false
                 self?.lanPin = nil
+                self?.process = nil
+
+                let exitedQuickly: Bool
+                if let startedAt = self?.launchStartedAt {
+                    exitedQuickly = Date().timeIntervalSince(startedAt) < 2.0
+                } else {
+                    exitedQuickly = false
+                }
 
                 if proc.terminationStatus != 0 && proc.terminationStatus != 15 {
                     self?.lastError = "Gateway exited with code \(proc.terminationStatus)"
@@ -143,6 +227,8 @@ class GatewayManager: ObservableObject {
                             self.start()
                         }
                     }
+                } else if exitedQuickly && self?.stopRequested == false {
+                    self?.lastError = "Gateway exited too quickly. Possible occupied port or invalid runtime endpoint."
                 }
             }
         }
@@ -152,6 +238,7 @@ class GatewayManager: ObservableObject {
             process = proc
             outputPipe = outPipe
             errorPipe = errPipe
+            launchStartedAt = Date()
             DispatchQueue.main.async {
                 self.isRunning = true
                 self.lastError = nil
@@ -166,10 +253,13 @@ class GatewayManager: ObservableObject {
     }
 
     func stop() {
+        stopRequested = true
+
         guard let proc = process, proc.isRunning else {
             DispatchQueue.main.async {
                 self.isRunning = false
             }
+            cleanupGatewayPorts()
             return
         }
 
@@ -186,6 +276,8 @@ class GatewayManager: ObservableObject {
                 self?.isRunning = false
                 self?.lanPin = nil
             }
+
+            self?.cleanupGatewayPorts()
         }
     }
 }

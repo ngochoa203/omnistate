@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { GatewayClient } from "../lib/gateway-client";
 import { buildClaudeMemPayloadFromState, useChatStore } from "../lib/chat-store";
 import type { ServerMessage } from "../lib/protocol";
+import { speakText } from "../lib/tts";
 
 let _client: GatewayClient | null = null;
 
@@ -78,6 +79,17 @@ export function useGateway() {
     unsubs.push(client.on("task.complete", (msg: ServerMessage) => {
       if (msg.type === "task.complete") {
         store.completeTask(msg.taskId, msg.result);
+
+        const state = useChatStore.getState();
+        if (!state.ttsEnabled) return;
+
+        const speech =
+          (typeof msg.result?.summary === "string" && msg.result.summary) ||
+          (typeof msg.result?.message === "string" && msg.result.message) ||
+          "";
+        if (!speech.trim()) return;
+
+        void speakText(speech, state.appLanguage);
       }
     }));
 

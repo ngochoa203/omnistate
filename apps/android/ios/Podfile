@@ -1,0 +1,48 @@
+# Podfile for OmniState iOS
+# React Native 0.77.0
+#
+# Setup:
+#   1. cd apps/android/ios
+#   2. bundle install      (if using Bundler)
+#   3. pod install
+#   4. Open OmniState.xcworkspace in Xcode
+#
+# Minimum iOS target matches react-native 0.77 requirements.
+
+require Pod::Executable.execute_command('node', ['-e',
+  'process.stdout.write(require("resolve").sync("react-native/scripts/react_native_pods.rb",'\
+  ' {paths: [require.resolve("react-native/package.json")]}))',
+]).strip
+
+platform :ios, min_ios_version_supported
+prepare_react_native_project!
+
+# If you are using a `react-native-flipper` your iOS version deployment target
+# will be set to `16.0` since Flipper no longer supports older iOS versions.
+# If you want to avoid this, be sure to exclude `react-native-flipper` from the
+# podspec itself.
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+target 'OmniState' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false
+    )
+  end
+end

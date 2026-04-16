@@ -1,0 +1,11 @@
+{
+  "id": "system-health",
+  "name": "System Health Monitor",
+  "version": "1.0.0",
+  "category": "health",
+  "capabilities": ["cpu-monitor", "memory-monitor", "disk-monitor", "thermal-monitor"],
+  "requirements": {
+    "platform": ["darwin"]
+  },
+  "hooks": ["health.check", "health.repair"]
+}

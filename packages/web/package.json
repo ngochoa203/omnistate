@@ -10,6 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@omnistate/mobile-core": "workspace:*",
+    "@omnistate/shared": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0"

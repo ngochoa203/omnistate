@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import type { ChatMessage } from "../lib/chat-store";
 import { useChatStore } from "../lib/chat-store";
 import { ResourceReport } from "./ResourceReport";
+import { speakText } from "../lib/tts";
 
 interface Props {
   message: ChatMessage;
@@ -10,6 +11,7 @@ interface Props {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const ttsEnabled = useChatStore((s) => s.ttsEnabled);
+  const appLanguage = useChatStore((s) => s.appLanguage);
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -19,14 +21,11 @@ export function MessageBubble({ message }: Props) {
       .catch(() => {});
   }, [message.content]);
 
-  const handleSpeak = useCallback(() => {
+  const handleSpeak = useCallback(async () => {
     const text = message.content || "";
     if (!text) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1; u.pitch = 1;
-    window.speechSynthesis.speak(u);
-  }, [message.content]);
+    await speakText(text, appLanguage);
+  }, [message.content, appLanguage]);
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
@@ -50,7 +49,38 @@ export function MessageBubble({ message }: Props) {
         }}>
           {/* User content */}
           {isUser && (
-            <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: "0.875rem", lineHeight: 1.6 }}>{message.content}</p>
+            <>
+              <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: "0.875rem", lineHeight: 1.6 }}>{message.content}</p>
+              {message.attachments && message.attachments.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {message.attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        borderRadius: 10,
+                        padding: att.kind === "image" ? 6 : "5px 8px",
+                        background: "rgba(255,255,255,0.04)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 5,
+                      }}
+                    >
+                      {att.kind === "image" && att.previewUrl && (
+                        <img
+                          src={att.previewUrl}
+                          alt={att.name}
+                          style={{ maxWidth: 160, maxHeight: 120, borderRadius: 8, objectFit: "cover" }}
+                        />
+                      )}
+                      <span style={{ fontSize: "0.68rem", color: "var(--color-text-secondary)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {att.kind === "image" ? "🖼️" : "📎"} {att.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {/* System content */}
@@ -71,6 +101,7 @@ export function MessageBubble({ message }: Props) {
 
               {/* Content */}
               {message.content && <OutputBlock content={message.content} data={message.data} />}
+              <SystemImagePreview data={message.data} content={message.content} />
 
               {/* Resource Impact Report */}
               {message.data?.resourceImpact && (
@@ -215,4 +246,53 @@ function FormattedData({ data, fallback }: { data: any; fallback: string }) {
 
 function formatKey(key: string): string {
   return key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, c => c.toUpperCase()).trim();
+}
+
+function SystemImagePreview({ data, content }: { data?: Record<string, unknown>; content?: string }) {
+  const imagePath = extractImagePath(data, content);
+  if (!imagePath) return null;
+
+  const src = `/api/files/read?path=${encodeURIComponent(imagePath)}`;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <img src={src} alt="Captured screen" style={{ width: "100%", maxHeight: 260, objectFit: "contain", borderRadius: 10, border: "1px solid rgba(255,255,255,0.1)" }} />
+      <div style={{ marginTop: 5, fontSize: "0.68rem", color: "var(--color-text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
+        {imagePath}
+      </div>
+    </div>
+  );
+}
+
+function extractImagePath(data?: Record<string, unknown>, content?: string): string | undefined {
+  if (!data && !content) return undefined;
+
+  const pathCandidates = [
+    data?.screenshotPath,
+    data?.imagePath,
+    data?.filePath,
+  ];
+  for (const candidate of pathCandidates) {
+    if (typeof candidate !== "string") continue;
+    if (/\.(png|jpg|jpeg|webp)$/i.test(candidate)) return candidate;
+  }
+
+  const stepData = Array.isArray(data?.stepData) ? data?.stepData : [];
+  for (const step of stepData) {
+    if (!step || typeof step !== "object") continue;
+    const record = step as Record<string, unknown>;
+    const nestedCandidates = [record.screenshotPath, record.imagePath, record.filePath, record.path];
+    for (const candidate of nestedCandidates) {
+      if (typeof candidate !== "string") continue;
+      if (/\.(png|jpg|jpeg|webp)$/i.test(candidate)) return candidate;
+    }
+  }
+
+  if (typeof content === "string" && content.trim()) {
+    const matches = content.match(/\/[^\s"'`]+\.(png|jpg|jpeg|webp)/gi);
+    if (matches && matches.length > 0) {
+      return matches[matches.length - 1];
+    }
+  }
+
+  return undefined;
 }

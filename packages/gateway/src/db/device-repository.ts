@@ -1,8 +1,9 @@
 import type Database from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import jwt from "jsonwebtoken";
+import { getJwtSecret } from "../config/jwt-secret.js";
 
-const JWT_SECRET = process.env.OMNISTATE_JWT_SECRET || "omnistate-dev-secret-change-in-production";
+const JWT_SECRET = getJwtSecret();
 const DEVICE_TOKEN_EXPIRY = "30d";
 
 // ── Types ─────────────────────────────────────────────────────────────────────

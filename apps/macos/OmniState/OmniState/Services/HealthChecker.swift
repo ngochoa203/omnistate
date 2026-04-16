@@ -10,10 +10,29 @@ class HealthChecker: ObservableObject {
     @Published var lastCheck: Date?
 
     private var timer: Timer?
-    private let healthURL = URL(string: "http://127.0.0.1:19801/health")!
     private let interval: TimeInterval = 5.0
 
     private init() {}
+
+    private var runtimeConfigPath: String {
+        NSHomeDirectory() + "/.omnistate/llm.runtime.json"
+    }
+
+    private var healthURL: URL {
+        guard let data = FileManager.default.contents(atPath: runtimeConfigPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let voice = json["voice"] as? [String: Any],
+              let siri = voice["siri"] as? [String: Any],
+              let endpoint = siri["endpoint"] as? String,
+              let endpointURL = URL(string: endpoint),
+              let host = endpointURL.host,
+              let port = endpointURL.port,
+              let url = URL(string: "http://\(host):\(port)/health")
+        else {
+            return URL(string: "http://127.0.0.1:19801/health")!
+        }
+        return url
+    }
 
     func startPolling() {
         // Initial check

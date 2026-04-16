@@ -2,6 +2,8 @@
 import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,17 +85,62 @@ async function freePorts(ports) {
 }
 
 async function waitForGatewayReady({ timeoutMs = 30000, intervalMs = 500 } = {}) {
+  const healthUrls = getHealthProbeUrls();
+  log(`Health probe targets: ${healthUrls.join(", ")}`);
+
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    try {
-      const res = await fetch("http://127.0.0.1:19801/healthz");
-      if (res.ok) return true;
-    } catch {
-      // gateway not ready yet
+    for (const url of healthUrls) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          log(`Gateway health ready via ${url}`);
+          return true;
+        }
+      } catch {
+        // gateway not ready yet
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return false;
+}
+
+function getHealthProbeUrls() {
+  const candidates = new Set([
+    "http://127.0.0.1:19801",
+    "http://127.0.0.1:9999",
+  ]);
+
+  const envEndpoint = process.env.OMNISTATE_SIRI_ENDPOINT;
+  if (envEndpoint) {
+    try {
+      const u = new URL(envEndpoint);
+      candidates.add(u.origin);
+    } catch {
+      // ignore invalid endpoint
+    }
+  }
+
+  const runtimePath = resolve(homedir(), ".omnistate/llm.runtime.json");
+  if (existsSync(runtimePath)) {
+    try {
+      const raw = JSON.parse(readFileSync(runtimePath, "utf-8"));
+      const endpoint = raw?.voice?.siri?.endpoint;
+      if (typeof endpoint === "string" && endpoint.length > 0) {
+        const u = new URL(endpoint);
+        candidates.add(u.origin);
+      }
+    } catch {
+      // ignore malformed runtime config
+    }
+  }
+
+  const urls = [];
+  for (const origin of candidates) {
+    urls.push(`${origin}/healthz`, `${origin}/health`);
+  }
+  return urls;
 }
 
 try {

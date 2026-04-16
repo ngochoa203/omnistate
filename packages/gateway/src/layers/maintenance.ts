@@ -184,7 +184,9 @@ function isSafeUserPath(p: string): boolean {
 // ---------------------------------------------------------------------------
 
 export class MaintenanceLayer {
-  constructor(private readonly deep: DeepLayer) {}
+  constructor(deep: DeepLayer) {
+    void deep;
+  }
 
   // =========================================================================
   // UC12.1 — Disk Cleanup

@@ -1,9 +1,9 @@
 import { useAuthStore } from "./auth-store";
 import type { VoiceProfile } from "./auth-store";
+import { resolveGatewayHttpBaseUrl } from "./runtime-config";
 
 function getBaseUrl(): string {
-  const wsUrl = (import.meta as any).env?.VITE_GATEWAY_URL || "ws://127.0.0.1:19800";
-  return wsUrl.replace(/^ws/, "http").replace(/\/ws\/?$/, "");
+  return resolveGatewayHttpBaseUrl();
 }
 
 async function apiCall(path: string, options: RequestInit = {}): Promise<any> {
