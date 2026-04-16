@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 // MARK: - Data models
@@ -9,6 +10,15 @@ struct NativeConversation: Identifiable, Equatable {
     var model: String
     var memorySummary: String
     var memoryLog: [String]
+}
+
+private struct PixelPresenceAgent: Identifiable {
+    let id: String
+    let name: String
+    let source: String
+    let status: String
+    let symbol: String
+    let tint: Color
 }
 
 // MARK: - Page enum
@@ -219,6 +229,10 @@ struct ContentView: View {
     @State private var scanlineOffset: CGFloat = -280
     @State private var voiceMode = 0
     @State private var voiceBarsPhase: Double = 0
+    @State private var settingsAutoSyncMemory = true
+    @State private var settingsShowSystemMessages = true
+    @State private var settingsCompactAssistantReplies = false
+    @State private var settingsEnableDesktopHints = true
 
     private var selectedSessionIndex: Int? {
         guard let selectedConversationID else { return nil }
@@ -261,6 +275,59 @@ struct ContentView: View {
     private var pendingTaskCount: Int {
         (socketClient.currentTaskId == nil ? 0 : 1) +
         socketClient.historyEntries.filter { !["complete", "completed", "success"].contains($0.status.lowercased()) }.count
+    }
+
+    private var pixelAssetsPath: String {
+        "/Users/hoahn/Projects/pixel-agents/shared/assets"
+    }
+
+    private var pixelAssetsAvailable: Bool {
+        FileManager.default.fileExists(atPath: pixelAssetsPath)
+    }
+
+    private var detectedPixelAgents: [PixelPresenceAgent] {
+        struct AgentSeed {
+            let id: String
+            let name: String
+            let keywords: [String]
+            let symbol: String
+            let tint: Color
+        }
+
+        let seeds: [AgentSeed] = [
+            .init(id: "openclaw", name: "OpenClaw", keywords: ["openclaw", "open claw"], symbol: "🧠", tint: CyberColor.cyan),
+            .init(id: "claude-code", name: "Claude Code", keywords: ["claude code", "claude"], symbol: "🤖", tint: CyberColor.purple),
+            .init(id: "codex", name: "Codex", keywords: ["codex", "gpt-5", "gpt"], symbol: "⚡", tint: CyberColor.blue),
+            .init(id: "cursor", name: "Cursor", keywords: ["cursor"], symbol: "🎯", tint: CyberColor.orange),
+            .init(id: "aider", name: "Aider", keywords: ["aider"], symbol: "🛠", tint: CyberColor.green),
+            .init(id: "gemini", name: "Gemini", keywords: ["gemini"], symbol: "✨", tint: CyberColor.pink)
+        ]
+
+        let providerSignals = socketClient.runtimeProviderOptions.map { "\($0.id) \($0.label)" }
+        let runtimeSignal = "\(socketClient.runtimeProvider) \(socketClient.runtimeModel) \(socketClient.llmPreflight?.providerId ?? "") \(socketClient.llmPreflight?.model ?? "")"
+        let messageSignals = socketClient.messages.suffix(40).map { "\($0.role) \($0.text)" }
+        let historySignals = socketClient.historyEntries.suffix(30).flatMap { ["\($0.goal)", $0.output ?? "", $0.intentType] }
+
+        let fullSignals = (providerSignals + [runtimeSignal] + messageSignals + historySignals)
+            .joined(separator: " ")
+            .lowercased()
+
+        return seeds.compactMap { seed in
+            let found = seed.keywords.contains { fullSignals.contains($0) }
+            guard found else { return nil }
+
+            let active = seed.keywords.contains { runtimeSignal.lowercased().contains($0) }
+            let status = active ? tx("Đang hoạt động", "Active") : tx("Đã phát hiện", "Detected")
+
+            return PixelPresenceAgent(
+                id: seed.id,
+                name: seed.name,
+                source: tx("Từ runtime + lịch sử task", "From runtime + task history"),
+                status: status,
+                symbol: seed.symbol,
+                tint: seed.tint
+            )
+        }
     }
 
     private var activeAlertCount: Int {
@@ -966,33 +1033,98 @@ struct ContentView: View {
         let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         let role = parts.first.map(String.init) ?? "SYSTEM"
         let text = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : line
-        let isUser = role.lowercased() == "user"
-        let isSystem = role.lowercased() == "system"
+        let normalizedRole = role.lowercased()
+        let isUser = normalizedRole == "user"
+        let isSystem = normalizedRole == "system"
+        let isAssistant = normalizedRole == "assistant"
         let bubbleColor: Color = isUser ? CyberColor.blue : isSystem ? CyberColor.orange : CyberColor.cyan
+        let structuredReply = isAssistant && isStructuredReplyText(text)
+        let renderedText = structuredReply ? prettifyStructuredReply(text) : text
 
         return HStack {
             if isUser { Spacer(minLength: 60) }
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 3) {
-                Text(role.uppercased())
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(bubbleColor.opacity(0.7))
+                HStack(spacing: 6) {
+                    if isAssistant {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.cyan)
+                    } else if isSystem {
+                        Image(systemName: "gearshape.2.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.orange)
+                    } else {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(CyberColor.blue)
+                    }
 
-                Text(text)
-                    .textSelection(.enabled)
-                    .font(.system(size: 13, weight: .regular, design: role.lowercased() == "assistant" ? .monospaced : .default))
-                    .foregroundColor(CyberColor.textPrimary)
-                    .padding(10)
-                    .background(isUser ? CyberColor.blue.opacity(0.12) : CyberColor.cardBg)
-                    .clipShape(RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous)
-                            .stroke(bubbleColor.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: bubbleColor.opacity(0.08), radius: 8)
+                    Text(role.uppercased())
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(bubbleColor.opacity(0.78))
+                }
+
+                Group {
+                    if structuredReply {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(renderedText)
+                                .textSelection(.enabled)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .lineSpacing(2)
+                                .foregroundColor(CyberColor.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .padding(10)
+                                .background(Color.black.opacity(0.22))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(CyberColor.cyan.opacity(0.24), lineWidth: 1)
+                                )
+                        }
+                    } else {
+                        Text(renderedText)
+                            .textSelection(.enabled)
+                            .font(.system(size: 13, weight: .regular, design: isAssistant ? .monospaced : .default))
+                            .lineSpacing(1.8)
+                            .lineLimit(settingsCompactAssistantReplies && isAssistant ? 8 : nil)
+                            .foregroundColor(CyberColor.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .background(isUser ? CyberColor.blue.opacity(0.12) : CyberColor.cardBg)
+                            .clipShape(RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: isUser ? 14 : 12, style: .continuous)
+                                    .stroke(bubbleColor.opacity(0.2), lineWidth: 1)
+                            )
+                            .shadow(color: bubbleColor.opacity(0.08), radius: 8)
+                    }
+                }
+                .frame(maxWidth: isUser ? 420 : 700, alignment: .leading)
             }
 
             if !isUser { Spacer(minLength: 60) }
+        }
+    }
+
+    private func isStructuredReplyText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") { return true }
+        if text.contains("\n") && (text.contains(":") || text.contains("{") || text.contains("}")) { return true }
+        return false
+    }
+
+    private func prettifyStructuredReply(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8) else { return text }
+
+        do {
+            let object = try JSONSerialization.jsonObject(with: data)
+            let prettyData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            return String(data: prettyData, encoding: .utf8) ?? text
+        } catch {
+            return text
         }
     }
 
@@ -1672,6 +1804,149 @@ struct ContentView: View {
                         }
                         Button(tx("Refresh Runtime", "Refresh Runtime")) { socketClient.queryRuntimeConfig() }
                             .buttonStyle(.bordered).tint(CyberColor.cyan.opacity(0.7))
+
+                        if !providerOptions.isEmpty {
+                            Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 2)
+
+                            Text(tx("Chuyển nhanh Provider", "Quick Provider Switch"))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(CyberColor.textSecondary)
+
+                            Picker("Provider", selection: Binding(get: {
+                                socketClient.runtimeProvider
+                            }, set: { value in
+                                socketClient.setRuntimeConfig(key: "provider", value: value)
+                                socketClient.queryRuntimeConfig()
+                            })) {
+                                ForEach(providerOptions, id: \.id) { option in
+                                    Text(option.label).tag(option.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 320)
+                        }
+
+                        if !modelOptions.isEmpty {
+                            Text(tx("Chuyển nhanh Model", "Quick Model Switch"))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(CyberColor.textSecondary)
+
+                            Picker("Model", selection: Binding(get: {
+                                socketClient.runtimeModel
+                            }, set: { value in
+                                socketClient.setRuntimeConfig(key: "model", value: value)
+                                socketClient.queryRuntimeConfig()
+                            })) {
+                                ForEach(modelOptions, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 360)
+                        }
+                    }
+                }
+
+                GlowCard(glow: CyberColor.cyan.opacity(0.22)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Pixel Agent Bridge", "Pixel Agent Bridge"))
+
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(pixelAssetsAvailable ? CyberColor.green : CyberColor.orange)
+                                .frame(width: 7, height: 7)
+                                .shadow(color: (pixelAssetsAvailable ? CyberColor.green : CyberColor.orange).opacity(0.5), radius: 4)
+
+                            Text(pixelAssetsAvailable
+                                 ? tx("Đã tìm thấy thư viện pixel-agents", "pixel-agents library detected")
+                                 : tx("Chưa tìm thấy thư viện pixel-agents", "pixel-agents library not found"))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(pixelAssetsAvailable ? CyberColor.green : CyberColor.orange)
+                        }
+
+                        Text(pixelAssetsPath)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(CyberColor.textMuted)
+
+                        if detectedPixelAgents.isEmpty {
+                            Text(tx("Chưa phát hiện agent nào từ OpenClaw/Claude Code/Codex trong runtime hiện tại.", "No OpenClaw/Claude Code/Codex agent signal detected from current runtime."))
+                                .font(.system(size: 12))
+                                .foregroundColor(CyberColor.textMuted)
+                                .padding(.top, 2)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)], spacing: 8) {
+                                ForEach(detectedPixelAgents) { agent in
+                                    pixelAgentCard(agent)
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(tx("Scan agent sources", "Scan agent sources")) {
+                                socketClient.queryRuntimeConfig()
+                                socketClient.queryHistory(limit: 50)
+                                socketClient.queryLlmPreflight()
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(CyberColor.cyan.opacity(0.7))
+
+                            Button(tx("Run agent discovery task", "Run agent discovery task")) {
+                                socketClient.sendTask(goal: "Discover available agents from OpenClaw, Claude Code and runtime providers. Return concise list with status.", conversationId: selectedConversationID)
+                                page = .chat
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CyberColor.purple.opacity(0.8))
+                        }
+                    }
+                }
+
+                GlowCard(glow: CyberColor.orange.opacity(0.18)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Chatbot Dashboard Preferences", "Chatbot Dashboard Preferences"))
+
+                        Toggle(isOn: $settingsAutoSyncMemory) {
+                            Text(tx("Tự đồng bộ session memory sau mỗi prompt", "Auto sync session memory after each prompt"))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(CyberColor.textSecondary)
+                        }
+                        .toggleStyle(.switch)
+
+                        Toggle(isOn: $settingsShowSystemMessages) {
+                            Text(tx("Hiển thị system messages trong khung chat", "Show system messages in chat timeline"))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(CyberColor.textSecondary)
+                        }
+                        .toggleStyle(.switch)
+
+                        Toggle(isOn: $settingsCompactAssistantReplies) {
+                            Text(tx("Compact assistant replies (gọn hơn)", "Compact assistant replies"))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(CyberColor.textSecondary)
+                        }
+                        .toggleStyle(.switch)
+
+                        Toggle(isOn: $settingsEnableDesktopHints) {
+                            Text(tx("Bật desktop hints cho chatbot workflow", "Enable desktop hints for chatbot workflow"))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(CyberColor.textSecondary)
+                        }
+                        .toggleStyle(.switch)
+
+                        HStack(spacing: 8) {
+                            Button(tx("Sync memory now", "Sync memory now")) {
+                                syncAllMemoryToBackend()
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(CyberColor.cyan.opacity(0.7))
+
+                            Button(tx("Run health + system snapshot", "Run health + system snapshot")) {
+                                socketClient.queryHealth()
+                                socketClient.querySystemDashboard()
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(CyberColor.orange.opacity(0.7))
+                        }
                     }
                 }
 
@@ -1688,6 +1963,48 @@ struct ContentView: View {
             }
             .padding(18)
         }
+    }
+
+    private func pixelAgentCard(_ agent: PixelPresenceAgent) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(
+                        LinearGradient(colors: [agent.tint.opacity(0.35), agent.tint.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(agent.tint.opacity(0.35), lineWidth: 1)
+                    )
+
+                Text(agent.symbol)
+                    .font(.system(size: 12, weight: .black))
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.name)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(CyberColor.textPrimary)
+
+                Text(agent.source)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(CyberColor.textMuted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            CyberBadge(text: agent.status, color: agent.status.lowercased().contains("active") || agent.status.lowercased().contains("hoạt động") ? CyberColor.green : CyberColor.cyan)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.02))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(agent.tint.opacity(0.2), lineWidth: 1)
+        )
     }
 
     // MARK: ========== Device Pairing ==========
@@ -1944,12 +2261,16 @@ struct ContentView: View {
         let conversationId = selectedSessionIndex.map { sessions[$0].id }
         socketClient.sendTask(goal: goal, conversationId: conversationId)
         promptText = ""
-        syncAllMemoryToBackend()
+        if settingsAutoSyncMemory {
+            syncAllMemoryToBackend()
+        }
     }
 
     private var selectedSessionTranscript: [String] {
         guard let idx = selectedSessionIndex else { return [] }
-        return Array(sessions[idx].memoryLog.reversed())
+        let reversed = Array(sessions[idx].memoryLog.reversed())
+        if settingsShowSystemMessages { return reversed }
+        return reversed.filter { !$0.lowercased().hasPrefix("system:") }
     }
 
     private func captureLatestSocketMessage() {
