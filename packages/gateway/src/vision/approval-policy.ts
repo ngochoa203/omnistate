@@ -842,7 +842,6 @@ export class ApprovalEngine {
       case "strict":
         this.updatePolicy({
           enabled: true,
-          defaultAction: "deny",
           blocklist: {
             paths: [
               "~/.ssh/**",
@@ -853,19 +852,17 @@ export class ApprovalEngine {
               "/etc/passwd",
             ],
             apps: [],
+            actions: [],
           },
           allowlist: {
             paths: [],
             apps: ["Terminal", "claude"],
-            tools: ["Read", "Glob", "Grep"],
           },
-          rateLimit: { maxPerMinute: 5 },
         });
         break;
       case "moderate":
         this.updatePolicy({
           enabled: true,
-          defaultAction: "allow",
           blocklist: {
             paths: [
               "~/.ssh/**",
@@ -875,37 +872,26 @@ export class ApprovalEngine {
               `${home}/Documents/Private/**`,
             ],
             apps: [],
+            actions: [],
           },
           allowlist: {
             paths: [`${home}/Projects/**`, `${home}/Developer/**`, "/tmp/**"],
             apps: ["Terminal", "iTerm2", "claude", "Code", "Cursor"],
-            tools: [
-              "Read",
-              "Write",
-              "Edit",
-              "Glob",
-              "Grep",
-              "Bash",
-              "NotebookEdit",
-            ],
           },
-          rateLimit: { maxPerMinute: 30 },
         });
         break;
       case "permissive":
         this.updatePolicy({
           enabled: true,
-          defaultAction: "allow",
           blocklist: {
             paths: ["~/.ssh/**", "~/.aws/**", "~/.gnupg/**"],
             apps: [],
+            actions: [],
           },
           allowlist: {
             paths: ["**"],
             apps: ["*"],
-            tools: ["*"],
           },
-          rateLimit: { maxPerMinute: 0 },
         });
         break;
     }
