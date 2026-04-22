@@ -145,6 +145,7 @@ interface ConnectedClient {
  */
 export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
+  private gatewayHttpServer: HttpServer | null = null;
   private siriBridgeServer: HttpServer | null = null;
   private wakeManager: WakeManager = new WakeManager();
   private triggerEngine: TriggerEngine = new TriggerEngine();
@@ -203,12 +204,22 @@ export class OmniStateGateway {
       return;
     }
 
-    this.wss = new WebSocketServer({
-      host: this.config.gateway.bind,
-      port: this.config.gateway.port,
+    const httpServer = createServer((req, res) => {
+      this.handleGatewayHttp(req, res).catch((err) =>
+        logger.error({ err }, "[OmniState] Unhandled error in handleGatewayHttp")
+      );
+    });
+    this.gatewayHttpServer = httpServer;
+
+    this.wss = new WebSocketServer({ noServer: true });
+
+    httpServer.on("upgrade", (req, socket, head) => {
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        this.wss!.emit("connection", ws, req);
+      });
     });
 
-    this.wss.on("error", (err: NodeJS.ErrnoException) => {
+    httpServer.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         logger.error(
           `[OmniState] Port ${this.config.gateway.port} is already in use on ${this.config.gateway.bind}.\n` +
@@ -219,14 +230,19 @@ export class OmniStateGateway {
       logger.error(`[OmniState] Gateway server error: ${err.message}`);
     });
 
-    this.wss.on("listening", () => {
-      logger.info(
-        `[OmniState] Gateway listening on ${this.config.gateway.bind}:${this.config.gateway.port}`
-      );
+    // Keep wss error handler as defense-in-depth
+    this.wss.on("error", (err: NodeJS.ErrnoException) => {
+      logger.error(`[OmniState] WebSocketServer error: ${err.message}`);
     });
 
     this.wss.on("connection", (ws, req) => {
       this.handleConnection(ws, req);
+    });
+
+    httpServer.listen(this.config.gateway.port, this.config.gateway.bind, () => {
+      logger.info(
+        `[OmniState] Gateway listening on ${this.config.gateway.bind}:${this.config.gateway.port}`
+      );
     });
 
     this.startSiriBridge();
@@ -256,6 +272,8 @@ export class OmniStateGateway {
     this.clients.clear();
     this.wss?.close();
     this.wss = null;
+    this.gatewayHttpServer?.close();
+    this.gatewayHttpServer = null;
     this.siriBridgeServer?.close();
     this.siriBridgeServer = null;
     this.wakeManager.stop();
@@ -289,6 +307,100 @@ export class OmniStateGateway {
       normalized.startsWith("/config set siri_") ||
       normalized.startsWith("omnistate config set siri_")
     );
+  }
+
+  private async handleGatewayHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startMs = Date.now();
+    applyRequestId(req, res);
+    applySecurityHeaders(res);
+    const origin = req.headers["origin"] as string | undefined;
+
+    const json = (status: number, body: Record<string, unknown>) => {
+      applyCorsHeaders(res, origin);
+      res.statusCode = status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(body));
+      const route = new URL(req.url ?? "/", "http://localhost").pathname;
+      httpRequestsTotal.inc({ method: req.method ?? "GET", route, status: String(status) });
+      httpRequestDurationSeconds.observe({ method: req.method ?? "GET", route, status: String(status) }, (Date.now() - startMs) / 1000);
+    };
+
+    const requestPath = (() => {
+      try {
+        return new URL(req.url ?? "", "http://localhost").pathname;
+      } catch {
+        return req.url ?? "";
+      }
+    })();
+
+    if (req.method === "OPTIONS") {
+      applyPreflightHeaders(res, origin);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/metrics") {
+      const metricsOutput = await register.metrics();
+      applyCorsHeaders(res, origin);
+      res.writeHead(200, { "content-type": register.contentType });
+      res.end(metricsOutput);
+      return;
+    }
+
+    if (req.method === "GET" && (requestPath === "/health" || requestPath === "/healthz")) {
+      const { getTailscaleStatus } = await import("../network/tailscale.js");
+      json(200, {
+        status: "ok",
+        uptime: process.uptime(),
+        connections: this.clients.size,
+        timestamp: new Date().toISOString(),
+        tailscale: getTailscaleStatus(),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/health/ready") {
+      const checks: Record<string, { ok: boolean; error?: string }> = {};
+      try {
+        const db = (await import("../db/database.js")).getDb();
+        db.prepare("SELECT 1").get();
+        checks["db"] = { ok: true };
+      } catch (err) {
+        checks["db"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      try {
+        const { loadLlmRuntimeConfig: loadCfg } = await import("../llm/runtime-config.js");
+        const cfg = loadCfg();
+        const baseURL = cfg.providers?.find((p) => p.id === cfg.activeProviderId)?.baseURL ?? "";
+        if (baseURL) {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          try {
+            await fetch(baseURL, { method: "HEAD", signal: controller.signal });
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+        checks["llm"] = { ok: true };
+      } catch (err) {
+        checks["llm"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      const ready = Object.values(checks).every((c) => c.ok);
+      json(ready ? 200 : 503, { ready, checks });
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/readyz") {
+      json(200, {
+        ok: true,
+        ready: true,
+        wakeListenerRunning: this.wakeManager.isRunning(),
+      });
+      return;
+    }
+
+    json(404, { error: { code: "NOT_FOUND", message: "Route not found" } });
   }
 
   private startSiriBridge(): void {
