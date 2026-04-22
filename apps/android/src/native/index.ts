@@ -1,39 +1,37 @@
 /**
  * @omnistate/android — native module barrel
- *
- * Exports all JS-side native bridges in one import:
- *
- *   import { AudioRecorder, CameraCapture } from '../native';
- *   import type { AudioRecorderConfig, TakePictureOptions } from '../native';
  */
 
-// ── Modules ───────────────────────────────────────────────────────────────────
-
-export { AudioRecorder } from './AudioRecorder';
-export { CameraCapture } from './CameraCapture';
-
-// ── Types — AudioRecorder ─────────────────────────────────────────────────────
+export { AudioRecorder } from "./AudioRecorder";
+export { CameraCapture } from "./CameraCapture";
+export { AccessibilityModule } from "./AccessibilityModule";
+export { ScreenCaptureModule } from "./ScreenCaptureModule";
+export { OverlayModule } from "./OverlayModule";
+export { AppManagerModule, KNOWN_APPS } from "./AppManagerModule";
 
 export type {
   AudioRecorderConfig,
   AudioRecorderModule,
   StopRecordingResult,
-  /** Re-export with the AudioRecorder prefix to avoid name clashes */
   PermissionStatus as AudioPermissionStatus,
-} from './AudioRecorder';
-
-// ── Types — CameraCapture ─────────────────────────────────────────────────────
+} from "./AudioRecorder";
 
 export type {
   TakePictureOptions,
   TakePictureResult,
   CameraCaptureModule,
-  /** Re-export with the Camera prefix to avoid name clashes */
   PermissionStatus as CameraPermissionStatus,
-} from './CameraCapture';
+} from "./CameraCapture";
 
-// ── Unified permission status ─────────────────────────────────────────────────
-// Both modules use the same three-state enum — export it once for consumers
-// that don't care which module they're talking to.
+export type {
+  ScreenNode,
+  ElementBounds,
+  SystemAction,
+  AccessibilityModuleInterface,
+} from "./AccessibilityModule";
 
-export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
+export type { ScreenCaptureModuleInterface } from "./ScreenCaptureModule";
+export type { OverlayModuleInterface } from "./OverlayModule";
+export type { KnownApp } from "./AppManagerModule";
+
+export type PermissionStatus = "granted" | "denied" | "undetermined";
