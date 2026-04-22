@@ -5,6 +5,25 @@ All notable changes to OmniState are documented here.
 ## [Unreleased]
 
 ### Added
+- **E2E Test Suite** — 36 tests across 10 sections (WebSocket, HTTP, auth, device, rate limit, task, config)
+- **Sample Plugin** — `system-health` plugin with CPU/memory/disk/thermal monitoring + repair
+- **React Native Native Modules** — AudioRecorder + CameraCapture (3-layer: real/guard/mock)
+- **iOS App** — Full iOS native layer (Xcode project, Podfile, AppDelegate, LaunchScreen)
+- **Onboarding Wizard** — 5-step first-run modal (Welcome, Permissions, Voice, Remote, Complete)
+- **WebRTC Voice Streaming** — VoiceStreamManager with WebSocket binary audio, STT, TTS
+- **Performance Benchmarks** — 6 benchmarks with p50/p95/p99 percentiles
+- **CI/CD Pipeline** — GitHub Actions ci.yml + release.yml (lint, test, swift, rust, multi-platform napi)
+- **Xcode Project** — XcodeGen project.yml for macOS App Store submission
+
+### Changed
+- **Web ↔ Mobile-Core Dedup** — i18n, protocol (274→5 lines), audio-utils unified via @omnistate/shared
+- **Production Cleanup** — removed 18 audit files, 2 dead scripts, 8 duplicate npm scripts
+- **Root Scripts** — standardized to `app:*` prefix pattern, removed duplicates
+- **.gitignore** — added .cursor/, .claude/, .pytest_cache/, removed stray `pipefail`
+- **Dependencies** — removed duplicate @omnistate/shared from android, added typescript to mobile-core
+- **Configs** — added .prettierrc, eslint.config.mjs
+
+### Previously added (in this release cycle)
 - **12 Execution Layers** wired into orchestrator with prefix-based routing
   - `surface.ts` (57 methods) — GUI control, OCR, keyboard, window management, drag-drop
   - `deep.ts` (47 methods) — File I/O, process management, shell, app launching, system info
