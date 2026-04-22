@@ -4,6 +4,8 @@ All notable changes to OmniState are documented here.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-04-22
+
 ### Added
 - **E2E Test Suite** — 36 tests across 10 sections (WebSocket, HTTP, auth, device, rate limit, task, config)
 - **Sample Plugin** — `system-health` plugin with CPU/memory/disk/thermal monitoring + repair
