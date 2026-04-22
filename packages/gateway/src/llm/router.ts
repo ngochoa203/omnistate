@@ -4,6 +4,7 @@ import {
   loadLlmRuntimeConfig,
   type LlmProviderConfig,
 } from "./runtime-config.js";
+import { checkCircuit, recordSuccess, recordFailure } from "./circuit-breaker.js";
 
 export interface LlmTextRequest {
   system: string;
@@ -163,8 +164,10 @@ export async function requestLlmTextWithFallback(
   const errors: LlmRouterErrorDetails[] = [];
   for (const provider of providers) {
     try {
+      checkCircuit(provider.id);
       const text = await callProvider(provider, req);
       if (text) {
+        recordSuccess(provider.id);
         return {
           text,
           providerId: provider.id,
@@ -172,12 +175,14 @@ export async function requestLlmTextWithFallback(
         };
       }
 
+      recordFailure(provider.id);
       errors.push({
         providerId: provider.id,
         model: provider.model,
         message: "Empty model response",
       });
     } catch (err) {
+      recordFailure(provider.id);
       errors.push(normalizeProviderError(provider, provider.model, err));
     }
   }

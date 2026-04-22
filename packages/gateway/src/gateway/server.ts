@@ -33,6 +33,9 @@ import { ApprovalEngine } from "../vision/approval-policy.js";
 import { ClaudeCodeResponder } from "../vision/permission-responder.js";
 
 import { logger } from "../utils/logger.js";
+import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
+import { applyRequestId } from "./request-context.js";
+import { register, httpRequestsTotal, httpRequestDurationSeconds, wsConnectionsGauge } from "./metrics.js";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
@@ -327,10 +330,19 @@ export class OmniStateGateway {
     res: ServerResponse,
     expectedPath: string,
   ): Promise<void> {
+    const startMs = Date.now();
+    applyRequestId(req, res);
+    applySecurityHeaders(res);
+    const origin = req.headers["origin"] as string | undefined;
+
     const json = (status: number, body: Record<string, unknown>) => {
+      applyCorsHeaders(res, origin);
       res.statusCode = status;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(body));
+      const route = new URL(req.url ?? "/", "http://localhost").pathname;
+      httpRequestsTotal.inc({ method: req.method ?? "GET", route, status: String(status) });
+      httpRequestDurationSeconds.observe({ method: req.method ?? "GET", route, status: String(status) }, (Date.now() - startMs) / 1000);
     };
 
     const requestPath = (() => {
@@ -348,11 +360,8 @@ export class OmniStateGateway {
       remote.startsWith("::ffff:127.0.0.1");
 
     if (req.method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      });
+      applyPreflightHeaders(res, origin);
+      res.writeHead(204);
       res.end();
       return;
     }
@@ -518,11 +527,12 @@ export class OmniStateGateway {
       if (!endpoint) {
         try {
           const local = await synthesizeRtvcSpeech({ text, language, profileId });
+          applyCorsHeaders(res, origin);
+          applySecurityHeaders(res);
           res.writeHead(200, {
             "Content-Type": local.contentType,
             "Content-Length": String(local.audio.length),
             "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
           });
           res.end(local.audio);
         } catch (err: any) {
@@ -556,11 +566,12 @@ export class OmniStateGateway {
         const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
         if (contentType.startsWith("audio/")) {
           const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+          applyCorsHeaders(res, origin);
+          applySecurityHeaders(res);
           res.writeHead(200, {
             "Content-Type": contentType,
             "Content-Length": String(audioBuffer.length),
             "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*",
           });
           res.end(audioBuffer);
           return;
@@ -599,6 +610,8 @@ export class OmniStateGateway {
 
         const file = await readFile(resolvedPath);
         const fileInfo = await stat(resolvedPath);
+        applyCorsHeaders(res, origin);
+        applySecurityHeaders(res);
         res.writeHead(200, {
           "Content-Type": mimeForPath(resolvedPath),
           "Content-Length": String(fileInfo.size),
@@ -611,9 +624,53 @@ export class OmniStateGateway {
       return;
     }
 
+    if (req.method === "GET" && requestPath === "/metrics") {
+      const metricsOutput = await register.metrics();
+      applyCorsHeaders(res, origin);
+      res.writeHead(200, { "content-type": register.contentType });
+      res.end(metricsOutput);
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/health/ready") {
+      const checks: Record<string, { ok: boolean; error?: string }> = {};
+
+      // DB check
+      try {
+        const db = (await import("../db/database.js")).getDb();
+        db.prepare("SELECT 1").get();
+        checks["db"] = { ok: true };
+      } catch (err) {
+        checks["db"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+
+      // LLM provider reachability (best-effort, 2s timeout)
+      try {
+        const { loadLlmRuntimeConfig } = await import("../llm/runtime-config.js");
+        const cfg = loadLlmRuntimeConfig();
+        const baseURL = cfg.providers?.find((p) => p.id === cfg.activeProviderId)?.baseURL ?? "";
+        if (baseURL) {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          try {
+            await fetch(baseURL, { method: "HEAD", signal: controller.signal });
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+        checks["llm"] = { ok: true };
+      } catch (err) {
+        checks["llm"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+
+      const ready = Object.values(checks).every((c) => c.ok);
+      json(ready ? 200 : 503, { ready, checks });
+      return;
+    }
+
     if (req.method === "GET" && (requestPath === "/health" || requestPath === "/healthz")) {
       const { getTailscaleStatus } = await import("../network/tailscale.js");
-      jsonResponse(res, 200, {
+      json(200, {
         status: "ok",
         uptime: process.uptime(),
         connections: this.clients.size,
@@ -773,7 +830,7 @@ export class OmniStateGateway {
     }
 
     const chunks: Buffer[] = [];
-    const MAX_BODY_BYTES = 5 * 1024 * 1024;
+    const MAX_BODY_BYTES = 10 * 1024 * 1024;
     let bodyTooLarge = false;
     let currentSize = 0;
 
@@ -793,7 +850,7 @@ export class OmniStateGateway {
       req.on("error", (err) => reject(err));
     }).catch((err) => {
       if (bodyTooLarge) {
-        json(413, { ok: false, error: "Request body too large" });
+        json(413, { ok: false, error: { code: "PAYLOAD_TOO_LARGE", message: `Request body exceeds ${MAX_BODY_BYTES} bytes` } });
       } else {
         json(400, { ok: false, error: err instanceof Error ? err.message : String(err) });
       }
@@ -981,6 +1038,8 @@ export class OmniStateGateway {
     const isLocalhost =
       remoteIp === "127.0.0.1" || remoteIp === "::1" || remoteIp.startsWith("::ffff:127.0.0.1");
 
+    wsConnectionsGauge.inc();
+
     ws.on("message", (raw) => {
       try {
         const msg: ClientMessage = JSON.parse(raw.toString());
@@ -1013,6 +1072,7 @@ export class OmniStateGateway {
     ws.on("close", () => {
       clearInterval(pingInterval);
       this.clients.delete(clientId);
+      wsConnectionsGauge.dec();
     });
   }
 

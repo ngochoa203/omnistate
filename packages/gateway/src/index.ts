@@ -194,6 +194,8 @@ export async function startGateway(): Promise<void> {
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("uncaughtException", (err) => { logger.error({ err }, "uncaughtException"); shutdown("uncaughtException"); });
+  process.on("unhandledRejection", (err) => { logger.error({ err }, "unhandledRejection"); shutdown("unhandledRejection"); });
 }
 
 // ─── Auto-start when run as main module ─────────────────────────────────────
