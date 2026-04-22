@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { getDb } from "../db/database.js";
 import { v4 as uuid } from "uuid";
 
+import { logger } from "../utils/logger.js";
 export type TriggerConditionType =
   | "cpu_threshold"
   | "memory_threshold"
@@ -50,13 +51,13 @@ export class TriggerEngine {
 
     // Poll CPU/memory every 10 seconds
     this.pollingInterval = setInterval(() => {
-      this.evaluatePollingTriggers().catch(console.error);
+      this.evaluatePollingTriggers().catch((err) => logger.error({ err }, "unhandled promise rejection"));
     }, 10_000);
 
     // Set up cron and filesystem triggers
-    this.setupActiveTriggers().catch(console.error);
+    this.setupActiveTriggers().catch((err) => logger.error({ err }, "unhandled promise rejection"));
 
-    console.log("[triggers] Engine started");
+    logger.info("[triggers] Engine started");
   }
 
   stop(): void {
@@ -68,7 +69,7 @@ export class TriggerEngine {
     this.cronTimers.clear();
     for (const watcher of this.fsWatchers.values()) watcher.close();
     this.fsWatchers.clear();
-    console.log("[triggers] Engine stopped");
+    logger.info("[triggers] Engine stopped");
   }
 
   async setupActiveTriggers(): Promise<void> {
@@ -150,7 +151,7 @@ export class TriggerEngine {
       });
       this.fsWatchers.set(trigger.id, watcher);
     } catch (err) {
-      console.error(`[triggers] Failed to watch ${config.path}:`, err);
+      logger.error({ err }, `[triggers] Failed to watch ${config.path}`);
     }
   }
 
@@ -170,7 +171,7 @@ export class TriggerEngine {
       UPDATE triggers SET fire_count = fire_count + 1, last_fired_at = ? WHERE id = ?
     `).run(now, trigger.id);
 
-    console.log(`[triggers] Fired: ${trigger.name} (${trigger.id})`);
+    logger.info(`[triggers] Fired: ${trigger.name} (${trigger.id})`);
 
     // Execute the action
     try {

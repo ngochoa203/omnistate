@@ -50,6 +50,7 @@
 import * as HybridAutomation from "../hybrid/automation.js";
 import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 
+import { logger } from "../utils/logger.js";
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
 /** Client → server control messages (sent as JSON). */
@@ -209,7 +210,7 @@ export class VoiceStreamManager {
     const projectedTotal = session.totalBytes + chunk.length;
     if (projectedTotal > MAX_BUFFER_BYTES) {
       // Force-finalize rather than silently drop data.
-      console.warn(
+      logger.warn(
         `[VoiceStream] ${clientId} hit buffer limit (${MAX_BUFFER_BYTES} bytes) — forcing stop`,
       );
       this.finalize(clientId, session).catch((err) => {
@@ -424,9 +425,9 @@ export class VoiceStreamManager {
       });
     } catch (err) {
       // TTS is best-effort — log and continue without blocking the transcript result.
-      console.warn(
-        `[VoiceStream] TTS synthesis failed for session ${session.sessionId}:`,
-        err instanceof Error ? err.message : String(err),
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        `[VoiceStream] TTS synthesis failed for session ${session.sessionId}`,
       );
     }
   }
@@ -437,7 +438,7 @@ export class VoiceStreamManager {
     if (session.idleTimer) clearTimeout(session.idleTimer);
     session.idleTimer = setTimeout(() => {
       if (!session.closed) {
-        console.warn(
+        logger.warn(
           `[VoiceStream] Session ${session.sessionId} idle for ${SESSION_IDLE_TIMEOUT_MS}ms — auto-closing`,
         );
         this.finalize(clientId, session).catch((err) => {

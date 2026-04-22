@@ -29,6 +29,7 @@ import { HealthMonitor } from "./health/monitor.js";
 import type { ServerMessage } from "./gateway/protocol.js";
 import { runLlmPreflight, shouldRequireLlm } from "./llm/preflight.js";
 
+import { logger } from "./utils/logger.js";
 // ─── .env loader (no external deps) — exported for CLI inline use ──────────
 
 export function loadDotEnv(envPath: string = ".env"): void {
@@ -79,7 +80,7 @@ function parseArgs(argv: string[]): CliArgs {
     if (tok === "--port" && tokens[i + 1] !== undefined) {
       const n = Number(tokens[++i]);
       if (!Number.isNaN(n) && n > 0 && n <= 65535) args.port = n;
-      else console.warn(`[OmniState] Invalid --port value: ${tokens[i]}`);
+      else logger.warn(`[OmniState] Invalid --port value: ${tokens[i]}`);
     } else if (tok === "--config" && tokens[i + 1] !== undefined) {
       args.configPath = tokens[++i];
     } else if (tok === "--no-health") {
@@ -128,13 +129,13 @@ export async function startGateway(): Promise<void> {
   // 3.5. If LLM is required, fail fast on auth/credits/network issues.
   const preflight = await runLlmPreflight();
   if (shouldRequireLlm() && !preflight.ok) {
-    console.warn(`[OmniState] LLM preflight warning: ${preflight.message}`);
-    console.warn("[OmniState] Continuing in degraded mode; LLM-backed tasks may fail until credentials are fixed.");
+    logger.warn(`[OmniState] LLM preflight warning: ${preflight.message}`);
+    logger.warn("[OmniState] Continuing in degraded mode; LLM-backed tasks may fail until credentials are fixed.");
   }
 
   const available = await isPortAvailable(config.gateway.bind, config.gateway.port);
   if (!available) {
-    console.error(
+    logger.error(
       `[OmniState] Port ${config.gateway.port} on ${config.gateway.bind} is already in use. ` +
         "Stop the existing daemon or start with --port <other-port>."
     );
@@ -147,7 +148,7 @@ export async function startGateway(): Promise<void> {
 
   // 5. Start gateway
   gateway.start();
-  console.log(
+  logger.info(
     `[OmniState] Daemon started — pid=${process.pid} port=${config.gateway.port}`
   );
 
@@ -174,7 +175,7 @@ export async function startGateway(): Promise<void> {
     });
 
     health.start();
-    console.log(
+    logger.info(
       `[OmniState] Health monitor active — interval=${config.health.intervalMs}ms autoRepair=${config.health.autoRepair}`
     );
   }
@@ -185,7 +186,7 @@ export async function startGateway(): Promise<void> {
   function shutdown(signal: string): void {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n[OmniState] ${signal} received — shutting down…`);
+    logger.info(`\n[OmniState] ${signal} received — shutting down…`);
     health?.stop();
     gateway.stop();
     process.exit(0);
@@ -199,5 +200,5 @@ export async function startGateway(): Promise<void> {
 
 const isMain = process.argv[1]?.endsWith("index.js");
 if (isMain) {
-  startGateway().catch(console.error);
+  startGateway().catch((err) => logger.error({ err }, "unhandled promise rejection"));
 }

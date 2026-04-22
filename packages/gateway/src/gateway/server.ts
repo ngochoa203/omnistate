@@ -32,6 +32,7 @@ import { ClaudeMemStore } from "../session/claude-mem-store.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
 import { ClaudeCodeResponder } from "../vision/permission-responder.js";
 
+import { logger } from "../utils/logger.js";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
@@ -195,7 +196,7 @@ export class OmniStateGateway {
   /** Start the WebSocket server. */
   start(): void {
     if (this.wss) {
-      console.warn("[OmniState] Gateway already started in this process; ignoring duplicate start()");
+      logger.warn("[OmniState] Gateway already started in this process; ignoring duplicate start()");
       return;
     }
 
@@ -206,17 +207,17 @@ export class OmniStateGateway {
 
     this.wss.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
-        console.error(
+        logger.error(
           `[OmniState] Port ${this.config.gateway.port} is already in use on ${this.config.gateway.bind}.\n` +
             "Stop the existing daemon or use --port <other-port>."
         );
         return;
       }
-      console.error(`[OmniState] Gateway server error: ${err.message}`);
+      logger.error(`[OmniState] Gateway server error: ${err.message}`);
     });
 
     this.wss.on("listening", () => {
-      console.log(
+      logger.info(
         `[OmniState] Gateway listening on ${this.config.gateway.bind}:${this.config.gateway.port}`
       );
     });
@@ -229,13 +230,13 @@ export class OmniStateGateway {
     this.startWakeListener();
     this.triggerEngine.start(async (trigger) => {
       const taskId = `trigger-${trigger.id}-${crypto.randomUUID()}`;
-      this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch(console.error);
+      this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch((err) => logger.error({ err }, "unhandled promise rejection"));
     });
 
     // Start Claude Code permission auto-responder if configured and enabled
     if (this.claudeCodeResponder) {
       this.claudeCodeResponder.start();
-      console.log("[OmniState] ClaudeCodeResponder started (permission auto-responder active)");
+      logger.info("[OmniState] ClaudeCodeResponder started (permission auto-responder active)");
     }
   }
 
@@ -259,7 +260,7 @@ export class OmniStateGateway {
     if (this.claudeCodeResponder?.isRunning) {
       void this.claudeCodeResponder.stop();
     }
-    console.log("[OmniState] Gateway stopped");
+    logger.info("[OmniState] Gateway stopped");
   }
 
   private startWakeListener(): void {
@@ -308,14 +309,14 @@ export class OmniStateGateway {
 
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
-        console.warn(`[OmniState] Siri bridge port ${port} is already in use. Bridge is disabled.`);
+        logger.warn(`[OmniState] Siri bridge port ${port} is already in use. Bridge is disabled.`);
         return;
       }
-      console.warn(`[OmniState] Siri bridge error: ${err.message}`);
+      logger.warn(`[OmniState] Siri bridge error: ${err.message}`);
     });
 
     server.listen(port, host, () => {
-      console.log(`[OmniState] Siri bridge listening on http://${host}:${port}${path}`);
+      logger.info(`[OmniState] Siri bridge listening on http://${host}:${port}${path}`);
     });
 
     this.siriBridgeServer = server;

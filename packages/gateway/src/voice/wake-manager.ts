@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { logger } from "../utils/logger.js";
 export interface WakeConfig {
   enabled: boolean;
   phrase: string;
@@ -42,13 +43,13 @@ export class WakeManager {
 
     if (!options.config.enabled) return;
     if (!options.token) {
-      console.warn("[OmniState] Wake listener not started: siri token is empty");
+      logger.warn("[OmniState] Wake listener not started: siri token is empty");
       return;
     }
 
     const scriptPath = resolve(process.cwd(), "packages/gateway/scripts/wake_listener.py");
     if (!existsSync(scriptPath)) {
-      console.warn(`[OmniState] Wake listener script missing: ${scriptPath}`);
+      logger.warn(`[OmniState] Wake listener script missing: ${scriptPath}`);
       return;
     }
 
@@ -85,12 +86,12 @@ export class WakeManager {
 
     this.child.on("exit", (code) => {
       if (code !== 0 && code !== null) {
-        console.warn(`[OmniState] Wake listener exited with code ${code}`);
+        logger.warn(`[OmniState] Wake listener exited with code ${code}`);
       }
       this.child = null;
     });
 
-    console.log("[OmniState] Wake listener started");
+    logger.info("[OmniState] Wake listener started");
   }
 
   stop(): void {
