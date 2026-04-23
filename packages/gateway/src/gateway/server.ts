@@ -314,6 +314,11 @@ export class OmniStateGateway {
     applyRequestId(req, res);
     applySecurityHeaders(res);
     const origin = req.headers["origin"] as string | undefined;
+    const remote = req.socket.remoteAddress ?? "";
+    const isLocalRequest =
+      remote === "127.0.0.1" ||
+      remote === "::1" ||
+      remote.startsWith("::ffff:127.0.0.1");
 
     const json = (status: number, body: Record<string, unknown>) => {
       applyCorsHeaders(res, origin);
@@ -397,6 +402,113 @@ export class OmniStateGateway {
         ready: true,
         wakeListenerRunning: this.wakeManager.isRunning(),
       });
+      return;
+    }
+
+    // ── Routine Templates ──────────────────────────────────────────────────
+    if (req.method === "GET" && requestPath === "/api/routines/templates") {
+      const { DAILY_ROUTINES } = await import("../triggers/templates.js");
+      json(200, { templates: DAILY_ROUTINES });
+      return;
+    }
+
+    if (req.method === "POST" && requestPath === "/api/routines/install") {
+      const body = await parseBody(req);
+      const { templateId, userId } = body as { templateId?: string; userId?: string };
+      if (!templateId || !userId) {
+        json(400, { error: { code: "BAD_REQUEST", message: "templateId and userId required" } });
+        return;
+      }
+      const { DAILY_ROUTINES } = await import("../triggers/templates.js");
+      const tpl = DAILY_ROUTINES.find((t) => t.id === templateId);
+      if (!tpl) {
+        json(404, { error: { code: "NOT_FOUND", message: `Template '${templateId}' not found` } });
+        return;
+      }
+      try {
+        const trigger = this.triggerEngine.createTrigger(userId, {
+          name: tpl.trigger.name,
+          description: tpl.trigger.description,
+          condition: tpl.trigger.condition,
+          action: tpl.trigger.action,
+          cooldownMs: tpl.trigger.cooldownMs,
+        });
+        json(201, { ok: true, trigger });
+      } catch (err: any) {
+        json(500, { error: { code: "INTERNAL_ERROR", message: err.message ?? "Failed to install template" } });
+      }
+      return;
+    }
+
+    // ── Memory Pal ─────────────────────────────────────────────────────────
+    if (req.method === "GET" && requestPath === "/api/memory") {
+      const { listAll, toPublicEntry } = await import("../session/memory-pal.js");
+      const urlObj = new URL(req.url ?? "/", "http://localhost");
+      const cat = urlObj.searchParams.get("category") as any ?? undefined;
+      const entries = listAll(cat).map(toPublicEntry);
+      json(200, { entries });
+      return;
+    }
+
+    if (req.method === "GET" && requestPath === "/api/memory/search") {
+      const { searchByKey, toPublicEntry } = await import("../session/memory-pal.js");
+      const urlObj = new URL(req.url ?? "/", "http://localhost");
+      const q = urlObj.searchParams.get("q") ?? "";
+      json(200, { entries: searchByKey(q).map(toPublicEntry) });
+      return;
+    }
+
+    const memItemMatch = requestPath.match(/^\/api\/memory\/([^/]+)$/);
+    if (memItemMatch) {
+      const id = memItemMatch[1];
+      const { getEntry, deleteEntry } = await import("../session/memory-pal.js");
+      if (req.method === "GET") {
+        if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+        const entry = getEntry(id);
+        if (!entry) { json(404, { error: "Not found" }); return; }
+        json(200, { entry });
+        return;
+      }
+      if (req.method === "DELETE") {
+        const ok = deleteEntry(id);
+        json(ok ? 200 : 404, { ok });
+        return;
+      }
+    }
+
+    if (req.method === "POST" && requestPath === "/api/memory") {
+      const body = await parseBody(req);
+      const { addEntry, toPublicEntry } = await import("../session/memory-pal.js");
+      try {
+        const entry = addEntry(body);
+        json(201, { entry: toPublicEntry(entry) });
+      } catch (err: any) {
+        json(400, { error: { code: "VALIDATION_ERROR", message: err.message } });
+      }
+      return;
+    }
+
+    // ── Approval Center ────────────────────────────────────────────────────
+    if (req.method === "GET" && requestPath === "/api/approvals/pending") {
+      const { getPendingApprovals } = await import("../vision/approval-center.js");
+      json(200, { approvals: getPendingApprovals() });
+      return;
+    }
+
+    const approveMatch = requestPath.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
+    if (approveMatch && req.method === "POST") {
+      const id = approveMatch[1];
+      const action = approveMatch[2];
+      const { approveRequest, rejectRequest } = await import("../vision/approval-center.js");
+      if (action === "approve") {
+        const body = await parseBody(req);
+        const permanent = Boolean(body?.permanent);
+        const ok = approveRequest(id, permanent);
+        json(ok ? 200 : 404, { ok });
+      } else {
+        const ok = rejectRequest(id);
+        json(ok ? 200 : 404, { ok });
+      }
       return;
     }
 

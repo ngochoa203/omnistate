@@ -15,6 +15,8 @@ export interface CopyShape {
     config: string;
     screenTree: string;
     triggers: string;
+    memory: string;
+    approvals: string;
   };
   status: {
     live: string;
@@ -131,6 +133,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState Config",
       screenTree: "Screen Tree",
       triggers: "Triggers",
+      memory: "Memory Pal",
+      approvals: "Approvals",
     },
     status: {
       live: "Live",
@@ -246,6 +250,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState Config",
       screenTree: "Cây màn hình",
       triggers: "Trigger tự động",
+      memory: "Kho ghi nhớ",
+      approvals: "Phê duyệt",
     },
     status: {
       live: "Trực tuyến",
@@ -361,9 +367,11 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState設定",
       screenTree: "スクリーンツリー",
       triggers: "トリガー",
+      memory: "メモリーパル",
+      approvals: "承認センター",
     },
     status: {
-      live: "接続中",
+      live: "ライブ",
       connecting: "接続しています",
       offline: "オフライン",
       unchecked: "未確認",
@@ -476,6 +484,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState 설정",
       screenTree: "화면 트리",
       triggers: "트리거",
+      memory: "메모리 팔",
+      approvals: "승인 센터",
     },
     status: {
       live: "연결됨",
@@ -591,6 +601,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState 配置",
       screenTree: "屏幕树",
       triggers: "触发器",
+      memory: "记忆助手",
+      approvals: "审批中心",
     },
     status: {
       live: "在线",
@@ -706,6 +718,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "Config OmniState",
       screenTree: "Arbre d'écran",
       triggers: "Déclencheurs",
+      memory: "Mémoire",
+      approvals: "Approbations",
     },
     status: {
       live: "En ligne",
@@ -821,6 +835,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "OmniState-Konfiguration",
       screenTree: "Bildschirmbaum",
       triggers: "Auslöser",
+      memory: "Gedächtnis",
+      approvals: "Genehmigungen",
     },
     status: {
       live: "Online",
@@ -936,6 +952,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "Configuración OmniState",
       screenTree: "Árbol de pantalla",
       triggers: "Disparadores",
+      memory: "Memoria",
+      approvals: "Aprobaciones",
     },
     status: {
       live: "En línea",
@@ -1051,6 +1069,8 @@ const COPY: Record<AppLanguage, CopyShape> = {
       config: "ตั้งค่า OmniState",
       screenTree: "โครงสร้างหน้าจอ",
       triggers: "ทริกเกอร์",
+      memory: "คลังความจำ",
+      approvals: "การอนุมัติ",
     },
     status: {
       live: "ออนไลน์",
