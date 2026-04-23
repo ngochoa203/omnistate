@@ -163,6 +163,7 @@ final class VoiceCaptureService: ObservableObject {
 
                     self?.transcript = rawText
                     self?.isTranscriptFinal = result.isFinal
+                    ListeningBubbleController.shared.keepAlive()
 
                     if result.isFinal {
                         self?.stopRecording()
