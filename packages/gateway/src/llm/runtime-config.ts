@@ -144,8 +144,8 @@ function defaultConfig(): LlmRuntimeConfig {
         token: process.env.OMNISTATE_SIRI_TOKEN ?? "",
       },
       wake: {
-        enabled: false,
-        phrase: "hey omni",
+        enabled: true,
+        phrase: "hey mimi",
         cooldownMs: 2500,
         commandWindowSec: 7,
         engine: "oww" as WakeEngine,

@@ -1892,15 +1892,120 @@ function isMessagingIntentText(text: string): boolean {
   return /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i.test(text);
 }
 
+function extractMessageRecipient(intent: Intent): string | null {
+  // Prefer explicit entities: phone, contact, recipient.
+  const ent: any = intent.entities ?? {};
+  const fromEntity =
+    ent.phone ?? ent.phoneNumber ?? ent.contact ?? ent.recipient ?? ent.to;
+  if (typeof fromEntity === "string" && fromEntity.trim()) return fromEntity.trim();
+
+  const text = intent.rawText;
+  // Vietnamese phone numbers: 10-11 digits, optional +84 prefix.
+  const phone = text.match(/(?:\+?84|0)\d{9,10}/);
+  if (phone) return phone[0];
+  // "cho/tới <name>" or "for/to <name>" — up to the word "nói"/"say"/quote.
+  const vi = text.match(/(?:cho|tới|đến)\s+([^"']+?)(?=\s+(?:và\s+)?(?:nói|bảo|gửi|rằng|message|nhắn)|["'"])/i);
+  if (vi?.[1]) return vi[1].trim();
+  const en = text.match(/\b(?:to|for)\s+([^"']+?)(?=\s+(?:and\s+)?(?:say|saying|message|tell)|["'"])/i);
+  if (en?.[1]) return en[1].trim();
+  return null;
+}
+
+// ── App-specific messaging recipes (keyboard shortcuts verified per app) ───
+// Returns a deterministic AppleScript template or null (fallback to LLM).
+function buildMessagingScriptFromRecipe(
+  app: string,
+  recipient: string,
+  message: string,
+): string | null {
+  const safeApp = escapeAppleScriptString(app);
+  const safeRecipient = escapeAppleScriptString(recipient);
+  const safeMessage = escapeAppleScriptString(message);
+  const appLower = app.toLowerCase();
+
+  // Zalo: Cmd+K opens global contact search (NOT Cmd+F which is in-page find).
+  if (appLower === "zalo") {
+    return [
+      `tell application "${safeApp}" to activate`,
+      `delay 1.5`,
+      `tell application "System Events"`,
+      `  tell process "${safeApp}"`,
+      `    keystroke "k" using command down`,
+      `    delay 0.8`,
+      `    keystroke "${safeRecipient}"`,
+      `    delay 1.2`,
+      `    key code 36`,
+      `    delay 1.2`,
+      `    keystroke "${safeMessage}"`,
+      `    delay 0.3`,
+      `    key code 36`,
+      `  end tell`,
+      `end tell`,
+    ].join("\n");
+  }
+
+  // Messages (iMessage): Cmd+N opens a new message composer.
+  if (appLower === "messages") {
+    return [
+      `tell application "${safeApp}" to activate`,
+      `delay 1`,
+      `tell application "System Events"`,
+      `  tell process "${safeApp}"`,
+      `    keystroke "n" using command down`,
+      `    delay 0.6`,
+      `    keystroke "${safeRecipient}"`,
+      `    delay 0.8`,
+      `    key code 36`,
+      `    delay 0.6`,
+      `    keystroke "${safeMessage}"`,
+      `    delay 0.3`,
+      `    key code 36`,
+      `  end tell`,
+      `end tell`,
+    ].join("\n");
+  }
+
+  // Telegram / Slack / Discord: Cmd+K = quick switcher / jump-to-chat.
+  if (appLower === "telegram" || appLower === "slack" || appLower === "discord") {
+    return [
+      `tell application "${safeApp}" to activate`,
+      `delay 1`,
+      `tell application "System Events"`,
+      `  tell process "${safeApp}"`,
+      `    keystroke "k" using command down`,
+      `    delay 0.6`,
+      `    keystroke "${safeRecipient}"`,
+      `    delay 0.8`,
+      `    key code 36`,
+      `    delay 0.8`,
+      `    keystroke "${safeMessage}"`,
+      `    delay 0.3`,
+      `    key code 36`,
+      `  end tell`,
+      `end tell`,
+    ].join("\n");
+  }
+
+  return null;
+}
+
 async function buildMessagingScriptWithLLM(intent: Intent): Promise<string> {
+  const appRaw = extractAppName(intent) ?? "Zalo";
+  const app = normalizeAppName(appRaw);
+
+  // Prefer deterministic recipe when available (no LLM round-trip needed).
+  const recipient = extractMessageRecipient(intent) ?? "";
+  const message = extractQuotedText(intent.rawText) ?? "";
+  if (recipient && message) {
+    const recipe = buildMessagingScriptFromRecipe(app, recipient, message);
+    if (recipe) return recipe;
+  }
+
   if (!isLlmRequired()) {
     throw new Error("No enabled LLM providers configured for messaging script generation.");
   }
 
   const runtime = loadLlmRuntimeConfig();
-
-  const appRaw = extractAppName(intent) ?? "Zalo";
-  const app = normalizeAppName(appRaw);
 
   const system = `You are generating safe AppleScript for macOS chat-app automation.
 Task: send a message in a desktop chat app.
@@ -1910,7 +2015,13 @@ Rules:
 - Do not include shell commands.
 - Keep script concise and deterministic.
 - Use System Events keystrokes only when necessary.
-- Do not add markdown fences.`;
+- Do not add markdown fences.
+App-specific shortcuts (USE THESE, do NOT use Cmd+F which is in-page find):
+- Zalo: Cmd+K opens global contact search
+- Messages: Cmd+N opens new composer
+- Telegram / Slack / Discord: Cmd+K jumps to chat
+- WhatsApp: Cmd+N new chat
+After typing the recipient, press Return (key code 36), wait ~1.2s, then type the message and press Return.`;
 
   const user = JSON.stringify({
     app,

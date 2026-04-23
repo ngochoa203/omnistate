@@ -328,7 +328,7 @@ struct ContentView: View {
     @State private var lastAssistantSpeechKey: String = ""
     @State private var voiceInputRouteMode = "chat"
     @State private var voiceTtsEnabled = true
-    @State private var voiceWakeListenerEnabled = false
+    @State private var voiceWakeListenerEnabled = true
     @State private var wakeCommandArmedUntil: Date?
     @State private var wakeBubbleVisible = false
     @State private var wakeBubbleText = ""
@@ -2262,7 +2262,62 @@ struct ContentView: View {
                 tx("Run RTVC CLI (CPU)", "Run RTVC CLI (CPU)"),
                 goal: "Enter Real-Time-Voice-Cloning repo and run `uv run --extra cpu demo_cli.py` to perform command-line voice cloning demo"
             )
+
+            Divider().padding(.vertical, 4)
+
+            Text(tx("Huấn luyện wake word \"hey mimi\" (openWakeWord)", "Train wake word \"hey mimi\" (openWakeWord)"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(CyberColor.textSecondary)
+
+            Text(tx(
+                "Bước 1: Mở Colab huấn luyện. Bước 2: Ghi 50–100 mẫu giọng. Bước 3: Tải file .onnx về và import bên dưới.",
+                "Step 1: Open Colab. Step 2: Record 50–100 voice samples. Step 3: Download .onnx and import below."
+            ))
+            .font(.system(size: 11))
+            .foregroundColor(CyberColor.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button(tx("Mở Colab huấn luyện", "Open training Colab")) {
+                    if let url = URL(string: "https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(tx("Hướng dẫn", "Training guide")) {
+                    if let url = URL(string: "https://github.com/dscripka/openWakeWord#training-new-models") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+
+            Button(tx("Import file .onnx đã train", "Import trained .onnx")) {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.init(filenameExtension: "onnx")!].compactMap { $0 }
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    Task { await uploadWakeModel(fileURL: url) }
+                }
+            }
+            .buttonStyle(.bordered)
+
+            quickActionButton(
+                tx("Kiểm tra trạng thái wake model", "Check wake model status"),
+                goal: "GET /api/wake/status from gateway, report whether custom hey-mimi model is installed and active"
+            )
         }
+    }
+
+    private func uploadWakeModel(fileURL: URL) async {
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        var req = URLRequest(url: URL(string: "http://localhost:19800/api/wake/upload-model")!)
+        req.httpMethod = "POST"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.setValue(fileURL.lastPathComponent, forHTTPHeaderField: "X-Model-Filename")
+        req.httpBody = data
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     private var voiceSettingsTab: some View {

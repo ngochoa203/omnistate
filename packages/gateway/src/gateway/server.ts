@@ -512,6 +512,83 @@ export class OmniStateGateway {
       return;
     }
 
+    // ── Wake Word: model status & upload (custom "hey mimi" ONNX) ───────────
+    if (req.method === "GET" && requestPath === "/api/wake/status") {
+      const { loadLlmRuntimeConfig } = await import("../llm/runtime-config.js");
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const os = await import("node:os");
+      const cfg = loadLlmRuntimeConfig();
+      const modelDir = path.join(os.homedir(), ".omnistate", "models");
+      let installed = false;
+      let installedPath: string | null = null;
+      try {
+        const files = fs.readdirSync(modelDir).filter((f) => f.endsWith(".onnx"));
+        if (files.length > 0) {
+          installed = true;
+          installedPath = path.join(modelDir, files[0]);
+        }
+      } catch {
+        // dir doesn't exist
+      }
+      json(200, {
+        enabled: cfg.voice?.wake?.enabled ?? false,
+        phrase: cfg.voice?.wake?.phrase,
+        engine: cfg.voice?.wake?.engine,
+        aliases: cfg.voice?.wake?.aliases,
+        threshold: cfg.voice?.wake?.threshold,
+        modelInstalled: installed,
+        modelPath: installedPath,
+        configuredModelPath: cfg.voice?.wake?.modelPath ?? null,
+        trainingGuide: "https://github.com/dscripka/openWakeWord#training-new-models",
+        colabUrl: "https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb",
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestPath === "/api/wake/upload-model") {
+      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const os = await import("node:os");
+      const modelDir = path.join(os.homedir(), ".omnistate", "models");
+      try { fs.mkdirSync(modelDir, { recursive: true }); } catch {}
+      const filename = (req.headers["x-model-filename"] as string) || "hey_mimi.onnx";
+      // Sanitize: only allow basename with .onnx
+      const safeName = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+      if (!safeName.endsWith(".onnx")) {
+        json(400, { error: { code: "INVALID_FILENAME", message: "Filename must end with .onnx" } });
+        return;
+      }
+      const target = path.join(modelDir, safeName);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const MAX = 50 * 1024 * 1024; // 50MB cap
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.on("data", (c: Buffer) => {
+            total += c.length;
+            if (total > MAX) { reject(new Error("Model file too large (max 50MB)")); return; }
+            chunks.push(c);
+          });
+          req.on("end", () => resolve());
+          req.on("error", reject);
+        });
+        fs.writeFileSync(target, Buffer.concat(chunks));
+        // Persist modelPath into runtime config
+        const { loadLlmRuntimeConfig, saveLlmRuntimeConfig } = await import("../llm/runtime-config.js");
+        const cfg = loadLlmRuntimeConfig();
+        if (cfg.voice?.wake) {
+          (cfg.voice.wake as any).modelPath = target;
+          try { saveLlmRuntimeConfig(cfg); } catch {}
+        }
+        json(201, { ok: true, modelPath: target, sizeBytes: total });
+      } catch (err: any) {
+        json(400, { error: { code: "UPLOAD_FAILED", message: err.message } });
+      }
+      return;
+    }
+
     json(404, { error: { code: "NOT_FOUND", message: "Route not found" } });
   }
 
