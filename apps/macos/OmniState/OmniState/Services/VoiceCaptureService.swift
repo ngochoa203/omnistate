@@ -16,6 +16,13 @@ final class VoiceCaptureService: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
+    private var recentRMSValues: [Float] = []
+    private let rmsWindowSize = 86  // ~2s at 1024 samples / 44100Hz ≈ 86 buffers (tolerates mid-sentence pauses)
+    private let silenceThreshold: Float = 0.008
+    private let speechOnsetThreshold: Float = 0.03
+    private let minRecordingDuration: TimeInterval = 2.0
+    private var recordingStartedAt: Date?
+    private var hasHeardSpeech = false
 
     private init() {}
 
@@ -78,35 +85,94 @@ final class VoiceCaptureService: ObservableObject {
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.contextualStrings = []
+        request.taskHint = .dictation
+        request.requiresOnDeviceRecognition = false
+        request.addsPunctuation = true
+
+        recentRMSValues = []
+        recordingStartedAt = Date()
+        hasHeardSpeech = false
 
         let inputNode = engine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             request.append(buffer)
+
+            // Compute RMS energy for silence detection
+            guard let channelData = buffer.floatChannelData?[0] else { return }
+            let frameCount = Int(buffer.frameLength)
+            var sumSquares: Float = 0
+            for i in 0..<frameCount { sumSquares += channelData[i] * channelData[i] }
+            let rms = sqrt(sumSquares / Float(max(frameCount, 1)))
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.recentRMSValues.append(rms)
+                if self.recentRMSValues.count > self.rmsWindowSize {
+                    self.recentRMSValues.removeFirst()
+                }
+
+                // Wait until user clearly starts speaking before VAD can stop us.
+                if !self.hasHeardSpeech && rms > self.speechOnsetThreshold {
+                    self.hasHeardSpeech = true
+                }
+
+                guard self.hasHeardSpeech,
+                      self.recentRMSValues.count == self.rmsWindowSize,
+                      let started = self.recordingStartedAt,
+                      Date().timeIntervalSince(started) >= self.minRecordingDuration
+                else { return }
+
+                let avgRMS = self.recentRMSValues.reduce(0, +) / Float(self.rmsWindowSize)
+                if avgRMS < self.silenceThreshold {
+                    self.stopRecording()
+                }
+            }
         }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 if let result {
-                    self?.transcript = result.bestTranscription.formattedString
+                    // Confidence gating: drop result if average segment confidence < 0.3
+                    let segments = result.bestTranscription.segments
+                    if !segments.isEmpty {
+                        let avgConfidence = segments.map(\.confidence).reduce(0, +) / Float(segments.count)
+                        if avgConfidence < 0.3 {
+                            if result.isFinal {
+                                self?.stopRecording()
+                            }
+                            return  // treat as noise
+                        }
+                    }
+
+                    // Wake-word guard: drop transcript if it's just the wake word or too short
+                    let rawText = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let lower = rawText.lowercased()
+                    let wakeWords: Set<String> = ["hey mimi", "mimi", "hey", "ok mimi"]
+                    let isWakeOrEmpty = rawText.count < 2 || wakeWords.contains(lower)
+
+                    if isWakeOrEmpty {
+                        if result.isFinal {
+                            self?.stopRecording()
+                        }
+                        return  // drop wake-word-only results
+                    }
+
+                    self?.transcript = rawText
                     self?.isTranscriptFinal = result.isFinal
 
                     if result.isFinal {
-                        self?.recognitionTask = nil
-                        self?.recognitionRequest = nil
-                        self?.audioEngine = nil
+                        self?.stopRecording()
                     }
                 }
 
                 if let error {
                     let nsError = error as NSError
                     if self?.isCancellationNoise(nsError) == true {
-                        self?.isRecording = false
-                        self?.recognitionTask = nil
-                        self?.recognitionRequest = nil
-                        self?.audioEngine = nil
+                        self?.stopRecording()
                         return
                     }
 
@@ -121,6 +187,7 @@ final class VoiceCaptureService: ObservableObject {
             audioEngine = engine
             recognitionRequest = request
             isRecording = true
+            ListeningBubbleController.shared.show()
         } catch {
             errorMessage = "Failed to start recording: \(error.localizedDescription)"
             stopRecording()
@@ -132,6 +199,7 @@ final class VoiceCaptureService: ObservableObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
         isRecording = false
+        ListeningBubbleController.shared.hide()
 
         if cancelRecognition {
             recognitionTask?.cancel()
