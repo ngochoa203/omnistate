@@ -14,6 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { VisionProvider, VerifyResult } from "../engine.js";
 import type { DetectedElement } from "../../layers/surface.js";
 
+import { logger } from "../../utils/logger.js";
 type ClaudeModel = "claude-sonnet-4-20250514" | "claude-opus-4-20250514";
 type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 
@@ -84,7 +85,7 @@ export class ClaudeVisionProvider implements VisionProvider {
 
       return parseDetectResponse(response);
     } catch (e) {
-      console.error(`[claude-vision] detectElements failed: ${e instanceof Error ? e.message : e}`);
+      logger.error(`[claude-vision] detectElements failed: ${e instanceof Error ? e.message : e}`);
       return [];
     }
   }
@@ -131,7 +132,7 @@ export class ClaudeVisionProvider implements VisionProvider {
 
       return parseVerifyResponse(response);
     } catch (e) {
-      console.error(`[claude-vision] verifyState failed: ${e instanceof Error ? e.message : e}`);
+      logger.error(`[claude-vision] verifyState failed: ${e instanceof Error ? e.message : e}`);
       return {
         passed: false,
         confidence: 0,

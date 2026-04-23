@@ -36,7 +36,6 @@ eng.traineddata
 # Temp files
 *.tmp
 .tmp-*
-pipefail
 
 # Logs
 *.log
@@ -46,7 +45,17 @@ npm-debug.log*
 __pycache__/
 **/__pycache__/
 *.pyc
+**/.venv/
+.venv/
+*.egg-info/
 
 # Test
 coverage/
 .vscode/
+
+# Editor/AI tool configs
+.cursor/
+.claude/
+
+# Python cache (extra)
+.pytest_cache/

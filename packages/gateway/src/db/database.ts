@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
+import { logger } from "../utils/logger.js";
 const DB_DIR = join(homedir(), ".omnistate");
 const DB_PATH = join(DB_DIR, "omnistate.db");
 
@@ -239,6 +240,6 @@ function runMigrations(db: Database.Database): void {
       );
     })();
 
-    console.log(`[db] Applied migration ${migration.version}: ${migration.name}`);
+    logger.info(`[db] Applied migration ${migration.version}: ${migration.name}`);
   }
 }

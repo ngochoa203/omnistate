@@ -12,5 +12,8 @@
   "dependencies": {
     "@omnistate/shared": "workspace:*",
     "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
   }
 }

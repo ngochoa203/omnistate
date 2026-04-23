@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OmniState</string>
+    <string name="accessibility_service_description">OmniState uses accessibility to read screen content and perform automated actions on your behalf. Only enable if you trust this app.</string>
+</resources>

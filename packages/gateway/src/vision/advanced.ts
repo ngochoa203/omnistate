@@ -37,6 +37,7 @@ import { SurfaceLayer } from "../layers/surface.js";
 import { VisionEngine, createDefaultEngine } from "./engine.js";
 import { LocalVisionProvider } from "./providers/local.js";
 
+import { logger } from "../utils/logger.js";
 const execAsync = promisify(exec);
 
 // ---------------------------------------------------------------------------
@@ -1449,7 +1450,7 @@ export class AdvancedVision {
       const isAllow = action !== "deny";
       const targetLabel = isAllow ? permInfo?.allowButton : permInfo?.denyButton;
 
-      console.log(
+      logger.info(
         `[AdvancedVision] Permission dialog action="${action}"` +
         ` app="${permInfo?.app ?? "unknown"}" resource="${permInfo?.resource ?? "unknown"}"` +
         ` button="${targetLabel ?? "(keyboard fallback)"}"`
@@ -1713,7 +1714,7 @@ export class AdvancedVision {
         `display notification "${message}" with title "OmniState — CAPTCHA" sound name "Ping"`
       );
     } catch {
-      console.warn(`[AdvancedVision] ${message}`);
+      logger.warn(`[AdvancedVision] ${message}`);
     }
   }
 

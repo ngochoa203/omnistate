@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { logger } from "../utils/logger.js";
 const SECRET_DIR = join(homedir(), ".omnistate");
 const SECRET_FILE = join(SECRET_DIR, "jwt-secret");
 
@@ -45,11 +46,11 @@ export function getJwtSecret(): string {
   try {
     mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(SECRET_FILE, newSecret, { mode: 0o600 });
-    console.log(
+    logger.info(
       `[OmniState] Generated new JWT secret → ${SECRET_FILE} (chmod 600)`
     );
   } catch (err) {
-    console.warn(
+    logger.warn(
       `[OmniState] Could not persist JWT secret: ${(err as Error).message}. Using ephemeral secret.`
     );
   }

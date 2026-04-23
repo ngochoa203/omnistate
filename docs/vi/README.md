@@ -2,7 +2,23 @@
 
 > Shadow OS — Người quản trị hệ thống vô hình bên trong máy tính của bạn.
 
-## Tài Liệu Kiến Trúc
+## Đối Tượng
+
+| Đối tượng | Đọc trước |
+|-----------|-----------|
+| **Developer** | 01 → 02 → 04 → 16 → 19 → 18 |
+| **Operator / DevOps** | 17 → 07 → 10 → 16 |
+| **Contributor mới** | 19 → 17 → 18 → 20 |
+
+## Liên Kết Nhanh
+
+- [Trạng thái dự án](../STATUS.md) — tiến độ thực tế, E2E results
+- [CHANGELOG](../../CHANGELOG.md) — lịch sử phiên bản
+- [Ma trận Use Case](14-USECASE-MATRIX.md) — 13 UC, 440+ methods
+
+---
+
+## Tài Liệu Kiến Trúc (00–13)
 
 | # | Tài liệu | Mô tả |
 |---|----------|-------|
@@ -42,6 +58,18 @@ Người dùng (lệnh ngôn ngữ tự nhiên)
 │  Kho Phiên │ Giám Sát Sức Khỏe │ Plugins   │
 └─────────────────────────────────────────────┘
 ```
+
+## Tài Liệu Kỹ Thuật & Vận Hành (14–20)
+
+| # | Tài liệu | Mô tả |
+|---|----------|-------|
+| 14 | [Ma Trận Use Case](14-USECASE-MATRIX.md) | 13 UC, 440+ methods, trạng thái thực thi |
+| 15 | [Mô Hình Dữ Liệu](15-MO-HINH-DU-LIEU.md) | Schema SQLite, ERD, JSON schemas |
+| 16 | [Hợp Đồng API](16-HOP-DONG-API.md) | HTTP REST, WebSocket protocol, Mirror session |
+| 17 | [Runbook Vận Hành](17-RUNBOOK.md) | Cài đặt, start/stop, debug, recover |
+| 18 | [Chiến Lược Kiểm Thử](18-CHIEN-LUOC-KIEM-THU.md) | Test pyramid, CI gate, benchmark, flaky policy |
+| 19 | [Hướng Dẫn Đóng Góp](19-DONG-GOP.md) | Dev setup, branch, commit, PR flow |
+| 20 | [Nhật Ký Quyết Định (ADR)](20-NHAT-KY-QUYET-DINH/README.md) | Lý do các quyết định kiến trúc quan trọng |
 
 ## Tóm Tắt Các Ca Sử Dụng
 
