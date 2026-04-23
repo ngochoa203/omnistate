@@ -22,20 +22,20 @@ Dữ liệu nguồn nằm ở: `usecases.matrix.json`
 
 | Use Case | Tiến độ | Module | Số methods |
 |----------|---------|--------|------------|
-| UC1 GUI & Peripherals | ✅ 100% | `surface.ts` | 57 methods |
-| UC2 Window & App Management | ✅ 100% | `deep-os.ts` | 84 methods |
-| UC3 File System Operations | ✅ 100% | `deep.ts` | 47 methods |
-| UC4 Browser Automation | ✅ 100% | `browser.ts` | 47 methods |
-| UC5 System & Network | ✅ 100% | `deep-system.ts` | 107 methods |
-| UC6 Communication & Media | ✅ 100% | `communication.ts` | 40 methods |
-| UC7 Workflow Automation | ✅ 100% | `media.ts` | 42 methods |
-| UC8 Software & Environment | ✅ 100% | `software.ts` | 45 methods |
-| UC9 Hardware Control | ✅ 100% | `hardware.ts` | 45 methods |
-| UC10 Multi-Device / Fleet | ✅ 100% | `fleet.ts` | 34 methods |
-| UC11 Developer & CLI | ✅ 100% | `developer.ts` | 25 methods |
-| UC12 Maintenance | ✅ 100% | `maintenance.ts` | 26 methods |
-| UC13 Permission & Security | ✅ 100% | `approval-policy.ts` + `permission-responder.ts` | 41 methods |
-| **Tổng** | **✅ 100%** | — | **440+ methods** |
+| UC1 GUI & Peripherals | ✅ 100% | `surface.ts` | 41 methods |
+| UC2 Window & App Management | ✅ 100% | `deep-os.ts` | 88 methods |
+| UC3 File System Operations | ✅ 100% | `deep.ts` | 46 methods |
+| UC4 Browser Automation | ✅ 100% | `browser.ts` | 53 methods |
+| UC5 System & Network | ✅ 100% | `deep-system.ts` | 125 methods |
+| UC6 Communication & Media | ✅ 100% | `communication.ts` | 44 methods |
+| UC7 Workflow Automation | ✅ 100% | `media.ts` | 46 methods |
+| UC8 Software & Environment | ✅ 100% | `software.ts` | 48 methods |
+| UC9 Hardware Control | ✅ 100% | `hardware.ts` | 46 methods |
+| UC10 Multi-Device / Fleet | ✅ 100% | `fleet.ts` | 46 methods |
+| UC11 Developer & CLI | ✅ 100% | `developer.ts` | 28 methods |
+| UC12 Maintenance | ✅ 100% | `maintenance.ts` | 30 methods |
+| UC13 Permission & Security | ✅ 100% | `approval-policy.ts` + `permission-responder.ts` | 48 methods |
+| **Tổng** | **✅ 100%** | — | **689 methods** |
 
 ## Chi Tiết Theo Use Case
 
@@ -133,3 +133,15 @@ Trạng thái này phản ánh kết quả audit 2026-04-14 (21/21 E2E checks PA
 Nguồn tham khảo thêm: [docs/STATUS.md](../STATUS.md).
 
 Cập nhật `usecases.matrix.json` mỗi khi thêm/chỉnh sửa UC.
+
+## Cập Nhật Ma Trận
+
+```bash
+# Tái tạo JSON từ source code (chạy sau khi thêm method mới):
+pnpm usecase:report
+
+# CI guard — kiểm tra JSON có đồng bộ với source không (exit 1 nếu lệch):
+pnpm usecase:check
+```
+
+> Script nguồn: `scripts/build-usecase-matrix.mjs`. Override trạng thái cụ thể bằng `usecases.overrides.json` ở root (shape: `{ "UC1.methodName": "partial" }`).

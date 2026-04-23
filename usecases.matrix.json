@@ -1,0 +1,3534 @@
+{
+  "groups": [
+    {
+      "id": "UC1",
+      "name": "GUI & Peripherals",
+      "items": [
+        {
+          "id": "UC1.captureRegion",
+          "title": "captureRegion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.captureRegionToFile",
+          "title": "captureRegionToFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.captureScreen",
+          "title": "captureScreen",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.captureWindow",
+          "title": "captureWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.captureWindowToFile",
+          "title": "captureWindowToFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.click",
+          "title": "click",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.clickElement",
+          "title": "clickElement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.closeWindow",
+          "title": "closeWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.doubleClickElement",
+          "title": "doubleClickElement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.drag",
+          "title": "drag",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.dragAndDrop",
+          "title": "dragAndDrop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.dragFile",
+          "title": "dragFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.execSync",
+          "title": "execSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.findElement",
+          "title": "findElement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.findTextOnScreen",
+          "title": "findTextOnScreen",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.fingerprintTree",
+          "title": "fingerprintTree",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.getTextWithConfidence",
+          "title": "getTextWithConfidence",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.getUIElements",
+          "title": "getUIElements",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.getWindowInfo",
+          "title": "getWindowInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.goToDesktop",
+          "title": "goToDesktop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.holdKey",
+          "title": "holdKey",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.isAccessibilityTrusted",
+          "title": "isAccessibilityTrusted",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.keyDown",
+          "title": "keyDown",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.keyTap",
+          "title": "keyTap",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.keyUp",
+          "title": "keyUp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.listWindows",
+          "title": "listWindows",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.listWindowsForApp",
+          "title": "listWindowsForApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.maximizeWindow",
+          "title": "maximizeWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.minimizeWindow",
+          "title": "minimizeWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.missionControl",
+          "title": "missionControl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.modifiersToBridge",
+          "title": "modifiersToBridge",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.moveMouse",
+          "title": "moveMouse",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.moveMouseSmooth",
+          "title": "moveMouseSmooth",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.print",
+          "title": "print",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.repositionWindow",
+          "title": "repositionWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.resizeWindow",
+          "title": "resizeWindow",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.scroll",
+          "title": "scroll",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.showDesktop",
+          "title": "showDesktop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.switchDesktop",
+          "title": "switchDesktop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.switchDisplay",
+          "title": "switchDisplay",
+          "status": "implemented"
+        },
+        {
+          "id": "UC1.typeText",
+          "title": "typeText",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC2",
+      "name": "Window & App Management",
+      "items": [
+        {
+          "id": "UC2._getMacUser",
+          "title": "_getMacUser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2._symbolicToOctal",
+          "title": "_symbolicToOctal",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.appendFileSync",
+          "title": "appendFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.connectWiFi",
+          "title": "connectWiFi",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.createLaunchDaemon",
+          "title": "createLaunchDaemon",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.createScheduledTask",
+          "title": "createScheduledTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.createSnapshot",
+          "title": "createSnapshot",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.deleteDefault",
+          "title": "deleteDefault",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.detectPackageManager",
+          "title": "detectPackageManager",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.disableService",
+          "title": "disableService",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.disconnectWiFi",
+          "title": "disconnectWiFi",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.ejectDisk",
+          "title": "ejectDisk",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.enableService",
+          "title": "enableService",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getActiveConnections",
+          "title": "getActiveConnections",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getAudioDevices",
+          "title": "getAudioDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getBluetoothStatus",
+          "title": "getBluetoothStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getBrightness",
+          "title": "getBrightness",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getCurrentUser",
+          "title": "getCurrentUser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getDNS",
+          "title": "getDNS",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getDiskPartitions",
+          "title": "getDiskPartitions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getEnvVar",
+          "title": "getEnvVar",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getFilePermissions",
+          "title": "getFilePermissions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getFirewallStatus",
+          "title": "getFirewallStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getNetworkInterfaces",
+          "title": "getNetworkInterfaces",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getOSConfig",
+          "title": "getOSConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getOpenPorts",
+          "title": "getOpenPorts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getPowerSettings",
+          "title": "getPowerSettings",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getProcessDetails",
+          "title": "getProcessDetails",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getProxy",
+          "title": "getProxy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getRoutingTable",
+          "title": "getRoutingTable",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getScheduledTaskStatus",
+          "title": "getScheduledTaskStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getServiceStatus",
+          "title": "getServiceStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getShellProfile",
+          "title": "getShellProfile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getSysctl",
+          "title": "getSysctl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getVPNStatus",
+          "title": "getVPNStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getVolume",
+          "title": "getVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.getWiFiStatus",
+          "title": "getWiFiStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.installApp",
+          "title": "installApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.installPackage",
+          "title": "installPackage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.isDarkMode",
+          "title": "isDarkMode",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.launchAppWithContext",
+          "title": "launchAppWithContext",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listBluetoothDevices",
+          "title": "listBluetoothDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listDefaults",
+          "title": "listDefaults",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listEnvVars",
+          "title": "listEnvVars",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listGroups",
+          "title": "listGroups",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listInstalledPackages",
+          "title": "listInstalledPackages",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listScheduledTasks",
+          "title": "listScheduledTasks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listServices",
+          "title": "listServices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listSnapshots",
+          "title": "listSnapshots",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listUsers",
+          "title": "listUsers",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.listVolumes",
+          "title": "listVolumes",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.mountVolume",
+          "title": "mountVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.pingHost",
+          "title": "pingHost",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.readDefault",
+          "title": "readDefault",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.removePackage",
+          "title": "removePackage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.removeScheduledTask",
+          "title": "removeScheduledTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.reniceProcess",
+          "title": "reniceProcess",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.resolveApp",
+          "title": "resolveApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.restartProcess",
+          "title": "restartProcess",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.restartService",
+          "title": "restartService",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.rollbackToSnapshot",
+          "title": "rollbackToSnapshot",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.searchPackage",
+          "title": "searchPackage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setAudioInput",
+          "title": "setAudioInput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setAudioOutput",
+          "title": "setAudioOutput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setBluetoothEnabled",
+          "title": "setBluetoothEnabled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setBrightness",
+          "title": "setBrightness",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setDNS",
+          "title": "setDNS",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setDarkMode",
+          "title": "setDarkMode",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setEnvVar",
+          "title": "setEnvVar",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setFileOwner",
+          "title": "setFileOwner",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setFilePermissions",
+          "title": "setFilePermissions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setFirewallEnabled",
+          "title": "setFirewallEnabled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setMute",
+          "title": "setMute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setOSConfig",
+          "title": "setOSConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setPowerSetting",
+          "title": "setPowerSetting",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setProxy",
+          "title": "setProxy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setSysctl",
+          "title": "setSysctl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.setVolume",
+          "title": "setVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.spawn",
+          "title": "spawn",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.startService",
+          "title": "startService",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.stopService",
+          "title": "stopService",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.traceroute",
+          "title": "traceroute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.unmountVolume",
+          "title": "unmountVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.unsetEnvVar",
+          "title": "unsetEnvVar",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.upgradeAll",
+          "title": "upgradeAll",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.upgradePackage",
+          "title": "upgradePackage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.writeDefault",
+          "title": "writeDefault",
+          "status": "implemented"
+        },
+        {
+          "id": "UC2.writeFileSync",
+          "title": "writeFileSync",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC3",
+      "name": "File System Operations",
+      "items": [
+        {
+          "id": "UC3.activateApp",
+          "title": "activateApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.appendFile",
+          "title": "appendFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.buildBrowserUrl",
+          "title": "buildBrowserUrl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.callback",
+          "title": "callback",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.compareFiles",
+          "title": "compareFiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.copyFile",
+          "title": "copyFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.createDirectory",
+          "title": "createDirectory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.createSymlink",
+          "title": "createSymlink",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.deleteFile",
+          "title": "deleteFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.exec",
+          "title": "exec",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.execAsync",
+          "title": "execAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.fileExists",
+          "title": "fileExists",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.fileExistsAsync",
+          "title": "fileExistsAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.fileStat",
+          "title": "fileStat",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getDiskSpace",
+          "title": "getDiskSpace",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getDiskUsage",
+          "title": "getDiskUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getFileHash",
+          "title": "getFileHash",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getFileSize",
+          "title": "getFileSize",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getMetadata",
+          "title": "getMetadata",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getPermissions",
+          "title": "getPermissions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getProcessList",
+          "title": "getProcessList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.getSystemInfo",
+          "title": "getSystemInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.isProcessRunning",
+          "title": "isProcessRunning",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.killProcess",
+          "title": "killProcess",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.killProcessByName",
+          "title": "killProcessByName",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.launchApp",
+          "title": "launchApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.listDir",
+          "title": "listDir",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.listDirectory",
+          "title": "listDirectory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.moveFile",
+          "title": "moveFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.openDefaultBrowser",
+          "title": "openDefaultBrowser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.quitApp",
+          "title": "quitApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.readFile",
+          "title": "readFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.readFileAsync",
+          "title": "readFileAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.readFileBinary",
+          "title": "readFileBinary",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.readFileBuffer",
+          "title": "readFileBuffer",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.renameFile",
+          "title": "renameFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.resolveSymlink",
+          "title": "resolveSymlink",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.runAppleScript",
+          "title": "runAppleScript",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.searchFiles",
+          "title": "searchFiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.setPermissions",
+          "title": "setPermissions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.spawn",
+          "title": "spawn",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.touchFile",
+          "title": "touchFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.watchDirectory",
+          "title": "watchDirectory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.writeFile",
+          "title": "writeFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.writeFileAsync",
+          "title": "writeFileAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC3.writeFileSync",
+          "title": "writeFileSync",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC4",
+      "name": "Browser Automation",
+      "items": [
+        {
+          "id": "UC4._flattenChromeBookmarks",
+          "title": "_flattenChromeBookmarks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4._parseTabLines",
+          "title": "_parseTabLines",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.addBookmark",
+          "title": "addBookmark",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.appName",
+          "title": "appName",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.blockUrls",
+          "title": "blockUrls",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.capturePageScreenshot",
+          "title": "capturePageScreenshot",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.clearCookies",
+          "title": "clearCookies",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.clearDownloads",
+          "title": "clearDownloads",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.clickElement",
+          "title": "clickElement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.closeTab",
+          "title": "closeTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.detectBrowser",
+          "title": "detectBrowser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.executeInHeadless",
+          "title": "executeInHeadless",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.executeJavaScript",
+          "title": "executeJavaScript",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.fillForm",
+          "title": "fillForm",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getActiveTab",
+          "title": "getActiveTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getBookmarks",
+          "title": "getBookmarks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getCookies",
+          "title": "getCookies",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getDownloadDirectory",
+          "title": "getDownloadDirectory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getDownloads",
+          "title": "getDownloads",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getHistory",
+          "title": "getHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getLocalStorage",
+          "title": "getLocalStorage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getNetworkRequests",
+          "title": "getNetworkRequests",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getPageHtml",
+          "title": "getPageHtml",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getPageLoadTime",
+          "title": "getPageLoadTime",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getPageText",
+          "title": "getPageText",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getPageTitle",
+          "title": "getPageTitle",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getPageUrl",
+          "title": "getPageUrl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.getTabMemory",
+          "title": "getTabMemory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.goBack",
+          "title": "goBack",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.goForward",
+          "title": "goForward",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.isHeadlessRunning",
+          "title": "isHeadlessRunning",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.listTabs",
+          "title": "listTabs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.muteTab",
+          "title": "muteTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.navigate",
+          "title": "navigate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.newTab",
+          "title": "newTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.openUrl",
+          "title": "openUrl",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.pinTab",
+          "title": "pinTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.print",
+          "title": "print",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.querySelector",
+          "title": "querySelector",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.querySelectorAll",
+          "title": "querySelectorAll",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.reloadTab",
+          "title": "reloadTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.savePageAsPdf",
+          "title": "savePageAsPdf",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.searchBookmarks",
+          "title": "searchBookmarks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.selectOption",
+          "title": "selectOption",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.setLocalStorage",
+          "title": "setLocalStorage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.setTimeout",
+          "title": "setTimeout",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.startHeadlessBrowser",
+          "title": "startHeadlessBrowser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.stopHeadlessBrowser",
+          "title": "stopHeadlessBrowser",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.submitForm",
+          "title": "submitForm",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.switchTab",
+          "title": "switchTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.unmuteTab",
+          "title": "unmuteTab",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.waitForPageLoad",
+          "title": "waitForPageLoad",
+          "status": "implemented"
+        },
+        {
+          "id": "UC4.walk",
+          "title": "walk",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC5",
+      "name": "System & Network",
+      "items": [
+        {
+          "id": "UC5.addAlias",
+          "title": "addAlias",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.addFirewallRule",
+          "title": "addFirewallRule",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.addLoginItem",
+          "title": "addLoginItem",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.addStartupItem",
+          "title": "addStartupItem",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.addToPath",
+          "title": "addToPath",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.allowPort",
+          "title": "allowPort",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.blockIP",
+          "title": "blockIP",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.blockPort",
+          "title": "blockPort",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.cancelPrintJob",
+          "title": "cancelPrintJob",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.cancelScheduledPower",
+          "title": "cancelScheduledPower",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.checkForUpdates",
+          "title": "checkForUpdates",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.checkResourceAlerts",
+          "title": "checkResourceAlerts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.cleanOldLogs",
+          "title": "cleanOldLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.clearClipboard",
+          "title": "clearClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.clearClipboardHistory",
+          "title": "clearClipboardHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.copyFileSync",
+          "title": "copyFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.copyFileToClipboard",
+          "title": "copyFileToClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.generateSSHKey",
+          "title": "generateSSHKey",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getAppLogs",
+          "title": "getAppLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getAudioSources",
+          "title": "getAudioSources",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getBatteryInfo",
+          "title": "getBatteryInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getClipboard",
+          "title": "getClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getClipboardFormats",
+          "title": "getClipboardFormats",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getClipboardHistory",
+          "title": "getClipboardHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getClipboardImage",
+          "title": "getClipboardImage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getClipboardRTF",
+          "title": "getClipboardRTF",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getContainerLogs",
+          "title": "getContainerLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getCpuUsage",
+          "title": "getCpuUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getDefaultPrinter",
+          "title": "getDefaultPrinter",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getDiskIO",
+          "title": "getDiskIO",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getDisplayArrangement",
+          "title": "getDisplayArrangement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getDisplays",
+          "title": "getDisplays",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getFirewallRules",
+          "title": "getFirewallRules",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getInputVolume",
+          "title": "getInputVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getKeyboardLayouts",
+          "title": "getKeyboardLayouts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getLastBackupDate",
+          "title": "getLastBackupDate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getLastUpdateDate",
+          "title": "getLastUpdateDate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getLocale",
+          "title": "getLocale",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getLogSize",
+          "title": "getLogSize",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getMemoryPressure",
+          "title": "getMemoryPressure",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getMemoryUsage",
+          "title": "getMemoryUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getNetworkStats",
+          "title": "getNetworkStats",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getNightShiftStatus",
+          "title": "getNightShiftStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getOSVersion",
+          "title": "getOSVersion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getOpenFiles",
+          "title": "getOpenFiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getPerAppVolume",
+          "title": "getPerAppVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getPersistentClipboardHistory",
+          "title": "getPersistentClipboardHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getPowerLog",
+          "title": "getPowerLog",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getPrintQueue",
+          "title": "getPrintQueue",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getRefreshRate",
+          "title": "getRefreshRate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getShellConfig",
+          "title": "getShellConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getShellHistory",
+          "title": "getShellHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getShellType",
+          "title": "getShellType",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getSwapUsage",
+          "title": "getSwapUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getSystemLogs",
+          "title": "getSystemLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getSystemUptime",
+          "title": "getSystemUptime",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getThermalState",
+          "title": "getThermalState",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getTimeMachineStatus",
+          "title": "getTimeMachineStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getTimezone",
+          "title": "getTimezone",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getTopMemoryProcesses",
+          "title": "getTopMemoryProcesses",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.getVMStats",
+          "title": "getVMStats",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.hibernate",
+          "title": "hibernate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.homedir",
+          "title": "homedir",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.installAllUpdates",
+          "title": "installAllUpdates",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.installCertificate",
+          "title": "installCertificate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.installFont",
+          "title": "installFont",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.installUpdate",
+          "title": "installUpdate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.isDockerRunning",
+          "title": "isDockerRunning",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.isMuted",
+          "title": "isMuted",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.join",
+          "title": "join",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listAliases",
+          "title": "listAliases",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listCertificates",
+          "title": "listCertificates",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listContainers",
+          "title": "listContainers",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listFonts",
+          "title": "listFonts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listGPGKeys",
+          "title": "listGPGKeys",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listImages",
+          "title": "listImages",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listLoginItems",
+          "title": "listLoginItems",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listPrinters",
+          "title": "listPrinters",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listSSHKeys",
+          "title": "listSSHKeys",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listStartupItems",
+          "title": "listStartupItems",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listTimeMachineBackups",
+          "title": "listTimeMachineBackups",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.listVMs",
+          "title": "listVMs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.printFile",
+          "title": "printFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.pullImage",
+          "title": "pullImage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.purgeMemory",
+          "title": "purgeMemory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.readPersistentHistory",
+          "title": "readPersistentHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeAlias",
+          "title": "removeAlias",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeCertificate",
+          "title": "removeCertificate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeContainer",
+          "title": "removeContainer",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeFirewallRule",
+          "title": "removeFirewallRule",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeLoginItem",
+          "title": "removeLoginItem",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.removeStartupItem",
+          "title": "removeStartupItem",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.restart",
+          "title": "restart",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.rsync",
+          "title": "rsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.runSync",
+          "title": "runSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.saveClipboardEntry",
+          "title": "saveClipboardEntry",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.scheduleSleep",
+          "title": "scheduleSleep",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.scheduleWake",
+          "title": "scheduleWake",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.searchLogs",
+          "title": "searchLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setClipboard",
+          "title": "setClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setClipboardRTF",
+          "title": "setClipboardRTF",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setDefaultAudioInput",
+          "title": "setDefaultAudioInput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setDefaultAudioOutput",
+          "title": "setDefaultAudioOutput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setDefaultPrinter",
+          "title": "setDefaultPrinter",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setInputVolume",
+          "title": "setInputVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setKeyboardLayout",
+          "title": "setKeyboardLayout",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setLocale",
+          "title": "setLocale",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setNightShift",
+          "title": "setNightShift",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setResolution",
+          "title": "setResolution",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setTimeout",
+          "title": "setTimeout",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.setTimezone",
+          "title": "setTimezone",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.shutdown",
+          "title": "shutdown",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.sleep",
+          "title": "sleep",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.startClipboardWatch",
+          "title": "startClipboardWatch",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.startContainer",
+          "title": "startContainer",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.startTimeMachineBackup",
+          "title": "startTimeMachineBackup",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.startVM",
+          "title": "startVM",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.stopContainer",
+          "title": "stopContainer",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.stopVM",
+          "title": "stopVM",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.toggleMute",
+          "title": "toggleMute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.unblockIP",
+          "title": "unblockIP",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.unlinkSync",
+          "title": "unlinkSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.writeFileSync",
+          "title": "writeFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC5.writePersistentHistory",
+          "title": "writePersistentHistory",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC6",
+      "name": "Communication & Media",
+      "items": [
+        {
+          "id": "UC6.addContact",
+          "title": "addContact",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.clearNotifications",
+          "title": "clearNotifications",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.completeReminder",
+          "title": "completeReminder",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.coreDataTimestampToDate",
+          "title": "coreDataTimestampToDate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.createEvent",
+          "title": "createEvent",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.createNote",
+          "title": "createNote",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.createReminder",
+          "title": "createReminder",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.deleteEvent",
+          "title": "deleteEvent",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.deleteReminder",
+          "title": "deleteReminder",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.endFaceTimeCall",
+          "title": "endFaceTimeCall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.flagEmail",
+          "title": "flagEmail",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getCalendars",
+          "title": "getCalendars",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getContactDetails",
+          "title": "getContactDetails",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getContactGroups",
+          "title": "getContactGroups",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getContacts",
+          "title": "getContacts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getEmailAccounts",
+          "title": "getEmailAccounts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getEvents",
+          "title": "getEvents",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getMailboxes",
+          "title": "getMailboxes",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getNoteFolders",
+          "title": "getNoteFolders",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getNotes",
+          "title": "getNotes",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getNotificationsViaAccessibility",
+          "title": "getNotificationsViaAccessibility",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getRecentMessages",
+          "title": "getRecentMessages",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getRecentNotifications",
+          "title": "getRecentNotifications",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getReminderLists",
+          "title": "getReminderLists",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getReminders",
+          "title": "getReminders",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getUnreadEmails",
+          "title": "getUnreadEmails",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.getUpcomingEvents",
+          "title": "getUpcomingEvents",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.homedir",
+          "title": "homedir",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.isFaceTimeActive",
+          "title": "isFaceTimeActive",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.join",
+          "title": "join",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.moveEmail",
+          "title": "moveEmail",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.parseAppleScriptDate",
+          "title": "parseAppleScriptDate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.readEmail",
+          "title": "readEmail",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.searchContacts",
+          "title": "searchContacts",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.searchEmails",
+          "title": "searchEmails",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.searchMessages",
+          "title": "searchMessages",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.searchNotes",
+          "title": "searchNotes",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.sendEmail",
+          "title": "sendEmail",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.sendEmailWithAttachment",
+          "title": "sendEmailWithAttachment",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.sendMessage",
+          "title": "sendMessage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.sendNotification",
+          "title": "sendNotification",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.sqliteQuery",
+          "title": "sqliteQuery",
+          "status": "implemented"
+        },
+        {
+          "id": "UC6.startFaceTimeCall",
+          "title": "startFaceTimeCall",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC7",
+      "name": "Workflow Automation",
+      "items": [
+        {
+          "id": "UC7.addToPlaylist",
+          "title": "addToPlaylist",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.controlVideo",
+          "title": "controlVideo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.createPlaylist",
+          "title": "createPlaylist",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.detectMusicApp",
+          "title": "detectMusicApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.detectVideoApp",
+          "title": "detectVideoApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getAirPlayDevices",
+          "title": "getAirPlayDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getAudioOutput",
+          "title": "getAudioOutput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getCurrentTrack",
+          "title": "getCurrentTrack",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getEQPresets",
+          "title": "getEQPresets",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getPlayerVolume",
+          "title": "getPlayerVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getPlaylists",
+          "title": "getPlaylists",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getPodcastEpisodes",
+          "title": "getPodcastEpisodes",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getPodcastPlaybackInfo",
+          "title": "getPodcastPlaybackInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getPodcastSubscriptions",
+          "title": "getPodcastSubscriptions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getQueue",
+          "title": "getQueue",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getRecordings",
+          "title": "getRecordings",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getVideoInfo",
+          "title": "getVideoInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.getVideoPlayers",
+          "title": "getVideoPlayers",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.isAirPlaying",
+          "title": "isAirPlaying",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.isEQEnabled",
+          "title": "isEQEnabled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.isRecording",
+          "title": "isRecording",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.nextTrack",
+          "title": "nextTrack",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.osascript",
+          "title": "osascript",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.pause",
+          "title": "pause",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.play",
+          "title": "play",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.playPlaylist",
+          "title": "playPlaylist",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.playPodcast",
+          "title": "playPodcast",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.previousTrack",
+          "title": "previousTrack",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.resolveApp",
+          "title": "resolveApp",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.searchTracks",
+          "title": "searchTracks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setAirPlayDevice",
+          "title": "setAirPlayDevice",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setAudioOutput",
+          "title": "setAudioOutput",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setEQEnabled",
+          "title": "setEQEnabled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setEQPreset",
+          "title": "setEQPreset",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setPlayerVolume",
+          "title": "setPlayerVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setPodcastSpeed",
+          "title": "setPodcastSpeed",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setPosition",
+          "title": "setPosition",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.setVideoPosition",
+          "title": "setVideoPosition",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.simulateBrightnessKey",
+          "title": "simulateBrightnessKey",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.simulateIlluminationKey",
+          "title": "simulateIlluminationKey",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.simulateMediaKey",
+          "title": "simulateMediaKey",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.startScreenRecording",
+          "title": "startScreenRecording",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.stopAirPlay",
+          "title": "stopAirPlay",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.stopScreenRecording",
+          "title": "stopScreenRecording",
+          "status": "implemented"
+        },
+        {
+          "id": "UC7.togglePlayPause",
+          "title": "togglePlayPause",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC8",
+      "name": "Software & Environment",
+      "items": [
+        {
+          "id": "UC8._detectNodePm",
+          "title": "_detectNodePm",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.addToPath",
+          "title": "addToPath",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.appendFileSync",
+          "title": "appendFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewCaskInstall",
+          "title": "brewCaskInstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewCaskList",
+          "title": "brewCaskList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewDoctor",
+          "title": "brewDoctor",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewInfo",
+          "title": "brewInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewInstall",
+          "title": "brewInstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewList",
+          "title": "brewList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewSearch",
+          "title": "brewSearch",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewUninstall",
+          "title": "brewUninstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.brewUpdate",
+          "title": "brewUpdate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.caskInstall",
+          "title": "caskInstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.caskList",
+          "title": "caskList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.caskSearch",
+          "title": "caskSearch",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.caskUninstall",
+          "title": "caskUninstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.createVenv",
+          "title": "createVenv",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getAppInfo",
+          "title": "getAppInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getCpuUsage",
+          "title": "getCpuUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getDiskUsage",
+          "title": "getDiskUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getEnvVar",
+          "title": "getEnvVar",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getInstalledApps",
+          "title": "getInstalledApps",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getMemoryUsage",
+          "title": "getMemoryUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getNodeVersion",
+          "title": "getNodeVersion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getNodeVersions",
+          "title": "getNodeVersions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getNpmVersion",
+          "title": "getNpmVersion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getPath",
+          "title": "getPath",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getPythonVersion",
+          "title": "getPythonVersion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getPythonVersions",
+          "title": "getPythonVersions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getRubyVersions",
+          "title": "getRubyVersions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getSystemInfo",
+          "title": "getSystemInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.getUptime",
+          "title": "getUptime",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.isAppInstalled",
+          "title": "isAppInstalled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.listEnvVars",
+          "title": "listEnvVars",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmAudit",
+          "title": "npmAudit",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmInstall",
+          "title": "npmInstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmList",
+          "title": "npmList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmOutdated",
+          "title": "npmOutdated",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmSearch",
+          "title": "npmSearch",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.npmUninstall",
+          "title": "npmUninstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.pipInstall",
+          "title": "pipInstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.pipList",
+          "title": "pipList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.pipOutdated",
+          "title": "pipOutdated",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.pipUninstall",
+          "title": "pipUninstall",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.setEnvVar",
+          "title": "setEnvVar",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.setNodeVersion",
+          "title": "setNodeVersion",
+          "status": "implemented"
+        },
+        {
+          "id": "UC8.setPythonVersion",
+          "title": "setPythonVersion",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC9",
+      "name": "Hardware Control",
+      "items": [
+        {
+          "id": "UC9._parseBluetoothDevices",
+          "title": "_parseBluetoothDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9._parseResolution",
+          "title": "_parseResolution",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.allowSleep",
+          "title": "allowSleep",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.connectBluetoothDevice",
+          "title": "connectBluetoothDevice",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.connectToWifi",
+          "title": "connectToWifi",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.disableBluetooth",
+          "title": "disableBluetooth",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.disconnectBluetoothDevice",
+          "title": "disconnectBluetoothDevice",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.ejectDisk",
+          "title": "ejectDisk",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.enableBluetooth",
+          "title": "enableBluetooth",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getAppearance",
+          "title": "getAppearance",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getBatteryStatus",
+          "title": "getBatteryStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getBluetoothStatus",
+          "title": "getBluetoothStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getBrightness",
+          "title": "getBrightness",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getDisplayArrangement",
+          "title": "getDisplayArrangement",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getDisplayResolution",
+          "title": "getDisplayResolution",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getInputDevices",
+          "title": "getInputDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getInputVolume",
+          "title": "getInputVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getKeyboardBacklight",
+          "title": "getKeyboardBacklight",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getNightShift",
+          "title": "getNightShift",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getSleepSettings",
+          "title": "getSleepSettings",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getVolume",
+          "title": "getVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getWifiInfo",
+          "title": "getWifiInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.getWifiNetworks",
+          "title": "getWifiNetworks",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.isDarkMode",
+          "title": "isDarkMode",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.isKeyboardBacklightAuto",
+          "title": "isKeyboardBacklightAuto",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.listAudioDevices",
+          "title": "listAudioDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.listBluetoothDevices",
+          "title": "listBluetoothDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.listDisplays",
+          "title": "listDisplays",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.listThunderboltDevices",
+          "title": "listThunderboltDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.listUSBDevices",
+          "title": "listUSBDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.mute",
+          "title": "mute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.osascript",
+          "title": "osascript",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.preventSleep",
+          "title": "preventSleep",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.restart",
+          "title": "restart",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setBrightness",
+          "title": "setBrightness",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setDarkMode",
+          "title": "setDarkMode",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setDisplayResolution",
+          "title": "setDisplayResolution",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setInputVolume",
+          "title": "setInputVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setKeyboardBacklight",
+          "title": "setKeyboardBacklight",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setNightShift",
+          "title": "setNightShift",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.setVolume",
+          "title": "setVolume",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.shutdown",
+          "title": "shutdown",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.sleep",
+          "title": "sleep",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.toggleMute",
+          "title": "toggleMute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC9.unmute",
+          "title": "unmute",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC10",
+      "name": "Multi-Device / Fleet",
+      "items": [
+        {
+          "id": "UC10._getDeviceToken",
+          "title": "_getDeviceToken",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10._heartbeatOne",
+          "title": "_heartbeatOne",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10._offlineTaskStatus",
+          "title": "_offlineTaskStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.broadcastConfig",
+          "title": "broadcastConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.broadcastTask",
+          "title": "broadcastTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.cancelTask",
+          "title": "cancelTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.cancelTaskGroup",
+          "title": "cancelTaskGroup",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.clearInterval",
+          "title": "clearInterval",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.clearTimeout",
+          "title": "clearTimeout",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.collectResults",
+          "title": "collectResults",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.createTaskGroup",
+          "title": "createTaskGroup",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.discoverDevices",
+          "title": "discoverDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.enableMeshRelay",
+          "title": "enableMeshRelay",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.execFileSync",
+          "title": "execFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.execSync",
+          "title": "execSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.findBestRoute",
+          "title": "findBestRoute",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getDeviceInfo",
+          "title": "getDeviceInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getDeviceMacAddress",
+          "title": "getDeviceMacAddress",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getDeviceMetrics",
+          "title": "getDeviceMetrics",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getDeviceStatus",
+          "title": "getDeviceStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getFleetMetrics",
+          "title": "getFleetMetrics",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getFleetOverview",
+          "title": "getFleetOverview",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getHealthHistory",
+          "title": "getHealthHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getNetworkTopology",
+          "title": "getNetworkTopology",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getRemoteClipboard",
+          "title": "getRemoteClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getRemoteConfig",
+          "title": "getRemoteConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getRemoteFileList",
+          "title": "getRemoteFileList",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getTaskGroupStatus",
+          "title": "getTaskGroupStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.getTaskStatus",
+          "title": "getTaskStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.isMeshRelayEnabled",
+          "title": "isMeshRelayEnabled",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.listOnlineDevices",
+          "title": "listOnlineDevices",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.pingDevice",
+          "title": "pingDevice",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.pump",
+          "title": "pump",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.requestFile",
+          "title": "requestFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.resolve",
+          "title": "resolve",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.scheduleTask",
+          "title": "scheduleTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.sendFile",
+          "title": "sendFile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.sendNotification",
+          "title": "sendNotification",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.sendTask",
+          "title": "sendTask",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.setAlertThresholds",
+          "title": "setAlertThresholds",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.startHeartbeat",
+          "title": "startHeartbeat",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.stopHeartbeat",
+          "title": "stopHeartbeat",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.syncClipboard",
+          "title": "syncClipboard",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.syncConfig",
+          "title": "syncConfig",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.syncDirectory",
+          "title": "syncDirectory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC10.wakeDevice",
+          "title": "wakeDevice",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC11",
+      "name": "Developer & CLI",
+      "items": [
+        {
+          "id": "UC11.dockerCompose",
+          "title": "dockerCompose",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.dockerImages",
+          "title": "dockerImages",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.dockerLogs",
+          "title": "dockerLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.dockerPs",
+          "title": "dockerPs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.dockerRun",
+          "title": "dockerRun",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.dockerStop",
+          "title": "dockerStop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.getEnvironment",
+          "title": "getEnvironment",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.getOpenEditors",
+          "title": "getOpenEditors",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.getProjectStructure",
+          "title": "getProjectStructure",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.getRunningShells",
+          "title": "getRunningShells",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.getShellHistory",
+          "title": "getShellHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitBranches",
+          "title": "gitBranches",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitClone",
+          "title": "gitClone",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitCommit",
+          "title": "gitCommit",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitDiff",
+          "title": "gitDiff",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitLog",
+          "title": "gitLog",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitPull",
+          "title": "gitPull",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitPush",
+          "title": "gitPush",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.gitStatus",
+          "title": "gitStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.openInEditor",
+          "title": "openInEditor",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.openProject",
+          "title": "openProject",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.openTerminal",
+          "title": "openTerminal",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.osascript",
+          "title": "osascript",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.runAsync",
+          "title": "runAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.runCommand",
+          "title": "runCommand",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.runCommandAsync",
+          "title": "runCommandAsync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.runSync",
+          "title": "runSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC11.searchInProject",
+          "title": "searchInProject",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC12",
+      "name": "Maintenance",
+      "items": [
+        {
+          "id": "UC12._parseLogLines",
+          "title": "_parseLogLines",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.cleanDownloads",
+          "title": "cleanDownloads",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.cleanTempFiles",
+          "title": "cleanTempFiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.clearAppCache",
+          "title": "clearAppCache",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.clearBrowserCache",
+          "title": "clearBrowserCache",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.clearDeveloperCaches",
+          "title": "clearDeveloperCaches",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.clearUserLogs",
+          "title": "clearUserLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.emptyTrash",
+          "title": "emptyTrash",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.flushDNS",
+          "title": "flushDNS",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getAppLogs",
+          "title": "getAppLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getCacheSize",
+          "title": "getCacheSize",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getDirectorySize",
+          "title": "getDirectorySize",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getDiskUsage",
+          "title": "getDiskUsage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getLargeFiles",
+          "title": "getLargeFiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getLogSize",
+          "title": "getLogSize",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getProcessInfo",
+          "title": "getProcessInfo",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getResourceHogs",
+          "title": "getResourceHogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getStartupItems",
+          "title": "getStartupItems",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getSystemLogs",
+          "title": "getSystemLogs",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.getZombieProcesses",
+          "title": "getZombieProcesses",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.join",
+          "title": "join",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.killByName",
+          "title": "killByName",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.killProcess",
+          "title": "killProcess",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.listCaches",
+          "title": "listCaches",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.listProcesses",
+          "title": "listProcesses",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.rebuildSpotlight",
+          "title": "rebuildSpotlight",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.repairPermissions",
+          "title": "repairPermissions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.run",
+          "title": "run",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.tryRun",
+          "title": "tryRun",
+          "status": "implemented"
+        },
+        {
+          "id": "UC12.verifyDisk",
+          "title": "verifyDisk",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "id": "UC13",
+      "name": "Permission & Security",
+      "items": [
+        {
+          "id": "UC13.addAppScope",
+          "title": "addAppScope",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.addSandboxProfile",
+          "title": "addSandboxProfile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.appendFileSync",
+          "title": "appendFileSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.applySandboxProfile",
+          "title": "applySandboxProfile",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.audit",
+          "title": "audit",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.blocklistReason",
+          "title": "blocklistReason",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.captureTerminal",
+          "title": "captureTerminal",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.checkConditions",
+          "title": "checkConditions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.clearHistory",
+          "title": "clearHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.clearInterval",
+          "title": "clearInterval",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.clickButton",
+          "title": "clickButton",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.clickWithRetry",
+          "title": "clickWithRetry",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.detectPermissionDialog",
+          "title": "detectPermissionDialog",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.ensureOcr",
+          "title": "ensureOcr",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.evaluate",
+          "title": "evaluate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.evaluateAppScope",
+          "title": "evaluateAppScope",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.exportAuditReport",
+          "title": "exportAuditReport",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.exportPolicy",
+          "title": "exportPolicy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getAppScopeRateBucket",
+          "title": "getAppScopeRateBucket",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getAuditStats",
+          "title": "getAuditStats",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getHistory",
+          "title": "getHistory",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getMonitoringStatus",
+          "title": "getMonitoringStatus",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getPermissionSummary",
+          "title": "getPermissionSummary",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getPolicy",
+          "title": "getPolicy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getRateBucket",
+          "title": "getRateBucket",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.getRecentDecisions",
+          "title": "getRecentDecisions",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.importPolicy",
+          "title": "importPolicy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.incrementRateCounter",
+          "title": "incrementRateCounter",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.isAllowlisted",
+          "title": "isAllowlisted",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.isRateLimited",
+          "title": "isRateLimited",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.listSandboxProfiles",
+          "title": "listSandboxProfiles",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.loadPolicyTemplate",
+          "title": "loadPolicyTemplate",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.mkdirSync",
+          "title": "mkdirSync",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.ocrImage",
+          "title": "ocrImage",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.poll",
+          "title": "poll",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.readAuditEntries",
+          "title": "readAuditEntries",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.recordEvent",
+          "title": "recordEvent",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.registerInterceptor",
+          "title": "registerInterceptor",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.ruleMatches",
+          "title": "ruleMatches",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.searchAuditLog",
+          "title": "searchAuditLog",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.start",
+          "title": "start",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.startMonitoring",
+          "title": "startMonitoring",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.stop",
+          "title": "stop",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.tailscaleActive",
+          "title": "tailscaleActive",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.terminateOcr",
+          "title": "terminateOcr",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.typeResponse",
+          "title": "typeResponse",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.updatePolicy",
+          "title": "updatePolicy",
+          "status": "implemented"
+        },
+        {
+          "id": "UC13.writeFileSync",
+          "title": "writeFileSync",
+          "status": "implemented"
+        }
+      ]
+    }
+  ],
+  "generatedAt": "2026-04-23T00:44:28.539Z",
+  "totals": {
+    "total": 689,
+    "implemented": 689,
+    "partial": 0,
+    "planned": 0
+  }
+}

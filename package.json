@@ -32,7 +32,9 @@
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
-    "clean": "pnpm -r clean && cargo clean"
+    "clean": "pnpm -r clean && cargo clean",
+    "usecase:report": "node scripts/build-usecase-matrix.mjs --report",
+    "usecase:check": "node scripts/build-usecase-matrix.mjs --check"
   },
   "devDependencies": {
     "tsx": "^4.21.0"
