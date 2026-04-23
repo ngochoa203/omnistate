@@ -31,6 +31,8 @@ export interface SiriBridgeConfig {
   token: string;
 }
 
+export type WakeEngine = "legacy" | "oww";
+
 export interface VoiceRuntimeConfig {
   lowLatency: boolean;
   autoExecuteTranscript: boolean;
@@ -43,6 +45,10 @@ export interface VoiceRuntimeConfig {
     phrase: string;
     cooldownMs: number;
     commandWindowSec: number;
+    engine: WakeEngine;
+    aliases: string[];
+    modelPath?: string;
+    threshold: number;
   };
 }
 
@@ -142,6 +148,9 @@ function defaultConfig(): LlmRuntimeConfig {
         phrase: "hey omni",
         cooldownMs: 2500,
         commandWindowSec: 7,
+        engine: "oww" as WakeEngine,
+        aliases: ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"],
+        threshold: 0.5,
       },
     },
     session: {
@@ -254,6 +263,20 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
           raw.voice.wake.commandWindowSec >= 2
             ? Math.round(raw.voice.wake.commandWindowSec)
             : def.voice.wake.commandWindowSec,
+        engine:
+          raw.voice?.wake?.engine === "legacy" || raw.voice?.wake?.engine === "oww"
+            ? raw.voice.wake.engine
+            : def.voice.wake.engine,
+        aliases: Array.isArray(raw.voice?.wake?.aliases) && raw.voice.wake.aliases.length > 0
+          ? raw.voice.wake.aliases.map((a) => String(a)).filter(Boolean)
+          : def.voice.wake.aliases,
+        ...(raw.voice?.wake?.modelPath ? { modelPath: raw.voice.wake.modelPath } : {}),
+        threshold:
+          typeof raw.voice?.wake?.threshold === "number" &&
+          raw.voice.wake.threshold > 0 &&
+          raw.voice.wake.threshold <= 1
+            ? raw.voice.wake.threshold
+            : def.voice.wake.threshold,
       },
     },
     session: {

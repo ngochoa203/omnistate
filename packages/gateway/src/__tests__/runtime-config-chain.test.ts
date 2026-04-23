@@ -64,6 +64,9 @@ function makeConfig(): LlmRuntimeConfig {
         phrase: "hey omni",
         cooldownMs: 2500,
         commandWindowSec: 7,
+        engine: "oww" as const,
+        aliases: ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"],
+        threshold: 0.5,
       },
     },
     session: {

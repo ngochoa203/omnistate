@@ -3,11 +3,17 @@ import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { logger } from "../utils/logger.js";
+export type WakeEngine = "legacy" | "oww";
+
 export interface WakeConfig {
   enabled: boolean;
   phrase: string;
   cooldownMs: number;
   commandWindowSec: number;
+  engine?: WakeEngine;
+  aliases?: string[];
+  modelPath?: string;
+  threshold?: number;
 }
 
 export interface WakeManagerOptions {
@@ -47,27 +53,48 @@ export class WakeManager {
       return;
     }
 
-    const scriptPath = resolve(process.cwd(), "packages/gateway/scripts/wake_listener.py");
+    const DEFAULT_ALIASES = ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"];
+    const engine: WakeEngine = options.config.engine ?? "oww";
+    const scriptName =
+      engine === "oww" ? "wake_listener_oww.py" : "wake_listener.py";
+    const scriptPath = resolve(process.cwd(), `packages/gateway/scripts/${scriptName}`);
     if (!existsSync(scriptPath)) {
       logger.warn(`[OmniState] Wake listener script missing: ${scriptPath}`);
       return;
     }
 
+    const aliases = options.config.aliases ?? DEFAULT_ALIASES;
+    const modelPath = options.config.modelPath ?? process.env.OMNISTATE_WAKE_MODEL_PATH ?? "";
+    const threshold = options.config.threshold ?? 0.5;
+
+    const baseArgs = [
+      scriptPath,
+      "--phrase",
+      options.config.phrase,
+      "--endpoint",
+      options.endpoint,
+      "--token",
+      options.token,
+      "--cooldown-ms",
+      String(options.config.cooldownMs),
+      "--command-window-sec",
+      String(options.config.commandWindowSec),
+    ];
+
+    const owwExtras =
+      engine === "oww"
+        ? [
+            "--aliases",
+            JSON.stringify(aliases),
+            "--threshold",
+            String(threshold),
+            ...(modelPath ? ["--model-path", modelPath] : []),
+          ]
+        : [];
+
     this.child = spawn(
       this.resolvePythonExecutable(),
-      [
-        scriptPath,
-        "--phrase",
-        options.config.phrase,
-        "--endpoint",
-        options.endpoint,
-        "--token",
-        options.token,
-        "--cooldown-ms",
-        String(options.config.cooldownMs),
-        "--command-window-sec",
-        String(options.config.commandWindowSec),
-      ],
+      [...baseArgs, ...owwExtras],
       {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
