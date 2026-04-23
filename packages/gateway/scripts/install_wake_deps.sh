@@ -8,7 +8,7 @@ PYTHON="${OMNISTATE_WAKE_PYTHON:-python3}"
 echo "==> Using Python: $($PYTHON --version 2>&1)"
 
 # Check each package; only install missing ones.
-PACKAGES=(openwakeword speechbrain torch torchaudio sounddevice numpy speech_recognition requests)
+PACKAGES=(openwakeword speechbrain torch torchaudio sounddevice numpy speech_recognition requests librosa pvporcupine)
 TO_INSTALL=()
 
 for pkg in "${PACKAGES[@]}"; do
