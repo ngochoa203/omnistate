@@ -31,15 +31,41 @@ export interface SiriBridgeConfig {
   token: string;
 }
 
-export type WakeEngine = "legacy" | "oww";
+export type WakeEngine = "legacy" | "oww" | "personal" | "porcupine";
+
+export type WhisperLocalModel = "tiny" | "base" | "small" | "medium" | "large-v3";
+
+export interface SpeakerVerificationConfig {
+  enabled: boolean;
+  threshold: number;
+  onMismatch: "warn" | "reject" | "silent";
+}
+
+export interface TtsConfig {
+  provider: "edge" | "rtvc" | "none";
+  voiceVi?: string;
+  voiceEn?: string;
+}
+
+export interface VadConfig {
+  enabled: boolean;
+  silenceThresholdMs: number;
+  speechThreshold: number;
+  silenceThreshold: number;
+  minSpeechMs: number;
+}
 
 export interface VoiceRuntimeConfig {
+  tts?: TtsConfig;
+  whisperLocalModel: WhisperLocalModel;
   lowLatency: boolean;
   autoExecuteTranscript: boolean;
   primaryProvider: VoiceProvider;
   fallbackProviders: VoiceProvider[];
   chunkMs: number;
   siri: SiriBridgeConfig;
+  speakerVerification?: SpeakerVerificationConfig;
+  vad: VadConfig;
   wake: {
     enabled: boolean;
     phrase: string;
@@ -69,6 +95,12 @@ export interface LlmRuntimeConfig {
   fallbackProviderIds: string[];
   providers: LlmProviderConfig[];
   tokenBudget: TokenBudgetConfig;
+  /**
+   * Confidence threshold above which the intent registry fast-path is taken
+   * without falling through to the full planner. Range: 0–1. Default: 0.92.
+   * Phase 2 owns voice.*; do not move this field under voice.*.
+   */
+  fastPathThreshold: number;
   voice: VoiceRuntimeConfig;
   session: {
     currentSessionId: string;
@@ -124,6 +156,7 @@ function defaultConfig(): LlmRuntimeConfig {
     activeModel: anthropicProvider.apiKey ? anthropicProvider.model : router9Provider.model,
     fallbackProviderIds: ["router9"],
     providers: [anthropicProvider, router9Provider],
+    fastPathThreshold: 0.92,
     tokenBudget: {
       compactPrompt: true,
       intentMaxTokens: 220,
@@ -131,10 +164,16 @@ function defaultConfig(): LlmRuntimeConfig {
       maxInputChars: 1400,
     },
     voice: {
+      tts: {
+        provider: (process.env.OMNISTATE_TTS_PROVIDER === "rtvc" ? "rtvc" : "edge") as "edge" | "rtvc",
+        voiceVi: process.env.OMNISTATE_TTS_VOICE_VI ?? "vi-VN-HoaiMyNeural",
+        voiceEn: process.env.OMNISTATE_TTS_VOICE_EN ?? "en-US-AriaNeural",
+      },
+      whisperLocalModel: (process.env.WHISPER_MODEL as WhisperLocalModel | undefined) ?? "small",
       lowLatency: true,
       autoExecuteTranscript: true,
-      primaryProvider: "native",
-      fallbackProviders: ["whisper-local", "whisper-cloud"],
+      primaryProvider: "whisper-local",
+      fallbackProviders: ["whisper-cloud", "native"],
       chunkMs: 220,
       siri: {
         enabled: false,
@@ -143,12 +182,31 @@ function defaultConfig(): LlmRuntimeConfig {
         endpoint: "http://127.0.0.1:19801/siri/command",
         token: process.env.OMNISTATE_SIRI_TOKEN ?? "",
       },
+      speakerVerification: {
+        enabled: process.env.OMNISTATE_SPEAKER_VERIFY_ENABLED === "1",
+        threshold: process.env.OMNISTATE_SPEAKER_VERIFY_THRESHOLD
+          ? parseFloat(process.env.OMNISTATE_SPEAKER_VERIFY_THRESHOLD)
+          : 0.75,
+        onMismatch: (["warn", "reject", "silent"].includes(
+          process.env.OMNISTATE_SPEAKER_VERIFY_ON_MISMATCH ?? "",
+        )
+          ? process.env.OMNISTATE_SPEAKER_VERIFY_ON_MISMATCH
+          : "warn") as "warn" | "reject" | "silent",
+      },
+      vad: {
+        enabled: process.env.OMNISTATE_VAD_ENABLED !== "0",
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
+      },
       wake: {
         enabled: true,
         phrase: "hey mimi",
         cooldownMs: 2500,
         commandWindowSec: 7,
-        engine: "oww" as WakeEngine,
+        engine: (existsSync(`${homedir()}/.omnistate/wake-samples/personal_template.json`) ? "personal" : "oww") as WakeEngine,
+        modelPath: `${homedir()}/.omnistate/wake-samples/personal_template.json`,
         aliases: ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"],
         threshold: 0.5,
       },
@@ -215,6 +273,12 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
     activeModel: raw.activeModel ?? activeProvider.model,
     fallbackProviderIds,
     providers,
+    fastPathThreshold:
+      typeof raw.fastPathThreshold === "number" &&
+      raw.fastPathThreshold > 0 &&
+      raw.fastPathThreshold <= 1
+        ? raw.fastPathThreshold
+        : def.fastPathThreshold,
     tokenBudget: {
       compactPrompt: raw.tokenBudget?.compactPrompt ?? def.tokenBudget.compactPrompt,
       intentMaxTokens: raw.tokenBudget?.intentMaxTokens ?? def.tokenBudget.intentMaxTokens,
@@ -223,14 +287,25 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
       maxInputChars: raw.tokenBudget?.maxInputChars ?? def.tokenBudget.maxInputChars,
     },
     voice: {
+      tts: {
+        provider: (raw.voice?.tts?.provider === "rtvc" ? "rtvc" : "edge") as "edge" | "rtvc",
+        voiceVi: raw.voice?.tts?.voiceVi ?? def.voice.tts!.voiceVi,
+        voiceEn: raw.voice?.tts?.voiceEn ?? def.voice.tts!.voiceEn,
+      },
+      whisperLocalModel: (["tiny", "base", "small", "medium", "large-v3"] as WhisperLocalModel[]).includes(
+        raw.voice?.whisperLocalModel as WhisperLocalModel,
+      )
+        ? (raw.voice!.whisperLocalModel as WhisperLocalModel)
+        : def.voice.whisperLocalModel,
       lowLatency: raw.voice?.lowLatency ?? def.voice.lowLatency,
       autoExecuteTranscript:
         raw.voice?.autoExecuteTranscript ?? def.voice.autoExecuteTranscript,
       primaryProvider:
         raw.voice?.primaryProvider === "whisper-cloud" ||
-        raw.voice?.primaryProvider === "whisper-local"
+        raw.voice?.primaryProvider === "whisper-local" ||
+        raw.voice?.primaryProvider === "native"
           ? raw.voice.primaryProvider
-          : "native",
+          : "whisper-local",
       fallbackProviders: Array.isArray(raw.voice?.fallbackProviders)
         ? raw.voice.fallbackProviders.filter(
             (p): p is VoiceProvider =>
@@ -251,6 +326,41 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
         endpoint: raw.voice?.siri?.endpoint ?? def.voice.siri.endpoint,
         token: raw.voice?.siri?.token ?? def.voice.siri.token,
       },
+      speakerVerification: {
+        enabled: raw.voice?.speakerVerification?.enabled ?? (def.voice.speakerVerification?.enabled ?? false),
+        threshold:
+          typeof raw.voice?.speakerVerification?.threshold === "number" &&
+          raw.voice.speakerVerification.threshold > 0 &&
+          raw.voice.speakerVerification.threshold <= 1
+            ? raw.voice.speakerVerification.threshold
+            : (def.voice.speakerVerification?.threshold ?? 0.75),
+        onMismatch:
+          raw.voice?.speakerVerification?.onMismatch === "reject" ||
+          raw.voice?.speakerVerification?.onMismatch === "silent"
+            ? raw.voice.speakerVerification.onMismatch
+            : (def.voice.speakerVerification?.onMismatch ?? "warn"),
+      },
+      vad: {
+        enabled: raw.voice?.vad?.enabled !== false,
+        silenceThresholdMs:
+          typeof raw.voice?.vad?.silenceThresholdMs === "number" && raw.voice.vad.silenceThresholdMs >= 0
+            ? Math.round(raw.voice.vad.silenceThresholdMs)
+            : def.voice.vad.silenceThresholdMs,
+        speechThreshold:
+          typeof raw.voice?.vad?.speechThreshold === "number" &&
+          raw.voice.vad.speechThreshold > 0 && raw.voice.vad.speechThreshold <= 1
+            ? raw.voice.vad.speechThreshold
+            : def.voice.vad.speechThreshold,
+        silenceThreshold:
+          typeof raw.voice?.vad?.silenceThreshold === "number" &&
+          raw.voice.vad.silenceThreshold > 0 && raw.voice.vad.silenceThreshold <= 1
+            ? raw.voice.vad.silenceThreshold
+            : def.voice.vad.silenceThreshold,
+        minSpeechMs:
+          typeof raw.voice?.vad?.minSpeechMs === "number" && raw.voice.vad.minSpeechMs >= 0
+            ? Math.round(raw.voice.vad.minSpeechMs)
+            : def.voice.vad.minSpeechMs,
+      },
       wake: {
         enabled: raw.voice?.wake?.enabled ?? def.voice.wake.enabled,
         phrase: raw.voice?.wake?.phrase?.trim() || def.voice.wake.phrase,
@@ -264,7 +374,7 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
             ? Math.round(raw.voice.wake.commandWindowSec)
             : def.voice.wake.commandWindowSec,
         engine:
-          raw.voice?.wake?.engine === "legacy" || raw.voice?.wake?.engine === "oww"
+          raw.voice?.wake?.engine === "legacy" || raw.voice?.wake?.engine === "oww" || raw.voice?.wake?.engine === "personal"
             ? raw.voice.wake.engine
             : def.voice.wake.engine,
         aliases: Array.isArray(raw.voice?.wake?.aliases) && raw.voice.wake.aliases.length > 0
@@ -572,6 +682,13 @@ export function updateActiveProviderField(
     provider.model = value;
     conf.activeModel = value;
   }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setWhisperLocalModel(model: WhisperLocalModel): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  conf.voice.whisperLocalModel = model;
   saveLlmRuntimeConfig(conf);
   return conf;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { SUPPORTED_LANGUAGES, type AppLanguage } from "../lib/i18n";
 import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
@@ -311,7 +311,88 @@ function PermissionsStep({
   );
 }
 
-function VoiceStep({ onNavigateToVoice }: { onNavigateToVoice?: () => void }) {
+function VoiceStep({ onEnrolled }: { onEnrolled?: () => void }) {
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrolled, setEnrolled] = useState(false);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startTimeRef = useRef(0);
+  const [recording, setRecording] = useState(false);
+  const [recordedFile, setRecordedFile] = useState<{ file: File; durationMs: number } | null>(null);
+
+  const startRec = async () => {
+    setEnrollError(null);
+    setRecordedFile(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      startTimeRef.current = Date.now();
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        const durationMs = Date.now() - startTimeRef.current;
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const file = new File([blob], `voice-sample-${Date.now()}.webm`, { type: "audio/webm" });
+        setRecordedFile({ file, durationMs });
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      };
+      recorder.start();
+      setRecording(true);
+    } catch (err) {
+      setEnrollError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const stopRec = () => {
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  };
+
+  const handleEnroll = async () => {
+    if (!recordedFile) return;
+    const MIN_DURATION_MS = 1500;
+    const MIN_BLOB_BYTES = 8 * 1024;
+    if (recordedFile.durationMs < MIN_DURATION_MS) {
+      setEnrollError("Recording too short (minimum 1.5 s). Please try again.");
+      return;
+    }
+    if (recordedFile.file.size < MIN_BLOB_BYTES) {
+      setEnrollError("Audio sample too small (minimum 8 KB). Please try again.");
+      return;
+    }
+    setEnrolling(true);
+    setEnrollError(null);
+    try {
+      const buf = await recordedFile.file.arrayBuffer();
+      let binary = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
+      const audioBase64 = btoa(binary);
+      const resp = await fetch("/api/voice/enroll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ userId: "owner", displayName: "Owner", threshold: 0.85, audioBase64, audioFormat: "webm" }),
+      });
+      if (resp.ok) {
+        setEnrolled(true);
+        onEnrolled?.();
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        setEnrollError((data as any)?.error ?? `Server error ${resp.status}`);
+      }
+    } catch (err) {
+      setEnrollError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -320,7 +401,7 @@ function VoiceStep({ onNavigateToVoice }: { onNavigateToVoice?: () => void }) {
         </h2>
         <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--color-text-muted)", lineHeight: 1.6 }}>
           Enroll your voice so OmniState can verify it's you before executing sensitive commands.
-          This step is optional — you can always set it up later.
+          Voice enrollment is required to continue.
         </p>
       </div>
 
@@ -331,35 +412,72 @@ function VoiceStep({ onNavigateToVoice }: { onNavigateToVoice?: () => void }) {
         border: "1px solid rgba(99,102,241,0.15)",
         textAlign: "center", marginBottom: 20,
       }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🎤</div>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>{enrolled ? "✅" : "🎤"}</div>
         <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-primary)", marginBottom: 6 }}>
-          Voice enrollment takes about 30 seconds
+          {enrolled ? "Voice enrolled successfully!" : "Voice enrollment takes about 30 seconds"}
         </div>
         <p style={{ margin: 0, fontSize: "0.78rem", color: "var(--color-text-muted)", lineHeight: 1.6 }}>
-          Record a few voice samples. OmniState will learn your voiceprint and use it
-          for speaker verification on sensitive operations.
+          {enrolled
+            ? "Your voiceprint has been saved. You can manage it later in the Voice panel."
+            : "Record a voice sample below. OmniState will learn your voiceprint for speaker verification."}
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <button
-          onClick={onNavigateToVoice}
-          style={{
-            width: "100%", padding: "11px 20px", borderRadius: 10, cursor: "pointer",
-            background: "linear-gradient(135deg, #6366f1, #7c3aed)",
-            border: "none", color: "white", fontSize: "0.875rem", fontWeight: 700,
-            boxShadow: "0 4px 20px rgba(99,102,241,0.35)",
-            transition: "all 0.2s",
-          }}
-        >
-          Open Voice Enrollment
-        </button>
-        <p style={{
-          margin: 0, textAlign: "center", fontSize: "0.72rem", color: "var(--color-text-muted)",
-        }}>
-          You can also find this in the <strong style={{ color: "var(--color-text-secondary)" }}>Voice</strong> panel at any time.
-        </p>
-      </div>
+      {!enrolled && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {!recordedFile ? (
+            <button
+              onClick={recording ? stopRec : startRec}
+              style={{
+                width: "100%", padding: "11px 20px", borderRadius: 10, cursor: "pointer",
+                background: recording ? "linear-gradient(135deg, #ef4444, #f43f5e)" : "linear-gradient(135deg, #6366f1, #7c3aed)",
+                border: "none", color: "white", fontSize: "0.875rem", fontWeight: 700,
+                boxShadow: recording ? "0 4px 20px rgba(239,68,68,0.35)" : "0 4px 20px rgba(99,102,241,0.35)",
+                transition: "all 0.2s",
+              }}
+            >
+              {recording ? "⏹ Stop Recording" : "🎤 Start Recording"}
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={handleEnroll}
+                disabled={enrolling}
+                style={{
+                  flex: 1, padding: "11px 20px", borderRadius: 10, cursor: enrolling ? "wait" : "pointer",
+                  background: "linear-gradient(135deg, #6366f1, #7c3aed)",
+                  border: "none", color: "white", fontSize: "0.875rem", fontWeight: 700,
+                  boxShadow: "0 4px 20px rgba(99,102,241,0.35)", transition: "all 0.2s",
+                  opacity: enrolling ? 0.7 : 1,
+                }}
+              >
+                {enrolling ? "Enrolling…" : "Enroll Voice Sample"}
+              </button>
+              <button
+                onClick={() => { setRecordedFile(null); setEnrollError(null); }}
+                disabled={enrolling}
+                style={{
+                  padding: "11px 16px", borderRadius: 10, cursor: "pointer",
+                  background: "none", border: "1px solid rgba(255,255,255,0.08)",
+                  color: "var(--color-text-muted)", fontSize: "0.82rem", transition: "all 0.2s",
+                }}
+              >
+                Re-record
+              </button>
+            </div>
+          )}
+
+          {enrollError && (
+            <div style={{ padding: "10px 14px", borderRadius: 9, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171", fontSize: "0.78rem" }}>
+              {enrollError}
+            </div>
+          )}
+
+          <p style={{ margin: 0, textAlign: "center", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+            For advanced options visit the <strong style={{ color: "var(--color-text-secondary)" }}>Voice</strong> panel after setup.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -590,6 +708,7 @@ interface Props {
 
 export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
+  const [voiceEnrolled, setVoiceEnrolled] = useState(false);
   const [permissions, setPermissions] = useState<Permissions>({
     accessibility: "unknown",
     screenRecording: "unknown",
@@ -685,6 +804,7 @@ export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
   }, [currentStep, connectionState, checkPermissions]);
 
   const goNext = () => {
+    if (currentStep === "voice" && !voiceEnrolled) return;
     if (stepIndex < STEPS.length - 1) setStepIndex(i => i + 1);
   };
 
@@ -698,6 +818,7 @@ export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
   };
 
   const handleVoiceNavigate = () => {
+    if (!voiceEnrolled) return;
     markOnboardingComplete();
     onComplete();
     onNavigateToVoice?.();
@@ -761,7 +882,7 @@ export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
             />
           )}
           {currentStep === "voice" && (
-            <VoiceStep onNavigateToVoice={handleVoiceNavigate} />
+            <VoiceStep onEnrolled={() => setVoiceEnrolled(true)} />
           )}
           {currentStep === "remote" && (
             <RemoteStep />
@@ -800,7 +921,7 @@ export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {/* Skip link for optional steps */}
-              {(currentStep === "voice" || currentStep === "remote") && (
+              {currentStep === "remote" && (
                 <button
                   onClick={goNext}
                   style={{
@@ -816,13 +937,15 @@ export function OnboardingWizard({ onComplete, onNavigateToVoice }: Props) {
 
               <button
                 onClick={goNext}
+                disabled={currentStep === "voice" && !voiceEnrolled}
                 style={{
                   padding: "9px 22px", borderRadius: 9,
                   background: "linear-gradient(135deg, #6366f1, #7c3aed)",
                   border: "none", color: "white", fontSize: "0.875rem", fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: currentStep === "voice" && !voiceEnrolled ? "not-allowed" : "pointer",
                   boxShadow: "0 4px 16px rgba(99,102,241,0.35)",
                   transition: "all 0.2s",
+                  opacity: currentStep === "voice" && !voiceEnrolled ? 0.4 : 1,
                 }}
               >
                 {currentStep === "remote" ? "Review →" : "Next →"}

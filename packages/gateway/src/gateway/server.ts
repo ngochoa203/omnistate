@@ -23,10 +23,12 @@ import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, setWhisperLocalModel, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
+import { whisperLocalClient } from "../voice/whisper-local-client.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
+import { synthesize as edgeTtsSynthesize, detectLanguage as edgeTtsDetectLanguage, pickVoice as edgeTtsPickVoice } from "../voice/edge-tts.js";
 import { TriggerEngine } from "../triggers/index.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
@@ -36,6 +38,8 @@ import { logger } from "../utils/logger.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
 import { applyRequestId } from "./request-context.js";
 import { register, httpRequestsTotal, httpRequestDurationSeconds, wsConnectionsGauge } from "./metrics.js";
+import { VoiceStreamManager } from "../voice/webrtc-stream.js";
+import { cleanupEnrollSession } from "../voice/enrollment.js";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
@@ -135,6 +139,8 @@ interface ConnectedClient {
   userId: string | null;
   /** Set when the connection authenticated via a device JWT (type: "device"). */
   deviceId?: string | null;
+  /** AbortController for in-progress TTS synthesis; used by tts.cancel handler. */
+  ttsAbort?: AbortController;
 }
 
 /**
@@ -149,6 +155,7 @@ export class OmniStateGateway {
   private siriBridgeServer: HttpServer | null = null;
   private wakeManager: WakeManager = new WakeManager();
   private triggerEngine: TriggerEngine = new TriggerEngine();
+  private voiceStreamManager: VoiceStreamManager = new VoiceStreamManager();
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -589,6 +596,269 @@ export class OmniStateGateway {
       return;
     }
 
+    // ── Wake Word: 5-sample personal training (no Colab, on-device) ─────────
+    if (req.method === "GET" && requestPath === "/api/wake/personal-status") {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const os = await import("node:os");
+      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
+      const templatePath = path.join(sampleDir, "personal_template.json");
+      let samples = 0;
+      try {
+        samples = fs.readdirSync(sampleDir).filter((f) => /^sample_\d+\.wav$/.test(f)).length;
+      } catch {}
+      const ready = fs.existsSync(templatePath);
+      json(200, {
+        samplesCollected: samples,
+        samplesRequired: 5,
+        templateReady: ready,
+        templatePath: ready ? templatePath : null,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && requestPath === "/api/wake/personal-sample") {
+      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const os = await import("node:os");
+      const idx = Number(req.headers["x-sample-index"]);
+      if (!Number.isInteger(idx) || idx < 1 || idx > 10) {
+        json(400, { error: { code: "INVALID_INDEX", message: "X-Sample-Index must be 1..10" } });
+        return;
+      }
+      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
+      try { fs.mkdirSync(sampleDir, { recursive: true }); } catch {}
+      const target = path.join(sampleDir, `sample_${idx}.wav`);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const MAX = 2 * 1024 * 1024; // 2MB per 1.5s WAV
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.on("data", (c: Buffer) => {
+            total += c.length;
+            if (total > MAX) { reject(new Error("Sample too large (max 2MB)")); return; }
+            chunks.push(c);
+          });
+          req.on("end", () => resolve());
+          req.on("error", reject);
+        });
+        const buf = Buffer.concat(chunks);
+        // Guard: reject if body too small (~1s @ 16kHz mono 16-bit = 32KB)
+        if (buf.length < 32 * 1024) {
+          json(400, { error: { code: "SAMPLE_TOO_QUIET", message: `WAV body too small (${buf.length} bytes < 32KB minimum ~1s recording)` } });
+          return;
+        }
+        // Guard: compute RMS of PCM int16 LE data (skip 44-byte RIFF header)
+        const HEADER_BYTES = 44;
+        const pcmBuf = buf.slice(Math.min(HEADER_BYTES, buf.length));
+        const numSamples = Math.floor(pcmBuf.length / 2);
+        if (numSamples > 0) {
+          let sumSq = 0;
+          for (let i = 0; i < numSamples; i++) {
+            const s = pcmBuf.readInt16LE(i * 2);
+            sumSq += s * s;
+          }
+          const rms = Math.sqrt(sumSq / numSamples);
+          if (rms < 200) {
+            json(400, { error: { code: "SAMPLE_TOO_QUIET", message: `Audio RMS ${rms.toFixed(1)} is below silence threshold (200) — please re-record in a quieter environment or speak closer to the mic` } });
+            return;
+          }
+        }
+        fs.writeFileSync(target, buf);
+        // Write sidecar JSON if x-phrase header present (backward compatible — no failure if absent)
+        const phrase = (req.headers["x-phrase"] as string | undefined)?.trim();
+        if (phrase) {
+          const sidecar = path.join(sampleDir, `sample_${idx}.json`);
+          fs.writeFileSync(sidecar, JSON.stringify({ phrase, savedAt: new Date().toISOString() }));
+        }
+        json(201, { ok: true, samplePath: target, index: idx, sizeBytes: buf.length });
+      } catch (err: any) {
+        json(400, { error: { code: "UPLOAD_FAILED", message: err.message } });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && requestPath === "/api/wake/personal-train") {
+      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+      const path = await import("node:path");
+      const os = await import("node:os");
+      const { spawn } = await import("node:child_process");
+      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
+      const templatePath = path.join(sampleDir, "personal_template.json");
+      const script = path.join(process.cwd(), "packages/gateway/scripts/train_personal_wake.py");
+      const altScript = path.resolve(process.cwd(), "scripts/train_personal_wake.py");
+      const fs = await import("node:fs");
+      const scriptPath = fs.existsSync(script) ? script : altScript;
+
+      // Resolve python the same way WakeManager does (pyenv-aware).
+      const explicitPy = process.env.OMNISTATE_WAKE_PYTHON?.trim();
+      const pyenvVersion = process.env.PYENV_VERSION?.trim();
+      const pyenvRoot = process.env.PYENV_ROOT?.trim() || `${os.homedir()}/.pyenv`;
+      const pyenvPy =
+        pyenvVersion && fs.existsSync(`${pyenvRoot}/versions/${pyenvVersion}/bin/python3`)
+          ? `${pyenvRoot}/versions/${pyenvVersion}/bin/python3`
+          : null;
+      // Fallback: first versioned pyenv python with librosa installed.
+      let pyenvFallback: string | null = null;
+      try {
+        const versions = fs.readdirSync(`${pyenvRoot}/versions`).sort().reverse();
+        for (const v of versions) {
+          const p = `${pyenvRoot}/versions/${v}/bin/python3`;
+          if (fs.existsSync(p)) { pyenvFallback = p; break; }
+        }
+      } catch {}
+      const python = explicitPy || pyenvPy || pyenvFallback || "python3";
+
+      // Keep socket alive — librosa cold-import + 5 MFCC extractions can take 30–90s.
+      req.socket.setTimeout(0);
+      res.socket?.setTimeout(0);
+      const proc = spawn(python, [
+        scriptPath,
+        "--samples-dir", sampleDir,
+        "--output", templatePath,
+      ], { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (d) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d) => { stderr += d.toString(); });
+      const watchdog = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, 150_000);
+      const code: number = await new Promise<number>((resolve) =>
+        proc.on("close", (c) => { clearTimeout(watchdog); resolve(c ?? -1); }),
+      );
+      if (code === 0) {
+        // Switch wake engine to "personal" so the listener picks up the new template
+        try {
+          const { loadLlmRuntimeConfig, saveLlmRuntimeConfig } = await import("../llm/runtime-config.js");
+          const cfg = loadLlmRuntimeConfig();
+          if (cfg.voice?.wake) {
+            (cfg.voice.wake as any).engine = "personal";
+            (cfg.voice.wake as any).modelPath = templatePath;
+            saveLlmRuntimeConfig(cfg);
+          }
+        } catch {}
+        json(201, { ok: true, templatePath, log: stdout.split("\n").slice(-10).join("\n") });
+
+        // Background: kick off RTVC voice-clone training using the same wake samples.
+        // This ensures TTS can use the user's trained voice even without a separate enrollment.
+        void (async () => {
+          try {
+            const wavFiles = fs.readdirSync(sampleDir)
+              .filter((f: string) => f.endsWith(".wav"))
+              .sort()
+              .map((f: string) => path.join(sampleDir, f));
+            if (wavFiles.length === 0) return;
+
+            // Concatenate all wake WAVs into a single temp file for the encoder.
+            const concatPath = path.join(sampleDir, "_rtvc_concat.wav");
+            const { execFileSync } = await import("node:child_process");
+            // sox: if available, concat; otherwise just use the first sample.
+            try {
+              execFileSync("sox", [...wavFiles, concatPath], { stdio: "ignore" });
+            } catch {
+              fs.copyFileSync(wavFiles[0], concatPath);
+            }
+
+            const { trainRtvcProfile } = await import("../voice/rtvc.js");
+            const audioBase64 = fs.readFileSync(concatPath).toString("base64");
+            await trainRtvcProfile({
+              profileId: "default",
+              audioBase64,
+              format: "wav",
+            });
+          } catch (rtvcErr) {
+            // Non-fatal — wake training already succeeded.
+            console.warn("[wake/personal-train] Background RTVC training failed:", rtvcErr);
+          }
+        })();
+      } else {
+        // Gather sidecar phrases and per-sample file sizes for diagnostics.
+        let sampleDiagnostics: Array<{ file: string; sizeBytes: number; phrase: string | null }> = [];
+        try {
+          const wavs = fs.readdirSync(sampleDir).filter((f: string) => f.match(/^sample_\d+\.wav$/)).sort();
+          sampleDiagnostics = wavs.map((f: string) => {
+            const fp = path.join(sampleDir, f);
+            const sidecar = path.join(sampleDir, f.replace(/\.wav$/, ".json"));
+            let phrase: string | null = null;
+            try { phrase = JSON.parse(fs.readFileSync(sidecar, "utf8")).phrase ?? null; } catch {}
+            let sizeBytes = 0;
+            try { sizeBytes = fs.statSync(fp).size; } catch {}
+            return { file: f, sizeBytes, phrase };
+          });
+        } catch {}
+        json(500, { error: { code: "TRAIN_FAILED", message: stderr.split("\n").slice(-10).join("\n"), exitCode: code, samples: sampleDiagnostics } });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && requestPath === "/api/stt/verify") {
+      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => resolve());
+        req.on("error", reject);
+      });
+      let body: { audio?: string; expectedPhrase?: string };
+      try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {
+        json(400, { error: { code: "INVALID_JSON", message: "Body must be JSON {audio: base64, expectedPhrase: string}" } }); return;
+      }
+      const { audio, expectedPhrase } = body;
+      if (typeof audio !== "string" || !audio) {
+        json(400, { error: { code: "MISSING_AUDIO", message: "audio (base64) is required" } }); return;
+      }
+      try {
+        const audioBuffer = Buffer.from(audio, "base64");
+        const result = await HybridAutomation.transcribeAudio(audioBuffer, "whisper-local").catch(
+          () => HybridAutomation.transcribeAudio(audioBuffer, "whisper-cloud"),
+        );
+        const transcript = result.text.trim();
+        let similarity = 0;
+        let accepted = false;
+        if (expectedPhrase && transcript) {
+          // Jaccard token similarity — lightweight, no extra deps.
+          const tokA = new Set(transcript.toLowerCase().split(/\s+/));
+          const tokB = new Set((expectedPhrase as string).toLowerCase().split(/\s+/));
+          const intersection = [...tokA].filter((t) => tokB.has(t)).length;
+          const union = new Set([...tokA, ...tokB]).size;
+          similarity = union > 0 ? intersection / union : 0;
+          accepted = similarity >= 0.5;
+        }
+        json(200, { transcript, similarity: parseFloat(similarity.toFixed(3)), accepted });
+      } catch (err: any) {
+        json(500, { error: { code: "STT_ERROR", message: err.message } });
+      }
+      return;
+    }
+
+    // Wake-event broadcast: Python listener POSTs here when it detects the wake phrase.
+    // We DO NOT execute the phrase as a goal — we just notify connected UI clients
+    // (macOS app) so they can show the listening bubble + open command capture.
+    if (req.method === "POST" && requestPath === "/api/wake/event") {
+      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const text = Buffer.concat(chunks).toString("utf8") || "{}";
+        const raw = JSON.parse(text || "{}");
+        const phrase = String(raw?.phrase ?? "hey mimi");
+        const score = typeof raw?.score === "number" ? raw.score : 0;
+        const engine = String(raw?.engine ?? "personal");
+        // Cast to any: keeping the protocol type addition out of shared/ for now.
+        this.broadcast({
+          type: "voice.wake",
+          phrase,
+          score,
+          engine,
+          timestamp: Date.now(),
+        } as any);
+        json(200, { ok: true });
+      } catch (err) {
+        json(400, { error: String(err instanceof Error ? err.message : err) });
+      }
+      return;
+    }
+
     json(404, { error: { code: "NOT_FOUND", message: "Route not found" } });
   }
 
@@ -604,7 +874,8 @@ export class OmniStateGateway {
     }
 
     const host = endpoint.hostname || "127.0.0.1";
-    const port = Number(endpoint.port || "19801");
+    const envPort = Number(process.env.OMNISTATE_SIRI_BRIDGE_PORT);
+    const port = Number.isInteger(envPort) && envPort > 0 ? envPort : Number(endpoint.port || "19801");
     const path = endpoint.pathname && endpoint.pathname !== "/" ? endpoint.pathname : "/siri/command";
 
     const server = createServer((req, res) => {
@@ -885,6 +1156,35 @@ export class OmniStateGateway {
           error: "Voice clone provider request failed",
           details: err?.message ?? String(err),
         });
+      }
+      return;
+    }
+    // POST /api/tts/preview — synthesize text to MP3 using Edge TTS
+    if (req.method === "POST" && requestPath === "/api/tts/preview") {
+      if (!isLocalRequest) { jsonResponse(res, 403, { error: "Only local requests are allowed" }); return; }
+      const body = await parseBody(req);
+      const text = String(body?.text ?? "").trim();
+      const voiceOverride = body?.voice ? String(body.voice) : undefined;
+
+      if (!text) {
+        jsonResponse(res, 400, { error: { code: "MISSING_TEXT", message: "Missing text" } });
+        return;
+      }
+      if (text.length > 500) {
+        jsonResponse(res, 400, { error: { code: "TEXT_TOO_LONG", message: "text must be ≤ 500 characters" } });
+        return;
+      }
+
+      try {
+        const lang = edgeTtsDetectLanguage(text);
+        const ttsCfg = loadLlmRuntimeConfig().voice;
+        const voice = voiceOverride ?? edgeTtsPickVoice(lang, ttsCfg);
+        const audioBuf = await edgeTtsSynthesize(text, { voice, lang });
+        applyCorsHeaders(res, origin);
+        applySecurityHeaders(res);
+        jsonResponse(res, 200, { audio: audioBuf.toString("base64"), voice });
+      } catch (err: any) {
+        jsonResponse(res, 500, { error: { code: "TTS_FAILED", message: err?.message ?? String(err) } });
       }
       return;
     }
@@ -1248,7 +1548,7 @@ export class OmniStateGateway {
           if (requestPath === "/voice/enroll") {
             const userId = (body.userId ?? "owner").trim();
             const displayName = (body.displayName ?? userId).trim();
-            const threshold = typeof body.threshold === "number" ? body.threshold : 0.85;
+            const threshold = Math.min(0.95, Math.max(0.5, typeof body.threshold === "number" ? body.threshold : 0.85));
 
             const { stdout } = await execFileAsync(pythonBin, [
               speechbrainScriptPath,
@@ -1341,9 +1641,19 @@ export class OmniStateGateway {
 
     wsConnectionsGauge.inc();
 
-    ws.on("message", (raw) => {
+    ws.on("message", (raw, isBinary) => {
+      if (isBinary) {
+        const client = this.clients.get(clientId);
+        const sessionId = (client as any)._activeStreamSession as string | undefined;
+        if (sessionId) {
+          this.voiceStreamManager.handleBinaryFrame(clientId, raw as Buffer, (msg) => {
+            this.safeSend(ws, msg as unknown as ServerMessage);
+          });
+        }
+        return;
+      }
       try {
-        const msg: ClientMessage = JSON.parse(raw.toString());
+        const msg: ClientMessage = JSON.parse((raw as Buffer).toString());
         this.handleMessage(clientId, ws, msg, remoteIp, isLocalhost).catch((err) => {
           ws.send(
             JSON.stringify({
@@ -1372,6 +1682,9 @@ export class OmniStateGateway {
 
     ws.on("close", () => {
       clearInterval(pingInterval);
+      const userId = this.clients.get(clientId)?.userId;
+      if (userId) cleanupEnrollSession(userId);
+      this.voiceStreamManager.dropSession(clientId);
       this.clients.delete(clientId);
       wsConnectionsGauge.dec();
     });
@@ -1411,7 +1724,7 @@ export class OmniStateGateway {
             "system.dashboard",
             "history.query",
             "runtime.config",
-            "voice.transcribe",
+            "voice.stream",
             "triggers",
             "fleet",
             "llm.preflight",
@@ -1538,6 +1851,24 @@ export class OmniStateGateway {
             });
             if (this.taskHistory.length > 100) this.taskHistory.pop();
             incrementSessionUsage();
+
+            // Emit Edge TTS audio if provider is "edge" (default)
+            const ttsRuntime = loadLlmRuntimeConfig();
+            if (llm.text && (ttsRuntime.voice.tts?.provider ?? "edge") === "edge") {
+              edgeTtsSynthesize(llm.text).then((audioBuf) => {
+                this.safeSend(ws, {
+                  type: "voice.tts.chunk",
+                  sessionId: taskId,
+                  seq: 0,
+                  audio: audioBuf.toString("base64"),
+                  mime: "audio/mpeg",
+                  eos: true,
+                } as ServerMessage);
+              }).catch((ttsErr) => {
+                logger.warn({ err: ttsErr }, "[OmniState] Edge TTS synthesis failed");
+              });
+            }
+
             return;
           } catch (err) {
             const fallback = this.fallbackUserFacingOutput(taskGoal, "system-query") ?? "Mình đã nhận câu hỏi, nhưng hiện tại chưa lấy được câu trả lời từ model.";
@@ -1579,93 +1910,74 @@ export class OmniStateGateway {
         break;
       }
 
-      case "voice.transcribe": {
-        const { id, audio, format: _format } = msg;
-        try {
-          // Decode base64 audio and run configured voice provider chain.
-          const audioBuffer = Buffer.from(audio, "base64");
-          const runtime = loadLlmRuntimeConfig();
-          const voice = runtime.voice;
+      case "voice.wake.enable": {
+        const { enabled } = msg;
+        const savedConfig = setWakeField("enabled", Boolean(enabled));
+        const runtime = loadLlmRuntimeConfig();
+        if (enabled) {
+          this.wakeManager.start({
+            config: savedConfig.voice.wake,
+            endpoint: runtime.voice.siri.endpoint,
+            token: runtime.voice.siri.token,
+          });
+        } else {
+          this.wakeManager.stop();
+        }
+        break;
+      }
 
-          const dedupedProviders = [
-            voice.primaryProvider,
-            ...voice.fallbackProviders,
-          ].filter((p, i, arr) => arr.indexOf(p) === i);
-          const orderedProviders = voice.lowLatency
-            ? (["native", ...dedupedProviders.filter((p) => p !== "native")] as Array<
-                "native" | "whisper-local" | "whisper-cloud"
-              >)
-            : dedupedProviders;
+      case "voice.stream.start": {
+        const { sessionId } = msg;
+        // Track the active stream session ID on the client entry for binary frame routing
+        const clientEntry = this.clients.get(clientId);
+        if (clientEntry) (clientEntry as any)._activeStreamSession = sessionId;
 
-          let transcript = "";
-          let usedProvider = "";
-
-          try {
-            // Low-latency mode races providers and takes first non-empty transcript.
-            const fastest = await Promise.any(
-              orderedProviders.map(async (provider) => {
-                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
-                const text = result.text.trim();
-                if (!text) throw new Error(`empty transcript from ${provider}`);
-                return { text, provider };
-              }),
-            );
-            transcript = fastest.text;
-            usedProvider = fastest.provider;
-          } catch {
-            // If race fails, retry sequentially through provider chain.
-            for (const provider of orderedProviders) {
-              try {
-                const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
-                const text = result.text.trim();
-                if (text) {
-                  transcript = text;
-                  usedProvider = provider;
-                  break;
-                }
-              } catch {
-                // try next provider
-              }
-            }
-          }
-
-          if (transcript) {
-            this.safeSend(ws, { type: "voice.transcript", id, text: transcript });
-
+        // Single intercept send: forward all stream messages, and on `final`
+        // transcripts auto-execute the task pipeline if configured.
+        const interceptSend = (streamMsg: any) => {
+          this.safeSend(ws, streamMsg as unknown as ServerMessage);
+          if (streamMsg.type === "voice.stream.result" && streamMsg.kind === "final" && streamMsg.text) {
+            const voice = loadLlmRuntimeConfig().voice;
             const shouldAutoExecute =
               voice.autoExecuteTranscript &&
               !(voice.siri.enabled && voice.siri.mode === "handoff");
-
             if (shouldAutoExecute) {
-              const goal = usedProvider
-                ? `${transcript}`
-                : transcript;
-              const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
-              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal });
-              this.executeTaskPipeline(voiceTaskId, goal, undefined, ws).catch(
-                (err) => {
-                  this.safeSend(ws, {
-                    type: "task.error",
-                    taskId: voiceTaskId,
-                    error: err instanceof Error ? err.message : String(err),
-                  });
-                }
-              );
+              const voiceTaskId = `voice-${sessionId}-${crypto.randomUUID()}`;
+              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: streamMsg.text });
+              this.executeTaskPipeline(voiceTaskId, streamMsg.text, undefined, ws).catch((err) => {
+                this.safeSend(ws, {
+                  type: "task.error",
+                  taskId: voiceTaskId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              });
             }
-          } else {
-            this.safeSend(ws, {
-              type: "voice.error",
-              id,
-              error: "Could not transcribe audio",
-            });
           }
-        } catch (err: any) {
-          this.safeSend(ws, {
-            type: "voice.error",
-            id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        };
+        this.voiceStreamManager.handleControlMessage(
+          clientId,
+          { type: "voice.stream.start", sessionId, mimeType: "audio/pcm", sampleRate: msg.sampleRate ?? 16000 },
+          interceptSend,
+          this.clients.get(clientId)?.userId ?? undefined,
+        );
+        break;
+      }
+
+      case "voice.stream.stop": {
+        const { sessionId } = msg;
+        const clientEntry = this.clients.get(clientId);
+        if (clientEntry) delete (clientEntry as any)._activeStreamSession;
+        this.voiceStreamManager.handleControlMessage(
+          clientId,
+          { type: "voice.stream.stop", sessionId },
+          (streamMsg) => this.safeSend(ws, streamMsg as unknown as ServerMessage),
+        );
+        break;
+      }
+
+      case "tts.cancel": {
+        const client = this.clients.get(clientId);
+        client?.ttsAbort?.abort();
         break;
       }
 
@@ -1771,6 +2083,7 @@ export class OmniStateGateway {
           this.monitor.runCheck().then((report) => {
             const reply: ServerMessage = {
               type: "health.report",
+              status: report.overall,
               overall: report.overall,
               timestamp: report.timestamp,
               sensors: report.sensors as Record<string, { status: string; value: number; unit: string; message?: string }>,
@@ -1781,7 +2094,14 @@ export class OmniStateGateway {
             this.safeSend(ws, { type: "error", message: "Health check failed" });
           });
         } else {
-          this.safeSend(ws, { type: "error", message: "Health monitor not available" });
+          this.safeSend(ws, {
+            type: "health.report",
+            status: "unknown",
+            overall: "unknown",
+            timestamp: new Date().toISOString(),
+            sensors: {},
+            alerts: [],
+          } as ServerMessage);
         }
         break;
       }
@@ -1835,6 +2155,11 @@ export class OmniStateGateway {
               handled = true;
               config = updateActiveProviderField("apiKey", String(msg.value));
               break;
+            case "voice.whisperLocalModel":
+              handled = true;
+              config = setWhisperLocalModel(String(msg.value) as import("../llm/runtime-config.js").WhisperLocalModel);
+              whisperLocalClient.setModel(config.voice.whisperLocalModel);
+              break;
             case "voice.lowLatency":
               handled = true;
               config = setVoiceField("lowLatency", Boolean(msg.value));
@@ -1846,6 +2171,15 @@ export class OmniStateGateway {
             case "voice.wake.enabled":
               handled = true;
               config = setWakeField("enabled", Boolean(msg.value));
+              if (Boolean(msg.value)) {
+                this.wakeManager.start({
+                  config: config.voice.wake,
+                  endpoint: config.voice.siri.endpoint,
+                  token: config.voice.siri.token,
+                });
+              } else {
+                this.wakeManager.stop();
+              }
               break;
             case "voice.wake.phrase":
               handled = true;
@@ -2114,6 +2448,27 @@ export class OmniStateGateway {
           await this.claudeCodeResponder.stop();
         }
         this.safeSend(ws, { type: "permission.status", running: false } as unknown as ServerMessage);
+        break;
+      }
+
+      case "tools.list": {
+        const { TOOLS: toolDefs } = await import("../llm/tools.js");
+        const { intentRegistry: registry } = await import("../intents/index.js");
+        const tools = toolDefs.map((t: { name: string; description: string }) => ({
+          name: t.name,
+          description: t.description,
+          group: t.name.split(".")[0] ?? "other",
+        }));
+        const allKeys = [...(registry as any).handlers.keys()] as string[];
+        const skills = allKeys.map((k: string) => ({
+          name: k,
+          group: k.split(".")[0] ?? "other",
+        }));
+        this.safeSend(ws, {
+          type: "tools.report",
+          tools,
+          skills,
+        } as unknown as ServerMessage);
         break;
       }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 
 // Mock getClient to avoid real WebSocket connections
 vi.mock("../../src/hooks/useGateway", () => ({
@@ -58,25 +58,18 @@ describe("OnboardingWizard", () => {
     }
   });
 
-  it("calls onComplete when Get Started is clicked on last step", () => {
-    render(<OnboardingWizard onComplete={onComplete} />);
-    // Navigate to last step by clicking Next repeatedly
-    let nextBtn = screen.queryByText(/next|continue/i);
-    let iterations = 0;
-    while (nextBtn && iterations < 5) {
+  it("keeps completion gated until required voice enrollment", () => {
+    const { container } = render(<OnboardingWizard onComplete={onComplete} />);
+    const wizard = container.firstElementChild as HTMLElement;
+
+    for (let i = 0; i < 2; i++) {
+      const nextBtn = within(wizard).getByRole("button", { name: /next/i });
       fireEvent.click(nextBtn);
-      nextBtn = screen.queryByText(/next|continue/i);
-      iterations++;
     }
-    // At the last step, there should be a "Get Started" button
-    const getStarted = screen.queryByText(/get started/i);
-    if (getStarted) {
-      fireEvent.click(getStarted);
-      expect(onComplete).toHaveBeenCalled();
-    } else {
-      // It's fine — the step label may differ; just verify no crash
-      expect(true).toBe(true);
-    }
+
+    const gatedNext = within(wizard).getByRole("button", { name: /next/i });
+    expect(gatedNext).toBeDisabled();
+    expect(onComplete).not.toHaveBeenCalled();
   });
 
   it("does not crash when rendered without onNavigateToVoice", () => {

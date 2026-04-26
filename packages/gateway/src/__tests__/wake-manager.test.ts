@@ -14,7 +14,7 @@ vi.mock("node:path", () => ({
   resolve: (...args: string[]) => args.join("/"),
 }));
 vi.mock("../utils/logger.js", () => ({
-  logger: { warn: vi.fn(), info: vi.fn() },
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 // Import AFTER mocks are set up
@@ -50,9 +50,12 @@ afterEach(() => {
 });
 
 describe("WakeManager — engine routing", () => {
-  it("spawns wake_listener_oww.py when engine=oww (default)", () => {
+  it("spawns wake_listener_oww.py when engine=oww and modelPath is set", () => {
     const manager = new WakeManager();
-    manager.start({ ...BASE_OPTIONS, config: { ...BASE_OPTIONS.config, engine: "oww" } });
+    manager.start({
+      ...BASE_OPTIONS,
+      config: { ...BASE_OPTIONS.config, engine: "oww", modelPath: "/models/hey_mimi.onnx" },
+    });
 
     expect(spawn).toHaveBeenCalledOnce();
     const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
@@ -71,23 +74,23 @@ describe("WakeManager — engine routing", () => {
     expect(scriptArg).not.toContain("_oww");
   });
 
-  it("uses oww by default when engine field is absent", () => {
+  it("refuses to start (no spawn) when engine=oww but no model is available", () => {
     const manager = new WakeManager();
-    manager.start(BASE_OPTIONS);
-
-    const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
-    expect((spawnArgs as string[])[0]).toContain("wake_listener_oww.py");
+    manager.start(BASE_OPTIONS); // no modelPath, no env var → logger.error + return
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 
 describe("WakeManager — oww arg passing", () => {
+  const OWW_OPTIONS = {
+    ...BASE_OPTIONS,
+    config: { ...BASE_OPTIONS.config, engine: "oww" as const, modelPath: "/models/hey_mimi.onnx" },
+  };
+
   it("passes --aliases JSON to oww script", () => {
     const manager = new WakeManager();
     const aliases = ["mimi", "hey mimi", "ok mimi"];
-    manager.start({
-      ...BASE_OPTIONS,
-      config: { ...BASE_OPTIONS.config, engine: "oww", aliases },
-    });
+    manager.start({ ...OWW_OPTIONS, config: { ...OWW_OPTIONS.config, aliases } });
 
     const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
     const args = spawnArgs as string[];
@@ -98,10 +101,7 @@ describe("WakeManager — oww arg passing", () => {
 
   it("passes --threshold to oww script", () => {
     const manager = new WakeManager();
-    manager.start({
-      ...BASE_OPTIONS,
-      config: { ...BASE_OPTIONS.config, engine: "oww", threshold: 0.7 },
-    });
+    manager.start({ ...OWW_OPTIONS, config: { ...OWW_OPTIONS.config, threshold: 0.7 } });
 
     const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
     const args = spawnArgs as string[];
@@ -112,10 +112,7 @@ describe("WakeManager — oww arg passing", () => {
 
   it("passes --model-path when modelPath is set", () => {
     const manager = new WakeManager();
-    manager.start({
-      ...BASE_OPTIONS,
-      config: { ...BASE_OPTIONS.config, engine: "oww", modelPath: "/models/hey_mimi.onnx" },
-    });
+    manager.start(OWW_OPTIONS);
 
     const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
     const args = spawnArgs as string[];
@@ -124,29 +121,39 @@ describe("WakeManager — oww arg passing", () => {
     expect(args[idx + 1]).toBe("/models/hey_mimi.onnx");
   });
 
-  it("omits --model-path when modelPath is not set", () => {
+  it("omits --model-path when engine=oww without modelPath (refuses to start)", () => {
     const manager = new WakeManager();
-    manager.start({
-      ...BASE_OPTIONS,
-      config: { ...BASE_OPTIONS.config, engine: "oww" },
-    });
-
-    const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
-    expect((spawnArgs as string[]).includes("--model-path")).toBe(false);
+    // no modelPath → engine=oww refuses to start; spawn never called
+    manager.start({ ...BASE_OPTIONS, config: { ...BASE_OPTIONS.config, engine: "oww" } });
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 
 describe("WakeManager — legacy arg passing", () => {
-  it("does NOT pass --aliases or --threshold to legacy script", () => {
+  it("passes --aliases (comma-separated) to legacy script", () => {
     const manager = new WakeManager();
+    const aliases = ["mimi", "hey mimi", "ok mimi"];
     manager.start({
       ...BASE_OPTIONS,
-      config: { ...BASE_OPTIONS.config, engine: "legacy", aliases: ["mimi"], threshold: 0.6 },
+      config: { ...BASE_OPTIONS.config, engine: "legacy", aliases },
     });
 
     const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
     const args = spawnArgs as string[];
-    expect(args.includes("--aliases")).toBe(false);
+    const aliasIdx = args.indexOf("--aliases");
+    expect(aliasIdx).toBeGreaterThan(-1);
+    expect(args[aliasIdx + 1]).toBe(aliases.join(","));
+  });
+
+  it("does not pass --threshold to legacy script", () => {
+    const manager = new WakeManager();
+    manager.start({
+      ...BASE_OPTIONS,
+      config: { ...BASE_OPTIONS.config, engine: "legacy", threshold: 0.6 },
+    });
+
+    const [, spawnArgs] = vi.mocked(spawn).mock.calls[0]!;
+    const args = spawnArgs as string[];
     expect(args.includes("--threshold")).toBe(false);
   });
 });
@@ -158,10 +165,11 @@ describe("WakeManager — lifecycle", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("does not spawn when token is empty", () => {
+  it("starts in dry-run mode when token is empty (does not skip)", () => {
     const manager = new WakeManager();
-    manager.start({ ...BASE_OPTIONS, token: "" });
-    expect(spawn).not.toHaveBeenCalled();
+    // Use engine=legacy so spawn is reached even without a model path
+    manager.start({ ...BASE_OPTIONS, token: "", config: { ...BASE_OPTIONS.config, engine: "legacy" } });
+    expect(spawn).toHaveBeenCalledOnce();
   });
 
   it("does not spawn when script is missing", () => {
@@ -176,7 +184,8 @@ describe("WakeManager — lifecycle", () => {
     vi.mocked(spawn).mockReturnValue(fakeChild as unknown as ReturnType<typeof spawn>);
 
     const manager = new WakeManager();
-    manager.start(BASE_OPTIONS);
+    // Use legacy engine so spawn is reached without needing a model file
+    manager.start({ ...BASE_OPTIONS, config: { ...BASE_OPTIONS.config, engine: "legacy" } });
     manager.stop();
 
     expect(fakeChild.kill).toHaveBeenCalledWith("SIGTERM");

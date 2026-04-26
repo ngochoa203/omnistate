@@ -25,6 +25,12 @@ interface AuthState {
   enrollmentName: string;
   enrollmentLanguage: string;
 
+  // Token for gateway auth
+  accessToken: string | null;
+
+  // Legacy user shape (display only)
+  user: { displayName?: string; email?: string } | null;
+
   // Actions
   setCurrentProfile: (profile: VoiceProfile) => void;
   setProfiles: (profiles: VoiceProfile[]) => void;
@@ -71,6 +77,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   isEnrolled: getStoredProfile()?.isEnrolled ?? false,
   isListening: false,
   isIdentifying: false,
+  accessToken: null,
+  user: null,
 
   enrollmentStep: 0,
   enrollmentSamples: 0,

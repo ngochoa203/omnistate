@@ -2,6 +2,7 @@
 import argparse
 import os
 import sys
+import numpy as np
 
 
 def resolve_model_paths(repo_dir: str):
@@ -20,6 +21,8 @@ def main() -> int:
     parser.add_argument("--text", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--language", default="vi")
+    parser.add_argument("--embedding", default=None,
+                        help="Path to pre-computed speaker-embedding.npy; skips re-encoding if present")
     args = parser.parse_args()
 
     repo_dir = os.path.abspath(args.repo)
@@ -46,8 +49,13 @@ def main() -> int:
     synthesizer = Synthesizer(model_paths["synthesizer"])
     vocoder.load_model(model_paths["vocoder"])
 
-    wav = preprocess_wav(args.speaker)
-    embed = encoder.embed_utterance(wav)
+    # Prefer pre-saved embedding (fast, consistent voice); fall back to re-encoding the wav.
+    embedding_path = os.path.abspath(args.embedding) if args.embedding else None
+    if embedding_path and os.path.isfile(embedding_path):
+        embed = np.load(embedding_path)
+    else:
+        wav = preprocess_wav(args.speaker)
+        embed = encoder.embed_utterance(wav)
 
     specs = synthesizer.synthesize_spectrograms([args.text], [embed])
     generated_wav = vocoder.infer_wave(specs[0])

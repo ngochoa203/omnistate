@@ -1,6 +1,14 @@
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 export type MessageHandler = (msg: any) => void;
 
+export interface TtsChunkEvent {
+  sessionId: string;
+  seq: number;
+  audio: ArrayBuffer;
+  mime: string;
+  eos: boolean;
+}
+
 /** Token will expire within this many seconds — fire onTokenExpiring */
 const TOKEN_EXPIRY_WARNING_SECONDS = 60 * 60 * 24; // 24 hours
 
@@ -38,6 +46,8 @@ export class GatewayClientCore {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _state: ConnectionState = "disconnected";
   private onStateChange?: (state: ConnectionState) => void;
+  private ttsChunkHandlers = new Set<(evt: TtsChunkEvent) => void>();
+  private transcriptHandlers = new Set<(msg: any) => void>();
 
   constructor(options: GatewayClientOptions) {
     this.url = options.url;
@@ -108,6 +118,29 @@ export class GatewayClientCore {
           this.onTokenExpiring?.();
         }
 
+        // Streaming TTS chunk (Phase 5 protocol)
+        if (msg.type === "voice.tts.chunk") {
+          const raw = msg.audio as string;
+          const binaryStr = atob(raw);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          const evt: TtsChunkEvent = {
+            sessionId: msg.sessionId as string,
+            seq: msg.seq as number,
+            audio: bytes.buffer,
+            mime: (msg.mime as string) ?? "audio/mpeg",
+            eos: Boolean(msg.eos),
+          };
+          this.ttsChunkHandlers.forEach((h) => { try { h(evt); } catch { /* ignore */ } });
+        }
+
+        // Transcript events
+        if (msg.type === "voice.transcript" || msg.type === "transcript") {
+          this.transcriptHandlers.forEach((h) => { try { h(msg); } catch { /* ignore */ } });
+        }
+
         this.emit(msg.type, msg);
         this.emit("*", msg);
       } catch {
@@ -150,8 +183,38 @@ export class GatewayClientCore {
     this.send({ type: "task", goal, layer });
   }
 
-  sendVoice(audioBase64: string): void {
-    this.send({ type: "voice.transcribe", audio: audioBase64, format: "wav" });
+  /**
+   * Announce a new voice stream session to the server, then send raw audio
+   * chunks as binary WebSocket frames, and finally signal end of stream.
+   */
+  startVoiceStream(sessionId: string): void {
+    this.send({ type: "voice.stream.start", sessionId });
+  }
+
+  sendAudioChunk(buf: ArrayBuffer | Uint8Array): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(buf);
+    }
+  }
+
+  stopVoiceStream(sessionId: string): void {
+    this.send({ type: "voice.stream.stop", sessionId });
+  }
+
+  cancelTts(sessionId: string): void {
+    this.send({ type: "tts.cancel", sessionId });
+  }
+
+  /** Register a handler for decoded TTS audio chunks (Phase 5 streaming). */
+  onTtsChunk(handler: (evt: TtsChunkEvent) => void): () => void {
+    this.ttsChunkHandlers.add(handler);
+    return () => this.ttsChunkHandlers.delete(handler);
+  }
+
+  /** Register a handler for transcript events from the server. */
+  onTranscript(handler: (msg: any) => void): () => void {
+    this.transcriptHandlers.add(handler);
+    return () => this.transcriptHandlers.delete(handler);
   }
 
   on(type: string, handler: MessageHandler): () => void {

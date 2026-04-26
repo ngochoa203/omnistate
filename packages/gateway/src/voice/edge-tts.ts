@@ -53,8 +53,17 @@ export function sanitizeForTts(input: string): string {
   // Variation selectors / zero-width joiners
   text = text.replace(/[‍️]/g, "");
 
-  // Collapse runs of standalone punctuation (e.g. "!!!" or "-- --")
+  // Collapse runs of same punctuation (e.g. "!!!" → "!")
   text = text.replace(/([!?.,;:])\1{1,}/g, "$1");
+
+  // Collapse 2+ dots or ellipsis (…) to a single space — e.g. "word...." or "word … …"
+  text = text.replace(/(\.|…){2,}/g, " ");
+
+  // Remove isolated punctuation tokens surrounded by whitespace or at string boundaries
+  text = text.replace(/(^|\s)[.,;:!?…]+(\s|$)/g, " ");
+
+  // Strip trailing punctuation / whitespace at end of string
+  text = text.replace(/[\s\p{P}]+$/u, "");
 
   // Strip leading lone punctuation
   text = text.replace(/^[\s\p{P}\p{S}]+/u, "");
@@ -85,7 +94,7 @@ export function pickVoice(
 
 export async function synthesize(
   text: string,
-  opts?: { voice?: string; lang?: "vi" | "en" },
+  opts?: { voice?: string; lang?: "vi" | "en"; signal?: AbortSignal },
 ): Promise<Buffer> {
   const cleanText = sanitizeForTts(text);
   if (!cleanText) {
@@ -105,7 +114,7 @@ export async function synthesize(
     await execFileAsync(
       getPythonExec(),
       [edgeTtsScriptPath, "--text", cleanText, "--voice", voice, "--output", outPath],
-      { timeout: 60_000, maxBuffer: 1024 * 1024 * 16 },
+      { timeout: 60_000, maxBuffer: 1024 * 1024 * 16, signal: opts?.signal },
     );
     const buf = await readFile(outPath);
     return buf;

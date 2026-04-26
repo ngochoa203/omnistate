@@ -15,7 +15,9 @@ export type ClientMessage =
   | RuntimeConfigUpsertProviderMessage
   | StatusQueryMessage
   | AdminShutdownMessage
-  | VoiceTranscribeMessage
+  | VoiceStreamStartMessage
+  | VoiceStreamStopMessage
+  | TtsCancelMessage
   | VoiceEnrollMessage
   | VoiceVerifyMessage
   | SystemDashboardMessage
@@ -28,7 +30,18 @@ export type ClientMessage =
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage;
+  | PermissionStopMessage
+  | VoiceWakeEnableMessage
+  | ToolsListMessage;
+
+export interface ToolsListMessage {
+  type: "tools.list";
+}
+
+export interface VoiceWakeEnableMessage {
+  type: "voice.wake.enable";
+  enabled: boolean;
+}
 
 export interface ConnectMessage {
   type: "connect";
@@ -143,13 +156,24 @@ export interface AdminShutdownMessage {
   type: "admin.shutdown";
 }
 
-export interface VoiceTranscribeMessage {
-  type: "voice.transcribe";
-  id: string;
-  /** Base64-encoded audio data. */
-  audio: string;
-  /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
-  format?: string;
+/** Begin a streaming voice session. Binary WS frames carrying PCM16 will be associated with this sessionId. */
+export interface VoiceStreamStartMessage {
+  type: "voice.stream.start";
+  sessionId: string;
+  sampleRate: 16000;
+  codec: "pcm16";
+}
+
+/** End a streaming voice session; triggers final STT processing. */
+export interface VoiceStreamStopMessage {
+  type: "voice.stream.stop";
+  sessionId: string;
+}
+
+/** Cancel in-progress TTS playback for a session. */
+export interface TtsCancelMessage {
+  type: "tts.cancel";
+  sessionId: string;
 }
 
 export interface VoiceEnrollMessage {
@@ -198,7 +222,9 @@ export type ServerMessage =
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage;
+  | PermissionStatusMessage
+  | VoiceTtsChunkMessage
+  | ToolsReportMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -245,7 +271,18 @@ export interface TaskVerifyMessage {
 export interface TaskCompleteMessage {
   type: "task.complete";
   taskId: string;
-  result: Record<string, unknown>;
+  result: {
+    /** Primary output text (backward-compatible). */
+    output?: string;
+    /** Spoken response text for voice clients. Mirrors output when set from StructuredResponse. */
+    speak?: string;
+    /** Structured UI payload for rich clients. */
+    ui?: Record<string, unknown>;
+    /** Suggested follow-up prompts. */
+    followup?: string[];
+    /** Arbitrary additional data from the handler. */
+    [key: string]: unknown;
+  };
 }
 
 export interface TaskErrorMessage {
@@ -325,13 +362,16 @@ export interface StatusReplyMessage {
 
 export interface VoiceTranscriptMessage {
   type: "voice.transcript";
-  id: string;
+  sessionId: string;
+  kind: "partial" | "final";
   text: string;
+  t0: number;
+  t1: number;
 }
 
 export interface VoiceErrorMessage {
   type: "voice.error";
-  id: string;
+  sessionId: string;
   error: string;
 }
 
@@ -450,4 +490,20 @@ export interface PermissionHistoryResultMessage {
 export interface PermissionStatusMessage {
   type: "permission.status";
   running: boolean;
+}
+
+/** Streaming TTS audio chunk from server to client (coordinates with TTS agent). */
+export interface VoiceTtsChunkMessage {
+  type: "voice.tts.chunk";
+  sessionId: string;
+  seq: number;
+  audio: string;  // base64-encoded audio
+  mime: string;
+  eos: boolean;
+}
+
+export interface ToolsReportMessage {
+  type: "tools.report";
+  tools: Array<{ name: string; description: string; group: string }>;
+  skills: Array<{ name: string; group: string }>;
 }

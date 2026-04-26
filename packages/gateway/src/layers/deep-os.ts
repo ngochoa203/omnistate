@@ -292,6 +292,47 @@ export interface PartitionInfo {
 }
 
 // ------------------------------------------------------------------
+// UC-B16: WiFi Pentest & Security Auditing
+// ------------------------------------------------------------------
+
+export interface WiFiScanResult {
+  ssid: string;
+  bssid: string;
+  rssi: number;
+  channel: number;
+  security: string;
+}
+
+export interface HostScanResult {
+  ip: string;
+  hostname: string | null;
+  mac: string | null;
+  alive: boolean;
+}
+
+export interface PortScanResult {
+  port: number;
+  state: "open" | "closed" | "filtered";
+  service: string | null;
+}
+
+export interface SecurityAuditResult {
+  openPorts: PortInfo[];
+  firewallStatus: FirewallStatus;
+  wifiSecurity: string | null;
+  sshEnabled: boolean;
+  remoteLoginEnabled: boolean;
+  recommendations: string[];
+}
+
+export interface ToolAvailability {
+  name: string;
+  available: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+// ------------------------------------------------------------------
 // DeepOSLayer class
 // ------------------------------------------------------------------
 
@@ -2680,5 +2721,263 @@ ${envVarsXml}
     if (shell.includes("fish")) return `${home}/.config/fish/config.fish`;
     // Default fallback
     return `${home}/.profile`;
+  }
+
+  // ================================================================
+  // UC-B16: WiFi Pentest & Security Auditing
+  // ================================================================
+
+  async scanWiFiNetworks(): Promise<WiFiScanResult[]> {
+    try {
+      if (this.deep.platform === "macos") {
+        const airportPath =
+          "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+        const { stdout } = await this.deep.execAsync(`"${airportPath}" -s`);
+        const lines = stdout.split("\n").slice(1).filter((l) => l.trim());
+        return lines.map((line) => {
+          const parts = line.trim().split(/\s+/);
+          return {
+            ssid: parts[0] ?? "",
+            bssid: parts[1] ?? "",
+            rssi: parseInt(parts[2] ?? "0", 10),
+            channel: parseInt(parts[3] ?? "0", 10),
+            security: parts.slice(6).join(" ") || "NONE",
+          };
+        });
+      } else {
+        const { stdout } = await this.deep.execAsync("nmcli device wifi list");
+        const lines = stdout.split("\n").slice(1).filter((l) => l.trim());
+        return lines.map((line) => {
+          const parts = line.trim().split(/\s{2,}/);
+          return {
+            ssid: parts[1] ?? "",
+            bssid: parts[0]?.replace("* ", "") ?? "",
+            rssi: parseInt(parts[6] ?? "0", 10),
+            channel: parseInt(parts[4] ?? "0", 10),
+            security: parts[7] ?? "NONE",
+          };
+        });
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  async getWiFiDetails(): Promise<Record<string, string>> {
+    try {
+      if (this.deep.platform === "macos") {
+        const airportPath =
+          "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+        const { stdout } = await this.deep.execAsync(`"${airportPath}" -I`);
+        const result: Record<string, string> = {};
+        for (const line of stdout.split("\n")) {
+          const idx = line.indexOf(":");
+          if (idx !== -1) {
+            const key = line.slice(0, idx).trim();
+            const val = line.slice(idx + 1).trim();
+            if (key) result[key] = val;
+          }
+        }
+        return result;
+      } else {
+        const { stdout } = await this.deep.execAsync(
+          "nmcli -t -f active,ssid,bssid,signal,chan,security device wifi list"
+        );
+        const result: Record<string, string> = {};
+        for (const line of stdout.split("\n")) {
+          if (line.startsWith("yes:")) {
+            const [, ssid, bssid, signal, chan, security] = line.split(":");
+            result["SSID"] = ssid ?? "";
+            result["BSSID"] = bssid ?? "";
+            result["signal"] = signal ?? "";
+            result["channel"] = chan ?? "";
+            result["security"] = security ?? "";
+          }
+        }
+        return result;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  async enableMonitorMode(channel = 1): Promise<boolean> {
+    try {
+      if (this.deep.platform !== "macos") return false;
+      const airportPath =
+        "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+      await this.deep.execAsync(`sudo "${airportPath}" sniff ${channel}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async disableMonitorMode(): Promise<boolean> {
+    try {
+      await this.deep.execAsync(
+        "sudo pkill -f 'airport sniff' 2>/dev/null; sudo killall airport 2>/dev/null; true"
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async capturePackets(
+    iface: string,
+    filter: string,
+    duration: number,
+    outFile: string
+  ): Promise<{ success: boolean; packetCount: number }> {
+    try {
+      const { stdout } = await this.deep.execAsync(
+        `sudo tcpdump -i ${iface} -c 1000 -w ${outFile} ${filter} 2>&1`,
+        duration * 1000
+      );
+      const match = stdout.match(/(\d+)\s+packets? captured/);
+      return { success: true, packetCount: match ? parseInt(match[1]!, 10) : 0 };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const match = msg.match(/(\d+)\s+packets? captured/);
+      return { success: false, packetCount: match ? parseInt(match[1]!, 10) : 0 };
+    }
+  }
+
+  async scanHosts(subnet: string): Promise<HostScanResult[]> {
+    try {
+      const { stdout: whichOut } = await this.deep.execAsync(
+        "which nmap 2>/dev/null"
+      );
+      if (whichOut.trim()) {
+        const { stdout } = await this.deep.execAsync(
+          `nmap -sn ${subnet} 2>/dev/null`
+        );
+        const results: HostScanResult[] = [];
+        const blocks = stdout.split("Nmap scan report for ").slice(1);
+        for (const block of blocks) {
+          const lines = block.split("\n");
+          const header = lines[0]?.trim() ?? "";
+          const ipMatch = header.match(/\(([^)]+)\)/);
+          const ip = ipMatch ? ipMatch[1]! : header;
+          const hostname = ipMatch ? header.replace(/ \([^)]+\)/, "") : null;
+          const macLine = lines.find((l) => l.includes("MAC Address:"));
+          const mac = macLine
+            ? (macLine.match(/MAC Address: ([0-9A-F:]+)/i)?.[1] ?? null)
+            : null;
+          results.push({ ip, hostname, mac, alive: true });
+        }
+        return results;
+      }
+      // Fallback: arp -a
+      const { stdout: arpOut } = await this.deep.execAsync("arp -a 2>/dev/null");
+      return arpOut
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((line) => {
+          const ipMatch = line.match(/\(([^)]+)\)/);
+          const macMatch = line.match(/at ([0-9a-f:]+)/i);
+          const hostMatch = line.match(/^(\S+)/);
+          return {
+            ip: ipMatch?.[1] ?? "",
+            hostname: hostMatch?.[1] ?? null,
+            mac: macMatch?.[1] ?? null,
+            alive: true,
+          };
+        })
+        .filter((r) => r.ip);
+    } catch {
+      return [];
+    }
+  }
+
+  async portScan(
+    host: string,
+    ports = "22,80,443,8080,3000,5000,3306,5432,6379,27017"
+  ): Promise<PortScanResult[]> {
+    try {
+      const { stdout: whichOut } = await this.deep.execAsync(
+        "which nmap 2>/dev/null"
+      );
+      if (whichOut.trim()) {
+        const { stdout } = await this.deep.execAsync(
+          `nmap -Pn -p ${ports} ${host} 2>/dev/null`
+        );
+        const results: PortScanResult[] = [];
+        for (const line of stdout.split("\n")) {
+          const m = line.match(/^(\d+)\/(tcp|udp)\s+(open|closed|filtered)\s*(\S*)/);
+          if (m) {
+            results.push({
+              port: parseInt(m[1]!, 10),
+              state: m[3] as "open" | "closed" | "filtered",
+              service: m[4] || null,
+            });
+          }
+        }
+        return results;
+      }
+      // Fallback: nc per port
+      const portList = ports.split(",").map((p) => parseInt(p.trim(), 10));
+      const results: PortScanResult[] = [];
+      for (const port of portList) {
+        try {
+          await this.deep.execAsync(
+            `nc -zv -w 2 ${host} ${port} 2>&1`,
+            3000
+          );
+          results.push({ port, state: "open", service: null });
+        } catch {
+          results.push({ port, state: "closed", service: null });
+        }
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  async dnsLookup(domain: string, type = "A"): Promise<string> {
+    try {
+      const { stdout } = await this.deep.execAsync(`dig ${domain} ${type}`);
+      return stdout;
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async whoisLookup(target: string): Promise<string> {
+    try {
+      const { stdout } = await this.deep.execAsync(`whois ${target}`);
+      return stdout.slice(0, 5000);
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async checkToolAvailability(tools: string[]): Promise<ToolAvailability[]> {
+    const results: ToolAvailability[] = [];
+    for (const name of tools) {
+      try {
+        const { stdout: pathOut } = await this.deep.execAsync(
+          `which ${name} 2>/dev/null`
+        );
+        const path = pathOut.trim() || null;
+        let version: string | null = null;
+        if (path) {
+          try {
+            const { stdout: verOut } = await this.deep.execAsync(
+              `${name} --version 2>&1 | head -1`
+            );
+            version = verOut.trim() || null;
+          } catch {
+            version = null;
+          }
+        }
+        results.push({ name, available: !!path, path, version });
+      } catch {
+        results.push({ name, available: false, path: null, version: null });
+      }
+    }
+    return results;
   }
 }

@@ -21,6 +21,14 @@ import audioop
 
 _speechbrain_encoder = None
 
+WAKE_TRAINING_PHRASES = [
+    "Hey Mimi, mở Safari rồi tìm giúp tôi tin tức công nghệ mới nhất trong tuần này nhé",
+    "Hey Mimi, đặt báo thức bảy giờ sáng mai và nhắc tôi uống thuốc trước khi ăn",
+    "Hey Mimi, hôm nay trời đẹp quá, bật danh sách nhạc thư giãn buổi sáng giúp tôi",
+    "Hey Mimi, ghi chú lại cuộc họp lúc hai giờ chiều với khách hàng quan trọng ngày mai",
+    "Hey Mimi, gọi điện cho mẹ rồi nhắn anh hai là tối nay mình về ăn cơm cùng cả nhà",
+]
+
 
 def normalize(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
@@ -53,9 +61,16 @@ def is_accepted_transcript(expected: str, heard: str, locale: str) -> bool:
     expected_n = normalize(expected)
     heard_n = normalize(heard)
 
-    # Wake keyword training must be exact to avoid noisy captures being accepted.
-    if expected_n in {"mimi", "hey mimi"}:
-        return heard_n == expected_n
+    # Wake keyword training: accept if "hey mimi" is present AND at least 3
+    # trailing words from the expected phrase appear in the transcript.
+    # (Google STT often mis-transcribes Vietnamese tones, so we allow loose match.)
+    if expected_n.startswith("hey mimi"):
+        if "hey mimi" not in heard_n and "mimi" not in heard_n:
+            return False
+        trailing = [w for w in expected_n.split() if w not in ("hey", "mimi")]
+        heard_words_set = set(re.split(r"\s+", heard_n))
+        hit = sum(1 for w in trailing if w in heard_words_set)
+        return hit >= min(3, len(trailing))
 
     # Critical platform/app tokens must be preserved.
     critical_tokens = {"youtube", "safari", "zalo", "spotify", "chrome"}
@@ -734,6 +749,10 @@ def main():
         wake_default = 0
     wake_phrase, _ = arrow_select("Select wake phrase", wake_options, default_index=wake_default)
 
+    # For the actual training loop we always use the 5 fixed Vietnamese sentences
+    # regardless of what was selected above (or any --wake-samples flag).
+    wake_training_phrases = WAKE_TRAINING_PHRASES
+
     repeat_options = ["3", "4", "5", "6", "8"]
     repeat_selected, _ = arrow_select("Select repeats per phrase", repeat_options, default_index=2)
     repeats = int(repeat_selected)
@@ -764,7 +783,12 @@ def main():
     interrupted = False
     if not speaker_only:
         try:
-            for phrase in [wake_phrase, *phrases]:
+            print(f"\n=== Wake-word training: {len(wake_training_phrases)} phrases (1 sample each) ===")
+            for idx, wp in enumerate(wake_training_phrases):
+                print(f"\n  Phrase {idx+1}/{len(wake_training_phrases)}: \"{wp}\"")
+                expected, heard_list = train_phrase(recognizer, wp, 1, languages, locale)
+                pairs.append((expected, heard_list))
+            for phrase in phrases:
                 expected, heard_list = train_phrase(recognizer, phrase, repeats, languages, locale)
                 pairs.append((expected, heard_list))
         except KeyboardInterrupt:
@@ -818,7 +842,7 @@ def main():
         "languages": languages if languages else existing_profile.get("languages", ["vi-VN", "en-US"]),
         "wakeLanguages": existing_profile.get("wakeLanguages", ["vi-VN"]),
         "commandLanguages": languages if languages else existing_profile.get("commandLanguages", ["vi-VN", "en-US"]),
-        "wakeAliases": existing_profile.get("wakeAliases", [normalize(wake_phrase), "mimi"]),
+        "wakeAliases": existing_profile.get("wakeAliases", ["hey mimi", "mimi"]),
         "phraseHints": existing_profile.get("phraseHints", ["youtube", "safari", "zalo", "spotify", "chrome"]),
         "hintAliases": existing_profile.get(
             "hintAliases",

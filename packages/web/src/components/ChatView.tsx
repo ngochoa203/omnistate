@@ -6,6 +6,7 @@ import type { ChatSendPayload } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
 import { getCopy } from "../lib/i18n";
 import { buildTaskGoalWithMemory } from "../lib/session-memory";
+import { ToolsPanel } from "./ToolsPanel";
 
 type RuntimeProvider = {
   id: string;
@@ -87,6 +88,8 @@ export function ChatView() {
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memorySummaryDraft, setMemorySummaryDraft] = useState(sharedMemorySummary);
   const [memoryLogDraft, setMemoryLogDraft] = useState(sharedMemoryLog.join("\n"));
+  const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
+  const [toolsData, setToolsData] = useState<{ tools: Array<{ name: string; description: string; group: string }>; skills: Array<{ name: string; group: string }> } | null>(null);
 
   const currentSessionState = sessionStateByConversation[currentConversationId];
 
@@ -130,6 +133,13 @@ export function ChatView() {
     setMemorySummaryDraft(sharedMemorySummary);
     setMemoryLogDraft(sharedMemoryLog.join("\n"));
   }, [sharedMemorySummary, sharedMemoryLog]);
+
+  useEffect(() => {
+    const off = getClient().on("tools.report", (msg: any) => {
+      setToolsData({ tools: msg.tools || [], skills: msg.skills || [] });
+    });
+    return off;
+  }, []);
 
   const handleSend = useCallback((payload: ChatSendPayload) => {
     const state = useChatStore.getState();
@@ -271,6 +281,17 @@ export function ChatView() {
             >
               {showMemoryPanel ? "Hide Memory" : "🧠 Memory"}
             </button>
+            <button
+              onClick={() => {
+                setToolsPanelOpen((v) => !v);
+                if (!toolsPanelOpen) getClient().requestToolsList();
+              }}
+              className="btn-ghost"
+              style={{ padding: "5px 12px", fontSize: "0.75rem" }}
+              aria-pressed={toolsPanelOpen}
+            >
+              {toolsPanelOpen ? "Hide Tools" : "Tools"}
+            </button>
             <select
               value={currentSessionState?.provider ?? "anthropic"}
               onChange={(e) => {
@@ -361,6 +382,14 @@ export function ChatView() {
             {copy.common.save}
           </button>
         </aside>
+      )}
+
+      {toolsPanelOpen && toolsData && (
+        <ToolsPanel
+          tools={toolsData.tools}
+          skills={toolsData.skills}
+          onClose={() => setToolsPanelOpen(false)}
+        />
       )}
     </div>
   );

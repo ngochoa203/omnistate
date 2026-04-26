@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 struct NativeChatMessage: Identifiable {
     let id = UUID()
@@ -147,6 +148,12 @@ final class GatewaySocketClient: ObservableObject {
     @Published var runtimeModel = ""
     @Published var runtimeProviderOptions: [RuntimeProviderOption] = []
     @Published var runtimeModelOptions: [String] = []
+    /// Set when /api/wake/event broadcasts arrive — ContentView observes to show bubble.
+    @Published var wakeDetectedAt: Date?
+    @Published var wakeDetectedPhrase: String = ""
+    @Published var wakeDetectedScore: Double = 0
+    /// Briefly true (~400ms) after wake word fires — drives green flash in ListeningBubbleView.
+    @Published var isWakeConfirmation: Bool = false
     @Published var voiceLowLatency = true
     @Published var voiceAutoExecute = true
     @Published var voiceWakeEnabled = false
@@ -336,6 +343,12 @@ final class GatewaySocketClient: ObservableObject {
         sendRaw(["type": "llm.preflight.query"])
     }
 
+    /// Sends `voice.wake.enabled = true` via runtime.config.set, guarded by onboarding flag.
+    func enableWakeIfOnboarded() {
+        guard UserDefaults.standard.bool(forKey: "omnistate.wakeOnboarding.completed") else { return }
+        setRuntimeConfig(key: "voice.wake.enabled", value: true)
+    }
+
     // MARK: - Session management
 
     func deleteSession(id: String) {
@@ -379,6 +392,12 @@ final class GatewaySocketClient: ObservableObject {
     }
 
     // MARK: - Raw send
+
+    func sendTranscribeAudio(_ wav: Data) {
+        let base64 = wav.base64EncodedString()
+        let msgId = UUID().uuidString
+        sendRaw(["type": "voice.transcribe", "id": msgId, "audio": base64, "format": "wav"])
+    }
 
     private func sendRaw(_ payload: [String: Any]) {
         guard let socket else { return }
@@ -451,6 +470,7 @@ final class GatewaySocketClient: ObservableObject {
             queryHealth()
             querySystemDashboard()
             queryLlmPreflight()
+            enableWakeIfOnboarded()
 
         case "task.accepted":
             currentTaskId = json["taskId"] as? String
@@ -562,6 +582,42 @@ final class GatewaySocketClient: ObservableObject {
             let ok = json["ok"] as? Bool ?? false
             let message = json["message"] as? String ?? ""
             lastClaudeMemSyncMessage = ok ? "Synced: \(message)" : "Sync failed: \(message)"
+
+        case "voice.transcript", "vibevoice.partial":
+            ListeningBubbleController.shared.keepAlive()
+
+        case "assistant.message":
+            // TTS is starting — keep bubble visible; it will close on tts.end
+            ListeningBubbleController.shared.keepAlive()
+
+        case "tts.end":
+            ListeningBubbleController.shared.hide()
+
+        case "voice.wake":
+            let phrase = json["phrase"] as? String ?? "hey mimi"
+            let score = json["score"] as? Double ?? 0
+            wakeDetectedAt = Date()
+            wakeDetectedPhrase = phrase
+            wakeDetectedScore = score
+            messages.append(NativeChatMessage(role: "system", text: "🎤 Wake detected: \(phrase) (\(String(format: "%.2f", score)))"))
+            // Audible + visual confirmation
+            let soundNames = ["Glass", "Tink", "Pop", "Funk"]
+            var playedName = "beep"
+            var played = false
+            for name in soundNames {
+                if let snd = NSSound(contentsOfFile: "/System/Library/Sounds/\(name).aiff", byReference: false) {
+                    played = snd.play()
+                    if played { playedName = name; break }
+                }
+            }
+            if !played { NSSound.beep() }
+            fputs("[wake] sound played: \(playedName) success: \(played)\n", stderr)
+            isWakeConfirmation = true
+            ListeningBubbleController.shared.forceToFront()
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                self.isWakeConfirmation = false
+            }
 
         default:
             break

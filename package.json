@@ -34,9 +34,11 @@
     "format": "pnpm -r format",
     "clean": "pnpm -r clean && cargo clean",
     "usecase:report": "node scripts/build-usecase-matrix.mjs --report",
-    "usecase:check": "node scripts/build-usecase-matrix.mjs --check"
+    "usecase:check": "node scripts/build-usecase-matrix.mjs --check",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "tsx": "^4.21.0"
   }
 }

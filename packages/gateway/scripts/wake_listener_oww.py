@@ -276,6 +276,7 @@ def run(args: argparse.Namespace) -> None:
 
             # predictions is a dict: {model_name: score}
             score = float(max(predictions.values())) if predictions else 0.0
+            log.debug("OWW score=%.4f threshold=%.2f", score, threshold)
 
             if score < threshold:
                 continue

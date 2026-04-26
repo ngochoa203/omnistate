@@ -127,7 +127,15 @@ export class GatewayClient {
       | "voice.siri.mode"
       | "voice.siri.shortcutName"
       | "voice.siri.endpoint"
-      | "voice.siri.token",
+      | "voice.siri.token"
+      | "tts.provider"
+      | "tts.voiceVi"
+      | "tts.voiceEn"
+      | "speakerVerification.enabled"
+      | "speakerVerification.threshold"
+      | "speakerVerification.onMismatch"
+      | "voice.sttProvider"
+      | "voice.whisperLocalModel",
     value: string | boolean | number,
   ): void {
     this.send({ type: "runtime.config.set", key, value } as ClientMessage);
@@ -156,12 +164,20 @@ export class GatewayClient {
 
   sendVoice(audioBase64: string, id?: string): void {
     const msgId = id || `voice-${Date.now()}`;
-    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64 } as ClientMessage);
+    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64, language: "vi" } as ClientMessage);
+  }
+
+  enableWakeListener(enabled: boolean): void {
+    this.send({ type: "voice.wake.enable", enabled } as unknown as ClientMessage);
   }
 
   requestSystemDashboard(id?: string): void {
     const msgId = id || `sys-${Date.now()}`;
     this.send({ type: "system.dashboard", id: msgId } as ClientMessage);
+  }
+
+  requestToolsList(): void {
+    this.send({ type: "tools.list" } as any);
   }
 
   on(event: string, handler: EventHandler): () => void {

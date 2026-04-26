@@ -328,7 +328,9 @@ struct ContentView: View {
     @State private var lastAssistantSpeechKey: String = ""
     @State private var voiceInputRouteMode = "chat"
     @State private var voiceTtsEnabled = true
-    @State private var voiceWakeListenerEnabled = true
+    @State private var voiceWakeListenerEnabled = false  // Python listener handles wake; this is the redundant in-app SFSpeechRecognizer (orange mic). Off by default.
+    @AppStorage("omnistate.wakeOnboarding.completed") private var wakeOnboardingCompleted: Bool = false
+    @State private var wakeOnboardingPresented: Bool = false
     @State private var wakeCommandArmedUntil: Date?
     @State private var wakeBubbleVisible = false
     @State private var wakeBubbleText = ""
@@ -740,6 +742,9 @@ struct ContentView: View {
                 viewportWidth = newWidth
             }
         }
+        .sheet(isPresented: $wakeOnboardingPresented) {
+            WakeOnboardingView(isPresented: $wakeOnboardingPresented)
+        }
         .task {
             await deviceManager.fetchDevices()
             socketClient.connect()
@@ -750,6 +755,11 @@ struct ContentView: View {
             deviceManager.startPINRefresh()
             if selectedModel.isEmpty {
                 selectedModel = socketClient.runtimeModel.isEmpty ? modelOptions.first ?? "" : socketClient.runtimeModel
+            }
+            // First-launch: trigger 5-sample wake training onboarding once.
+            if !wakeOnboardingCompleted {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await MainActor.run { wakeOnboardingPresented = true }
             }
         }
         .task {
@@ -776,7 +786,13 @@ struct ContentView: View {
         .onChange(of: socketClient.sessionMemoryByConversation) { mergeMemoryFromBackend($0) }
         .onChange(of: socketClient.sharedMemorySummary) { sharedMemorySummary = $0 }
         .onChange(of: socketClient.messages.count) { _ in captureLatestSocketMessage() }
+        .onChange(of: socketClient.wakeDetectedAt) { _ in handleExternalWakeEvent() }
         .onChange(of: voiceCaptureService.transcript) { _ in handleVoiceTranscriptChange() }
+        .onChange(of: voiceCaptureService.isRecording) { recording in
+            if !recording {
+                handleVoiceCaptureDidStop()
+            }
+        }
         .onChange(of: voiceWakeListenerEnabled) { enabled in
             if enabled {
                 startWakeListenerIfNeeded()
@@ -2268,6 +2284,12 @@ struct ContentView: View {
             Text(tx("Huấn luyện wake word \"hey mimi\" (openWakeWord)", "Train wake word \"hey mimi\" (openWakeWord)"))
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(CyberColor.textSecondary)
+
+            Button(tx("🎙 Huấn luyện 5 câu (khuyến nghị, không cần Colab)", "🎙 Train 5 samples (recommended, no Colab needed)")) {
+                wakeOnboardingCompleted = false
+                wakeOnboardingPresented = true
+            }
+            .buttonStyle(.borderedProminent)
 
             Text(tx(
                 "Bước 1: Mở Colab huấn luyện. Bước 2: Ghi 50–100 mẫu giọng. Bước 3: Tải file .onnx về và import bên dưới.",
@@ -3870,13 +3892,9 @@ struct ContentView: View {
     private func startWakeListenerIfNeeded() {
         guard voiceWakeListenerEnabled else { return }
         guard !Self.sharedSpeechSynthesizer.isSpeaking else { return }
-        guard voiceCaptureService.isAuthorized else {
-            voiceCaptureService.requestPermissionsIfNeeded()
-            return
-        }
-        if !voiceCaptureService.isRecording {
-            let locale = isEnglish ? "en-US" : "vi-VN"
-            voiceCaptureService.startRecording(localeIdentifier: locale)
+        // Siri-style wake flow: local listener runs on gateway; app mic only opens on wake event.
+        if !socketClient.voiceWakeEnabled {
+            socketClient.setRuntimeConfig(key: "voice.wake.enabled", value: true)
         }
     }
 
@@ -3892,6 +3910,35 @@ struct ContentView: View {
         }
         if voiceCaptureService.isRecording {
             voiceCaptureService.stopRecording()
+        }
+    }
+
+    /// Called when the gateway broadcasts /api/wake/event (Python listener detected wake).
+    /// Show the bubble + arm command capture window — same UX as in-app wake-prefix detect.
+    private func handleExternalWakeEvent() {
+        guard socketClient.wakeDetectedAt != nil else { return }
+        let phrase = socketClient.wakeDetectedPhrase.isEmpty ? effectiveWakePhrase : socketClient.wakeDetectedPhrase
+        wakeBubbleText = tx("Wake phrase: \(phrase)", "Wake phrase: \(phrase)")
+        wakeBubbleVisible = true
+        wakeCommandArmedUntil = Date().addingTimeInterval(7)
+        voiceInputRouteMode = "task"
+        NSApp.activate(ignoringOtherApps: true)
+        setPage(.voice)
+        speakAssistantReply("OmniState đây")
+
+        wakeArmTimeoutTask?.cancel()
+        wakeArmTimeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 7_500_000_000)
+            if let deadline = wakeCommandArmedUntil, Date() >= deadline {
+                wakeCommandArmedUntil = nil
+                wakeBubbleVisible = false
+                wakeBubbleText = ""
+            }
+        }
+
+        if !voiceCaptureService.isRecording {
+            let locale = isEnglish ? "en-US" : "vi-VN"
+            voiceCaptureService.startRecording(localeIdentifier: locale)
         }
     }
 
@@ -3948,26 +3995,16 @@ struct ContentView: View {
                 return
             }
         }
+    }
 
+    private func handleVoiceCaptureDidStop() {
         voiceSilenceTask?.cancel()
-        voiceSilenceTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            await MainActor.run {
-                guard voiceCaptureService.isRecording else { return }
-                let latest = voiceCaptureService.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard latest == snapshot, !latest.isEmpty else { return }
-
-                 if voiceWakeListenerEnabled,
-                    let deadline = wakeCommandArmedUntil,
-                    Date() <= deadline {
-                    let normalizedLatest = normalizeTranscriptLine(latest)
-                    if matchedWakePrefix(in: normalizedLatest) == normalizedLatest {
-                        return
-                    }
-                }
-
-                finalizeVoiceRecordingAndSubmit()
-            }
+        voiceFinalizeTask?.cancel()
+        voiceFinalizeTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            let latest = voiceCaptureService.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !latest.isEmpty else { return }
+            submitVoiceTranscriptIfNeeded(latest)
         }
     }
 
@@ -4041,11 +4078,11 @@ struct ContentView: View {
 
         let chunks = speechChunks(from: spoken)
         let voice = AVSpeechSynthesisVoice(language: isEnglish ? "en-US" : "vi-VN")
-        let baseRate: Float = isEnglish ? 0.49 : 0.45
+        let baseRate: Float = isEnglish ? min(0.98, 0.49 * 2) : min(0.98, 0.45 * 2)
 
         let shouldResumeWake = voiceWakeListenerEnabled
         if shouldResumeWake && voiceCaptureService.isRecording {
-            voiceCaptureService.stopRecording(cancelRecognition: true)
+            voiceCaptureService.stopRecording(cancelRecognition: true, userCancelled: true)
         }
 
         for (index, chunk) in chunks.enumerated() {

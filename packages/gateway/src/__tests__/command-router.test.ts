@@ -24,7 +24,7 @@ const mockConfig = {
     lowLatency: true,
     autoExecuteTranscript: true,
     primaryProvider: "native",
-    fallbackProviders: ["whisper-local", "whisper-cloud"],
+    fallbackProviders: ["whisper-cloud", "native"],
     chunkMs: 220,
     siri: {
       enabled: false,

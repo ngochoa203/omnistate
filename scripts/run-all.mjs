@@ -179,11 +179,22 @@ process.on("SIGTERM", shutdown);
 async function main() {
   await freePorts([19800, 19801, 5173, 5174, 5175]);
 
+  const runtimeEnv = { ...process.env };
+  const voicePython = resolve(repoRoot, ".venv-voice/bin/python");
+  if (!runtimeEnv.OMNISTATE_RTC_PYTHON && existsSync(voicePython)) {
+    runtimeEnv.OMNISTATE_RTC_PYTHON = voicePython;
+    log(`Using voice python: OMNISTATE_RTC_PYTHON=${voicePython}`);
+  }
+  if (!runtimeEnv.WHISPER_DEVICE && process.platform === "darwin" && process.arch === "arm64") {
+    runtimeEnv.WHISPER_DEVICE = "cpu";
+    log("Using WHISPER_DEVICE=cpu (macOS arm64 safe default)");
+  }
+
   log("Starting gateway (19800 WS, 19801 API)...");
-  gateway = spawn("pnpm", ["start"], {
+  gateway = spawn("pnpm", ["app:start"], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env,
+    env: runtimeEnv,
   });
 
   gateway.on("exit", (code) => {
@@ -208,7 +219,7 @@ async function main() {
     {
       cwd: repoRoot,
       stdio: "inherit",
-      env: process.env,
+      env: runtimeEnv,
     },
   );
 

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { buildMemoryEntry, summarizeMemory } from "./session-memory";
 import type { ClaudeMemPayload } from "./protocol";
 import { storageGetItem, storageSetItem } from "./native-storage";
+import type { AppLanguage } from "@omnistate/shared";
 
 export interface ChatMessage {
   id: string;
@@ -48,7 +49,7 @@ export interface ConversationSessionState {
 }
 
 interface ChatStore {
-  appLanguage: "vi" | "en";
+  appLanguage: AppLanguage;
   messages: ChatMessage[];
   conversations: Conversation[];
   currentConversationId: string;
@@ -92,7 +93,7 @@ interface ChatStore {
     message: string;
     at: number;
   };
-  setAppLanguage: (lang: "vi" | "en") => void;
+  setAppLanguage: (lang: AppLanguage) => void;
   createConversation: (name?: string) => string;
   switchConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
@@ -122,7 +123,7 @@ let _id = 0;
 const nextId = () => `msg-${++_id}-${Date.now()}`;
 const CHAT_SNAPSHOT_KEY = "omnistate.chatSnapshot.v2";
 
-function getInitialAppLanguage(): "vi" | "en" {
+function getInitialAppLanguage(): AppLanguage {
   if (typeof window === "undefined") return "vi";
   const saved = storageGetItem("omnistate.appLanguage");
   return saved === "en" ? "en" : "vi";

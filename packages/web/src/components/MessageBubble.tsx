@@ -24,7 +24,7 @@ export function MessageBubble({ message }: Props) {
   const handleSpeak = useCallback(async () => {
     const text = message.content || "";
     if (!text) return;
-    await speakText(text, appLanguage);
+    await speakText(text, appLanguage === "vi" ? "vi" : "en");
   }, [message.content, appLanguage]);
 
   return (

@@ -1173,6 +1173,47 @@ describe("planFromIntent() — plan structure", () => {
     expect(String(scriptNode?.action.params?.script ?? "")).toContain("youtube.com/results?search_query=Do%20Mixi");
   });
 
+  it("Vietnamese: Mở video 'Ghé qua' trên youtube ở safari — routes to Safari, searches and auto-plays", async () => {
+    const intent = await classifyIntent("Mở video 'Ghé qua' trên youtube ở safari");
+    const plan = await planFromIntent(intent);
+
+    const activateNode = plan.nodes.find((n) => n.action.tool === "app.activate");
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(activateNode).toBeDefined();
+    expect(activateNode?.action.params?.name).toBe("Safari");
+    expect(scriptNode).toBeDefined();
+    const script = String(scriptNode?.action.params?.script ?? "");
+    expect(script).toContain("youtube.com/results?search_query=");
+    expect(script).toContain("Gh%C3%A9%20qua");
+    // auto-play JS snippet should be present
+    expect(script).toContain("ytd-video-renderer");
+  });
+
+  it("Vietnamese: Phát bài hát \"Hoa Hải Đường\" trên youtube — routes to Safari, searches", async () => {
+    const intent = await classifyIntent('Phát bài hát "Hoa Hải Đường" trên youtube');
+    const plan = await planFromIntent(intent);
+
+    const activateNode = plan.nodes.find((n) => n.action.tool === "app.activate");
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(activateNode).toBeDefined();
+    expect(scriptNode).toBeDefined();
+    const script = String(scriptNode?.action.params?.script ?? "");
+    expect(script).toContain("youtube.com/results?search_query=");
+    expect(script).toContain("Hoa%20H%E1%BA%A3i%20%C4%90%C6%B0%E1%BB%9Dng");
+  });
+
+  it("Vietnamese: Bật Ghé qua trên youtube ở chrome — routes to Google Chrome", async () => {
+    const intent = await classifyIntent("Bật 'Ghé qua' trên youtube ở chrome");
+    const plan = await planFromIntent(intent);
+
+    const activateNode = plan.nodes.find((n) => n.action.tool === "app.activate");
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(activateNode).toBeDefined();
+    expect(activateNode?.action.params?.name).toBe("Google Chrome");
+    expect(scriptNode).toBeDefined();
+    expect(String(scriptNode?.action.params?.script ?? "")).toContain("youtube.com/results?search_query=");
+  });
+
   it("create react project with vite in Projects maps to shell command", async () => {
     const intent = await classifyIntent("Create project react use vite in Projects");
     const plan = await planFromIntent(intent);
@@ -1183,14 +1224,16 @@ describe("planFromIntent() — plan structure", () => {
     expect(String(plan.nodes[0]?.action.params?.command ?? "")).toContain("$HOME/Projects");
   });
 
-  it("zalo messaging phrase surfaces an LLM provider error when generation fails", async () => {
+  it("zalo messaging phrase produces a plan with an app.script node", async () => {
     const intent = await classifyIntent(
       "Open zalo and message for 0389027907 with text 'Hi'"
     );
+    const plan = await planFromIntent(intent);
 
-    await expect(planFromIntent(intent)).rejects.toThrow(
-      /(LLM API error|No enabled LLM providers|Insufficient credits|Invalid API credentials)/i
-    );
+    expect(intent.type).toBe("app-control");
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(scriptNode).toBeDefined();
+    expect(String(scriptNode?.action.params?.script ?? "")).toContain("Zalo");
   });
 
   it("multi-step fallback should pass plain goal string to generic.execute", async () => {
@@ -1206,5 +1249,42 @@ describe("planFromIntent() — plan structure", () => {
     if (plan.nodes[0]?.action.tool === "generic.execute") {
       expect(plan.nodes[0]?.action.params?.goal).toBe("do something impossible xyz 123");
     }
+  });
+
+  // ── Social app tests ─────────────────────────────────────────────────────
+  it('"mở facebook" classifies as app-launch with app=facebook', async () => {
+    const intent = await classifyIntent("mở facebook");
+    expect(intent.type).toBe("app-launch");
+    const appEntity = Object.values(intent.entities).find((e) => e.type === "app");
+    expect(appEntity?.value?.toLowerCase()).toBe("facebook");
+  });
+
+  it('"mở facebook" produces a plan with script node containing facebook.com fallback', async () => {
+    const intent = await classifyIntent("mở facebook");
+    const plan = await planFromIntent(intent);
+    const launchNode = plan.nodes.find((n) => n.action.tool === "app.script" || n.action.tool === "app.launch");
+    expect(launchNode).toBeDefined();
+    if (launchNode?.action.tool === "app.script") {
+      expect(String(launchNode.action.params?.script ?? "")).toContain("facebook.com");
+    }
+  });
+
+  it('"open instagram" classifies as app-launch', async () => {
+    const intent = await classifyIntent("open instagram");
+    expect(intent.type).toBe("app-launch");
+    const appEntity = Object.values(intent.entities).find((e) => e.type === "app");
+    expect(appEntity?.value?.toLowerCase()).toMatch(/instagram|ig|insta/);
+  });
+
+  it('"mở messenger nhắn cho Linh" classifies as app-control or app-launch', async () => {
+    const intent = await classifyIntent("mở messenger nhắn cho Linh");
+    expect(["app-control", "app-launch"]).toContain(intent.type);
+  });
+
+  it('"send whatsapp message to mom" classifies as app-control', async () => {
+    const intent = await classifyIntent("send whatsapp message to mom");
+    expect(intent.type).toBe("app-control");
+    // preLlmRules may match "message" before entity extraction; rawText contains whatsapp
+    expect(intent.rawText.toLowerCase()).toContain("whatsapp");
   });
 });

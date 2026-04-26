@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { logger } from "../utils/logger.js";
-export type WakeEngine = "legacy" | "oww" | "personal" | "porcupine";
+import type { WakeEngine } from "../llm/runtime-config.js";
+
+export type { WakeEngine };
 
 export interface WakeConfig {
   enabled: boolean;
@@ -49,11 +51,13 @@ export class WakeManager {
 
     if (!options.config.enabled) return;
     if (!options.token) {
-      logger.warn("[OmniState] Wake listener not started: siri token is empty");
-      return;
+      logger.warn(
+        "[OmniState] OMNISTATE_SIRI_TOKEN is empty — wake listener starting in dry-run mode " +
+        "(wake events will NOT forward commands). Set OMNISTATE_SIRI_TOKEN to enable full mode."
+      );
     }
 
-    const DEFAULT_ALIASES = ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"];
+    const DEFAULT_ALIASES = ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi", "hi mimi", "he mimi", "ê mimi"];
     const engine: WakeEngine = options.config.engine ?? "oww";
 
     const homeDir = process.env.HOME ?? "";
@@ -61,19 +65,29 @@ export class WakeManager {
       ? options.config.modelPath
       : `${homeDir}/.omnistate/wake-samples/personal_template.json`;
 
-    // oww requires a custom ONNX model — without one it falls back to hey_jarvis which
-    // will never trigger on "hey mimi". Auto-degrade to legacy STT-based keyword matching.
+    // oww requires a custom ONNX model — without one it silently fell back to legacy
+    // STT-keyword matching, which is NOT a real wake engine and never fires reliably.
+    // We now refuse to start so the UI/operator sees a clear error.
     const hasCustomModel = !!(options.config.modelPath && existsSync(options.config.modelPath))
       || !!(process.env.OMNISTATE_WAKE_MODEL_PATH && existsSync(process.env.OMNISTATE_WAKE_MODEL_PATH));
-    const resolvedEngine: WakeEngine =
-      engine === "oww" && !hasCustomModel ? "legacy" : engine;
+    const hasPersonalTemplate = existsSync(personalTemplate);
 
     if (engine === "oww" && !hasCustomModel) {
-      logger.warn(
-        "[OmniState] No custom OWW model found — falling back to legacy STT keyword matching. " +
-        "To use oww, set OMNISTATE_WAKE_MODEL_PATH or config.modelPath to a valid .onnx file."
+      logger.error(
+        "[Wake] OWW model missing, refusing to start. " +
+        "Set OMNISTATE_WAKE_MODEL_PATH or run onboarding to create personal_template.json"
       );
+      return;
     }
+    if (engine === "personal" && !hasPersonalTemplate) {
+      logger.error(
+        `[Wake] personal_template.json missing at ${personalTemplate}, refusing to start. ` +
+        `Status: needs_onboarding — run the macOS onboarding wizard to record voice samples.`
+      );
+      return;
+    }
+
+    const resolvedEngine: WakeEngine = engine;
 
     let scriptName: string;
     if (resolvedEngine === "personal") {
@@ -170,7 +184,9 @@ export class WakeManager {
             "--command-window-sec", String(options.config.commandWindowSec),
           ];
 
-    const owwExtras =
+    // For oww: pass aliases as JSON + threshold + model-path.
+    // For legacy: pass aliases as comma-separated string (no threshold; script doesn't accept it).
+    const engineExtras =
       resolvedEngine === "oww"
         ? [
             "--aliases",
@@ -179,11 +195,13 @@ export class WakeManager {
             String(threshold),
             ...(modelPath ? ["--model-path", modelPath] : []),
           ]
+        : resolvedEngine === "legacy"
+        ? ["--aliases", aliases.join(",")]
         : [];
 
     this.child = spawn(
       this.resolvePythonExecutable(),
-      [...baseArgs, ...owwExtras],
+      [...baseArgs, ...engineExtras],
       {
         stdio: ["ignore", "pipe", "pipe"],
         env: {

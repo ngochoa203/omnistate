@@ -7,20 +7,27 @@
  * @module hybrid/automation
  */
 
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { whisperLocalClient } from "../voice/whisper-local-client.js";
 import { promisify } from "node:util";
 import {
   readFileSync,
   writeFileSync,
+  unlinkSync,
   existsSync,
   mkdirSync,
   readdirSync,
+  copyFileSync,
+  statSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import Anthropic from "@anthropic-ai/sdk";
+import { logger } from "../utils/logger.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Anthropic client (lazy singleton — mirrors intent.ts pattern)
@@ -333,32 +340,104 @@ export interface VoiceCommandResult {
 }
 
 /**
+ * Swift client now sends 16kHz mono PCM16 WAV directly — gateway can write without conversion.
+ * For legacy raw float32 @ 44.1kHz buffers (non-WAV), still converts via wrapPcmAsWav.
+ */
+function prepareWav(buf: Buffer, srcSampleRate: number, channels: number): Buffer {
+  // Detect RIFF header: bytes 0-3 == "RIFF"
+  if (buf.length >= 4 && buf.readUInt32LE(0) === 0x46464952) {
+    return buf; // Already a WAV file — pass through
+  }
+  return wrapPcmAsWav(buf, srcSampleRate, channels);
+}
+
+/**
+ * Swift client sends raw float32 @ 44.1kHz; STT providers expect 16kHz PCM16 WAV.
+ * Converts float32 LE buffer → int16 PCM @ targetSampleRate and wraps a RIFF/WAVE header.
+ */
+function wrapPcmAsWav(
+  buf: Buffer,
+  srcSampleRate: number,
+  channels: number,
+  targetSampleRate: number = 16000
+): Buffer {
+  // Interpret raw bytes as float32 LE samples
+  const floatSamples = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+
+  // Downsample via linear interpolation (speech quality is sufficient)
+  const ratio = srcSampleRate / targetSampleRate;
+  const outLen = Math.floor(floatSamples.length / ratio);
+  const pcm16 = Buffer.alloc(outLen * 2);
+  for (let i = 0; i < outLen; i++) {
+    const srcIdx = i * ratio;
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, floatSamples.length - 1);
+    const frac = srcIdx - lo;
+    const sample = floatSamples[lo] * (1 - frac) + floatSamples[hi] * frac;
+    const clamped = Math.max(-1, Math.min(1, sample));
+    pcm16.writeInt16LE(Math.round(clamped * 32767), i * 2);
+  }
+
+  // Build 44-byte RIFF/WAVE/fmt /data header
+  const byteRate = targetSampleRate * channels * 2;
+  const blockAlign = channels * 2;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm16.byteLength, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);            // subchunk1 size
+  header.writeUInt16LE(1, 20);             // PCM format
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(targetSampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(16, 34);            // bitsPerSample
+  header.write("data", 36);
+  header.writeUInt32LE(pcm16.byteLength, 40);
+  return Buffer.concat([header, pcm16]);
+}
+
+/**
  * UC-D03: Transcribe audio buffer to text.
  * Tries whisper-cloud (OpenAI) → whisper-local (python) → native (macOS) fallback.
  */
 export async function transcribeAudio(
   audioBuffer: Buffer,
-  provider: "whisper-cloud" | "whisper-local" | "native" = "native"
+  provider: "whisper-cloud" | "whisper-local" | "native" = "native",
+  language: string = "vi"
 ): Promise<TranscriptionResult> {
   const startMs = Date.now();
 
   if (provider === "native") {
+    // macOS Sphinx is English-only — refuse non-English so upper-layer race
+    // doesn't pick garbage English over a proper whisper result.
+    if (language && !language.toLowerCase().startsWith("en")) {
+      return {
+        text: "",
+        confidence: 0,
+        durationMs: Date.now() - startMs,
+        provider: "native-sphinx",
+      };
+    }
     // macOS Speech framework via python SpeechRecognition (if available)
-    const tmpPath = join(homedir(), ".omnistate", "tmp_audio.wav");
+    const wavPath = join(homedir(), ".omnistate", "tmp_audio.wav");
     ensureDir();
-    writeFileSync(tmpPath, audioBuffer);
+    writeFileSync(wavPath, prepareWav(audioBuffer, 44100, 1));
+    const scriptPath = join(tmpdir(), `sphinx_${randomBytes(8).toString("hex")}.py`);
+    const scriptSrc = [
+      "import sys, speech_recognition as sr",
+      "r = sr.Recognizer()",
+      "with sr.AudioFile(sys.argv[1]) as src:",
+      "    audio = r.record(src)",
+      "text = r.recognize_sphinx(audio)",
+      "print(text)",
+    ].join("\n");
+    writeFileSync(scriptPath, scriptSrc, { mode: 0o600 });
     try {
-      const { stdout } = await execAsync(
-        `python3 -c "
-import speech_recognition as sr
-r = sr.Recognizer()
-with sr.AudioFile('${tmpPath}') as src:
-    audio = r.record(src)
-text = r.recognize_sphinx(audio)
-print(text)
-" 2>/dev/null`,
-        { timeout: 30_000 }
-      );
+      const { stdout } = await execFileAsync("python3", [scriptPath, wavPath], {
+        timeout: 30_000,
+      });
       return {
         text: stdout.trim(),
         confidence: 0.75,
@@ -372,27 +451,31 @@ print(text)
         durationMs: Date.now() - startMs,
         provider: "native-sphinx",
       };
+    } finally {
+      try { unlinkSync(scriptPath); } catch { /* ignore */ }
     }
   }
 
   if (provider === "whisper-local") {
     const tmpPath = join(homedir(), ".omnistate", "tmp_audio.wav");
     ensureDir();
-    writeFileSync(tmpPath, audioBuffer);
+    writeFileSync(tmpPath, prepareWav(audioBuffer, 44100, 1));
+    const wavBytes = existsSync(tmpPath) ? statSync(tmpPath).size : 0;
+    if (process.env.VOICE_DEBUG === "1") {
+      const debugDir = join(homedir(), ".omnistate", "debug");
+      if (!existsSync(debugDir)) mkdirSync(debugDir, { recursive: true });
+      const debugPath = join(debugDir, `whisper-input-${Date.now()}.wav`);
+      copyFileSync(tmpPath, debugPath);
+    }
+    logger.info({ wavPath: tmpPath, bytes: wavBytes, language }, "[whisper-local] transcribe start");
+    const t0wl = Date.now();
     try {
-      const { stdout } = await execAsync(
-        `python3 -c "
-import whisper, json, sys
-model = whisper.load_model('base')
-result = model.transcribe('${tmpPath}')
-print(result['text'])
-"`,
-        { timeout: 60_000 }
-      );
+      const { text, durationMs } = await whisperLocalClient.transcribe(tmpPath, language);
+      logger.info({ wavPath: tmpPath, textLen: text.trim().length, durationMs: Date.now() - t0wl }, "[whisper-local] transcribe done");
       return {
-        text: stdout.trim(),
+        text,
         confidence: 0.9,
-        durationMs: Date.now() - startMs,
+        durationMs,
         provider: "whisper-local",
       };
     } catch (err) {
@@ -407,8 +490,12 @@ print(result['text'])
 
   try {
     const form = new FormData();
-    form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "audio.wav");
+    const wavBuffer = prepareWav(audioBuffer, 44100, 1);
+    form.append("file", new Blob([wavBuffer], { type: "audio/wav" }), "audio.wav");
     form.append("model", "whisper-1");
+    form.append("language", language);
+    form.append("prompt", "");
+    form.append("temperature", "0");
 
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
