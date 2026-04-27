@@ -142,24 +142,24 @@ export async function synthesizeRtvcSpeech(input: {
     throw new Error("No speaker sample available. Train a profile first via /api/voice/clone/train or set OMNISTATE_VOICE_CLONE_SPEAKER_WAV");
   }
 
+  // Use pre-saved embedding (.npy) when available — faster and consistent voice identity.
+  const embeddingPath = input.profileId
+    ? join(getProfileRootDir(), input.profileId, "speaker-embedding.npy")
+    : null;
+
   const outPath = join(tmpdir(), `omnistate-rtvc-${crypto.randomUUID()}.wav`);
-  await execFileAsync(
-    getPythonExec(),
-    [
-      rtvcTtsScriptPath,
-      "--repo",
-      repoDir,
-      "--speaker",
-      speakerPath,
-      "--text",
-      input.text,
-      "--output",
-      outPath,
-      "--language",
-      input.language || "vi",
-    ],
-    { timeout: 180_000, maxBuffer: 1024 * 1024 * 8 },
-  );
+  const ttsArgs = [
+    rtvcTtsScriptPath,
+    "--repo", repoDir,
+    "--speaker", speakerPath,
+    "--text", input.text,
+    "--output", outPath,
+    "--language", input.language || "vi",
+  ];
+  if (embeddingPath && existsSync(embeddingPath)) {
+    ttsArgs.push("--embedding", embeddingPath);
+  }
+  await execFileAsync(getPythonExec(), ttsArgs, { timeout: 180_000, maxBuffer: 1024 * 1024 * 8 });
 
   const audio = await import("node:fs/promises").then((m) => m.readFile(outPath));
   return {

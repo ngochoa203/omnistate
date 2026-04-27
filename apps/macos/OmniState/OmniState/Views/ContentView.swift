@@ -328,7 +328,9 @@ struct ContentView: View {
     @State private var lastAssistantSpeechKey: String = ""
     @State private var voiceInputRouteMode = "chat"
     @State private var voiceTtsEnabled = true
-    @State private var voiceWakeListenerEnabled = false
+    @State private var voiceWakeListenerEnabled = false  // Python listener handles wake; this is the redundant in-app SFSpeechRecognizer (orange mic). Off by default.
+    @AppStorage("omnistate.wakeOnboarding.completed") private var wakeOnboardingCompleted: Bool = false
+    @State private var wakeOnboardingPresented: Bool = false
     @State private var wakeCommandArmedUntil: Date?
     @State private var wakeBubbleVisible = false
     @State private var wakeBubbleText = ""
@@ -740,6 +742,9 @@ struct ContentView: View {
                 viewportWidth = newWidth
             }
         }
+        .sheet(isPresented: $wakeOnboardingPresented) {
+            WakeOnboardingView(isPresented: $wakeOnboardingPresented)
+        }
         .task {
             await deviceManager.fetchDevices()
             socketClient.connect()
@@ -750,6 +755,11 @@ struct ContentView: View {
             deviceManager.startPINRefresh()
             if selectedModel.isEmpty {
                 selectedModel = socketClient.runtimeModel.isEmpty ? modelOptions.first ?? "" : socketClient.runtimeModel
+            }
+            // First-launch: trigger 5-sample wake training onboarding once.
+            if !wakeOnboardingCompleted {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await MainActor.run { wakeOnboardingPresented = true }
             }
         }
         .task {
@@ -776,7 +786,13 @@ struct ContentView: View {
         .onChange(of: socketClient.sessionMemoryByConversation) { mergeMemoryFromBackend($0) }
         .onChange(of: socketClient.sharedMemorySummary) { sharedMemorySummary = $0 }
         .onChange(of: socketClient.messages.count) { _ in captureLatestSocketMessage() }
+        .onChange(of: socketClient.wakeDetectedAt) { _ in handleExternalWakeEvent() }
         .onChange(of: voiceCaptureService.transcript) { _ in handleVoiceTranscriptChange() }
+        .onChange(of: voiceCaptureService.isRecording) { recording in
+            if !recording {
+                handleVoiceCaptureDidStop()
+            }
+        }
         .onChange(of: voiceWakeListenerEnabled) { enabled in
             if enabled {
                 startWakeListenerIfNeeded()
@@ -2262,7 +2278,68 @@ struct ContentView: View {
                 tx("Run RTVC CLI (CPU)", "Run RTVC CLI (CPU)"),
                 goal: "Enter Real-Time-Voice-Cloning repo and run `uv run --extra cpu demo_cli.py` to perform command-line voice cloning demo"
             )
+
+            Divider().padding(.vertical, 4)
+
+            Text(tx("Huấn luyện wake word \"hey mimi\" (openWakeWord)", "Train wake word \"hey mimi\" (openWakeWord)"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(CyberColor.textSecondary)
+
+            Button(tx("🎙 Huấn luyện 5 câu (khuyến nghị, không cần Colab)", "🎙 Train 5 samples (recommended, no Colab needed)")) {
+                wakeOnboardingCompleted = false
+                wakeOnboardingPresented = true
+            }
+            .buttonStyle(.borderedProminent)
+
+            Text(tx(
+                "Bước 1: Mở Colab huấn luyện. Bước 2: Ghi 50–100 mẫu giọng. Bước 3: Tải file .onnx về và import bên dưới.",
+                "Step 1: Open Colab. Step 2: Record 50–100 voice samples. Step 3: Download .onnx and import below."
+            ))
+            .font(.system(size: 11))
+            .foregroundColor(CyberColor.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button(tx("Mở Colab huấn luyện", "Open training Colab")) {
+                    if let url = URL(string: "https://colab.research.google.com/github/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(tx("Hướng dẫn", "Training guide")) {
+                    if let url = URL(string: "https://github.com/dscripka/openWakeWord#training-new-models") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+
+            Button(tx("Import file .onnx đã train", "Import trained .onnx")) {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.init(filenameExtension: "onnx")!].compactMap { $0 }
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    Task { await uploadWakeModel(fileURL: url) }
+                }
+            }
+            .buttonStyle(.bordered)
+
+            quickActionButton(
+                tx("Kiểm tra trạng thái wake model", "Check wake model status"),
+                goal: "GET /api/wake/status from gateway, report whether custom hey-mimi model is installed and active"
+            )
         }
+    }
+
+    private func uploadWakeModel(fileURL: URL) async {
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        var req = URLRequest(url: URL(string: "http://localhost:19800/api/wake/upload-model")!)
+        req.httpMethod = "POST"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.setValue(fileURL.lastPathComponent, forHTTPHeaderField: "X-Model-Filename")
+        req.httpBody = data
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     private var voiceSettingsTab: some View {
@@ -3815,13 +3892,9 @@ struct ContentView: View {
     private func startWakeListenerIfNeeded() {
         guard voiceWakeListenerEnabled else { return }
         guard !Self.sharedSpeechSynthesizer.isSpeaking else { return }
-        guard voiceCaptureService.isAuthorized else {
-            voiceCaptureService.requestPermissionsIfNeeded()
-            return
-        }
-        if !voiceCaptureService.isRecording {
-            let locale = isEnglish ? "en-US" : "vi-VN"
-            voiceCaptureService.startRecording(localeIdentifier: locale)
+        // Siri-style wake flow: local listener runs on gateway; app mic only opens on wake event.
+        if !socketClient.voiceWakeEnabled {
+            socketClient.setRuntimeConfig(key: "voice.wake.enabled", value: true)
         }
     }
 
@@ -3837,6 +3910,35 @@ struct ContentView: View {
         }
         if voiceCaptureService.isRecording {
             voiceCaptureService.stopRecording()
+        }
+    }
+
+    /// Called when the gateway broadcasts /api/wake/event (Python listener detected wake).
+    /// Show the bubble + arm command capture window — same UX as in-app wake-prefix detect.
+    private func handleExternalWakeEvent() {
+        guard socketClient.wakeDetectedAt != nil else { return }
+        let phrase = socketClient.wakeDetectedPhrase.isEmpty ? effectiveWakePhrase : socketClient.wakeDetectedPhrase
+        wakeBubbleText = tx("Wake phrase: \(phrase)", "Wake phrase: \(phrase)")
+        wakeBubbleVisible = true
+        wakeCommandArmedUntil = Date().addingTimeInterval(7)
+        voiceInputRouteMode = "task"
+        NSApp.activate(ignoringOtherApps: true)
+        setPage(.voice)
+        speakAssistantReply("OmniState đây")
+
+        wakeArmTimeoutTask?.cancel()
+        wakeArmTimeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 7_500_000_000)
+            if let deadline = wakeCommandArmedUntil, Date() >= deadline {
+                wakeCommandArmedUntil = nil
+                wakeBubbleVisible = false
+                wakeBubbleText = ""
+            }
+        }
+
+        if !voiceCaptureService.isRecording {
+            let locale = isEnglish ? "en-US" : "vi-VN"
+            voiceCaptureService.startRecording(localeIdentifier: locale)
         }
     }
 
@@ -3893,26 +3995,16 @@ struct ContentView: View {
                 return
             }
         }
+    }
 
+    private func handleVoiceCaptureDidStop() {
         voiceSilenceTask?.cancel()
-        voiceSilenceTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            await MainActor.run {
-                guard voiceCaptureService.isRecording else { return }
-                let latest = voiceCaptureService.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard latest == snapshot, !latest.isEmpty else { return }
-
-                 if voiceWakeListenerEnabled,
-                    let deadline = wakeCommandArmedUntil,
-                    Date() <= deadline {
-                    let normalizedLatest = normalizeTranscriptLine(latest)
-                    if matchedWakePrefix(in: normalizedLatest) == normalizedLatest {
-                        return
-                    }
-                }
-
-                finalizeVoiceRecordingAndSubmit()
-            }
+        voiceFinalizeTask?.cancel()
+        voiceFinalizeTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            let latest = voiceCaptureService.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !latest.isEmpty else { return }
+            submitVoiceTranscriptIfNeeded(latest)
         }
     }
 
@@ -3986,11 +4078,11 @@ struct ContentView: View {
 
         let chunks = speechChunks(from: spoken)
         let voice = AVSpeechSynthesisVoice(language: isEnglish ? "en-US" : "vi-VN")
-        let baseRate: Float = isEnglish ? 0.49 : 0.45
+        let baseRate: Float = isEnglish ? min(0.98, 0.49 * 2) : min(0.98, 0.45 * 2)
 
         let shouldResumeWake = voiceWakeListenerEnabled
         if shouldResumeWake && voiceCaptureService.isRecording {
-            voiceCaptureService.stopRecording(cancelRecognition: true)
+            voiceCaptureService.stopRecording(cancelRecognition: true, userCancelled: true)
         }
 
         for (index, chunk) in chunks.enumerated() {

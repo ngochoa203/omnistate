@@ -58,6 +58,13 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Audit Rust dependencies
+        if: matrix.full
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────────────
   # TypeScript — lint, typecheck, and test all JS/TS packages
   # ──────────────────────────────────────────────────────────────────────────
@@ -78,6 +85,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Audit npm dependencies
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
 
       # Lint — gateway has oxlint; other packages may add it later
       - name: Lint

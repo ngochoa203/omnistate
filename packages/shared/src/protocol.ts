@@ -27,7 +27,17 @@ export type ClientMessage =
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage;
+  | PermissionStopMessage
+  | VoiceEnrollStartMessage
+  | VoiceEnrollSampleMessage
+  | VoiceEnrollFinalizeMessage
+  | VoiceEnrollCancelMessage
+  | VoiceWakeEnableMessage;
+
+export interface VoiceWakeEnableMessage {
+  type: "voice.wake.enable";
+  enabled: boolean;
+}
 
 export interface ConnectMessage {
   type: "connect";
@@ -245,6 +255,30 @@ export interface PermissionStopMessage {
   type: "permission.stop";
 }
 
+// ── Voice Enrollment (client → gateway) ──────────────────────────────────────
+
+export interface VoiceEnrollStartMessage {
+  type: "voice.enroll.start";
+  userId: string;
+}
+
+export interface VoiceEnrollSampleMessage {
+  type: "voice.enroll.sample";
+  audio: string;
+  format: string;
+  phraseIndex: number;
+}
+
+export interface VoiceEnrollFinalizeMessage {
+  type: "voice.enroll.finalize";
+  userId: string;
+}
+
+export interface VoiceEnrollCancelMessage {
+  type: "voice.enroll.cancel";
+  userId: string;
+}
+
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
@@ -275,7 +309,20 @@ export type ServerMessage =
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage;
+  | PermissionStatusMessage
+  | VoiceEnrollReadyMessage
+  | VoiceEnrollProgressMessage
+  | VoiceEnrollDoneMessage
+  | VoiceEnrollErrorMessage
+  | VoiceTtsAudioMessage
+  | VoiceSpeakerMismatchMessage
+  | TtsEndMessage;
+
+export interface TtsEndMessage {
+  type: "tts.end";
+  taskId?: string;
+  timestamp: string;
+}
 
 export interface ConnectedMessage {
   type: "connected";
@@ -468,6 +515,53 @@ export interface PermissionStatusMessage {
   type: "permission.status";
   /** Whether the auto-responder is currently polling. */
   running: boolean;
+}
+
+// ── Voice Enrollment (gateway → client) ──────────────────────────────────────
+
+export interface VoiceEnrollReadyMessage {
+  type: "voice.enroll.ready";
+  phraseIndex: number;
+  prompt: string;
+}
+
+export interface VoiceEnrollProgressMessage {
+  type: "voice.enroll.progress";
+  accepted: boolean;
+  phraseIndex: number;
+  reason?: string;
+}
+
+export interface VoiceEnrollDoneMessage {
+  type: "voice.enroll.done";
+  userId: string;
+  sampleCount: number;
+}
+
+export interface VoiceEnrollErrorMessage {
+  type: "voice.enroll.error";
+  code: string;
+  message: string;
+}
+
+export interface VoiceTtsAudioMessage {
+  type: "voice.tts.audio";
+  taskId?: string;
+  audio: string;       // base64-encoded MP3
+  format: "mp3";
+  lang: "vi" | "en";
+  voice?: string;      // TTS voice identifier (e.g. "vi-VN-HoaiMyNeural")
+  text?: string;       // spoken text for subtitle/transcript display
+}
+
+// ── Voice Speaker Verification (gateway → client) ─────────────────────────────
+
+export interface VoiceSpeakerMismatchMessage {
+  type: "voice.speaker.mismatch";
+  sessionId: string;
+  userId: string;
+  score: number;
+  threshold: number;
 }
 
 // ─── Shared supporting types ─────────────────────────────────────────────────

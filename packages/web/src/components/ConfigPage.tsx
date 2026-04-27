@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getClient } from "../hooks/useGateway";
 import { useChatStore } from "../lib/chat-store";
+import { VoiceSettings } from "./VoiceSettings";
 
 type RuntimeProvider = {
   id: string;
@@ -532,6 +533,8 @@ export function ConfigPage() {
               {appLanguage === "vi" ? "Auto execute transcript: OFF" : "Auto execute transcript: OFF"}
             </button>
           </div>
+
+          <VoiceSettings />
 
           <div style={{ marginTop: 12, fontSize: "0.78rem", color: "var(--color-text-secondary)" }}>
             {appLanguage === "vi" ? "Provider hiện tại:" : "Current provider:"} {providerHint}

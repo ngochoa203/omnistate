@@ -114,7 +114,7 @@ export function MirrorPage({
 
 function renderFrame(canvas: HTMLCanvasElement | null, jpegBytes: Uint8Array): void {
   if (!canvas) return;
-  const blob = new Blob([jpegBytes], { type: "image/jpeg" });
+  const blob = new Blob([jpegBytes as unknown as BlobPart], { type: "image/jpeg" });
   const url = URL.createObjectURL(blob);
   const img = new Image();
   img.onload = () => {

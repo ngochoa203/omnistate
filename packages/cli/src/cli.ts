@@ -32,6 +32,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createInterface } from "node:readline";
 import WebSocket from "ws";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -64,11 +65,16 @@ interface ShutdownMessage {
   type: "admin.shutdown";
 }
 
+interface ToolsListMessage {
+  type: "tools.list";
+}
+
 type ClientMessage =
   | ConnectMessage
   | TaskMessage
   | StatusQueryMessage
-  | ShutdownMessage;
+  | ShutdownMessage
+  | ToolsListMessage;
 
 interface ConnectedMessage {
   type: "connected";
@@ -128,6 +134,12 @@ interface ErrorMessage {
   message: string;
 }
 
+interface ToolsReportMessage {
+  type: "tools.report";
+  tools: Array<{ name: string; description: string; group: string }>;
+  skills: Array<{ name: string; group: string }>;
+}
+
 type ServerMessage =
   | ConnectedMessage
   | TaskAcceptedMessage
@@ -138,6 +150,7 @@ type ServerMessage =
   | StatusReplyMessage
   | GatewayShutdownMessage
   | ErrorMessage
+  | ToolsReportMessage
   | { type: string; [key: string]: unknown };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -942,6 +955,372 @@ async function cmdStop(): Promise<void> {
   });
 }
 
+// ─── Command: repl / chat ─────────────────────────────────────────────────────
+
+const REPL_SLASH_COMMANDS = [
+  "/tools", "/skills", "/status", "/health", "/config",
+  "/model", "/clear", "/quit", "/exit", "/help",
+];
+
+const TOOL_GROUPS = [
+  { group: "browser",   count: 42 },
+  { group: "file",      count: 32 },
+  { group: "system",    count: 28 },
+  { group: "network",   count: 16 },
+  { group: "security",  count: 11 },
+  { group: "process",   count: 9  },
+  { group: "media",     count: 8  },
+  { group: "git",       count: 7  },
+  { group: "docker",    count: 6  },
+  { group: "calendar",  count: 5  },
+];
+
+const SKILL_GROUPS = [
+  "timer", "note", "reminder", "calendar", "app", "shell",
+  "git", "docker", "media", "browser", "clipboard", "screenshot",
+];
+
+function printReplBanner(mode: string, model: string, context: string, sessionId: string): void {
+  const modelLine   = `Model: ${model}    Context: ${context}    Session: ${sessionId}`;
+  const modeLabel   = dim(`  [${mode}]`);
+  console.log(cyan(bold(
+    "╔══════════════════════════════════════════════════════════════╗\n" +
+    "║                    OMNISTATE                                ║\n" +
+    "║            AI-Powered System Control                        ║\n" +
+    "╠══════════════════════════════════════════════════════════════╣\n" +
+    `║  ${modelLine.padEnd(60)}║\n` +
+    "╚══════════════════════════════════════════════════════════════╝"
+  )));
+  console.log(modeLabel);
+}
+
+function printReplToolList(): void {
+  const toolStr = TOOL_GROUPS.map((g) => `${g.group}(${g.count})`).join(" ");
+  console.log(`  ${dim("Tools:")} ${toolStr}`);
+  const skillStr = SKILL_GROUPS.join(" ");
+  console.log(`  ${dim("Skills:")} ${skillStr}`);
+}
+
+function printReplHelp(): void {
+  console.log(
+    `  ${cyan("/tools")} — list all tools    ` +
+    `${cyan("/status")} — gateway status    ` +
+    `${cyan("/health")} — health check\n` +
+    `  ${cyan("/model")} — current model     ` +
+    `${cyan("/config")} — show config       ` +
+    `${cyan("/clear")} — clear screen\n` +
+    `  ${cyan("/quit")} — exit`
+  );
+}
+
+async function cmdRepl(args: string[]): Promise<void> {
+  const inlineMode = args.includes("--inline");
+  const mode = inlineMode ? "inline" : "daemon";
+
+  printReplBanner(mode, "detecting...", "detecting...", "detecting...");
+  console.log();
+  printReplToolList();
+  console.log();
+  printReplHelp();
+  console.log();
+
+  // In daemon mode, establish a persistent WS connection
+  let ws: WebSocket | null = null;
+
+  if (!inlineMode) {
+    try {
+      ws = await connect();
+      console.log(green(`✓ Connected to gateway at ${WS_URL}`));
+    } catch (err) {
+      console.log(yellow(`⚠  Gateway not reachable: ${(err as Error).message}`));
+      console.log(dim("  Falling back to inline mode for NL tasks."));
+    }
+  } else {
+    console.log(dim("  Running in inline mode — no gateway required."));
+  }
+
+  console.log();
+
+  const promptStr = isTTY ? `${cyan("omni>")} ` : "omni> ";
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: promptStr,
+    completer: (line: string): [string[], string] => {
+      const hits = REPL_SLASH_COMMANDS.filter((c) => c.startsWith(line));
+      return [hits.length ? hits : REPL_SLASH_COMMANDS, line];
+    },
+  });
+
+  // Handle WS close events during REPL session
+  if (ws) {
+    ws.on("close", () => {
+      console.log(yellow("\n⚠  Gateway connection closed. Reconnect or use inline fallback."));
+      ws = null;
+      rl.prompt();
+    });
+    ws.on("error", (err) => {
+      console.error(red(`\n✗ WS error: ${err.message}`));
+      ws = null;
+      rl.prompt();
+    });
+  }
+
+  rl.prompt();
+
+  rl.on("line", async (rawLine) => {
+    const input = rawLine.trim();
+    if (!input) {
+      rl.prompt();
+      return;
+    }
+
+    try {
+      // ── slash commands ──────────────────────────────────────────────────────
+      if (input.startsWith("/")) {
+        const cmd = input.split(" ")[0]!.toLowerCase();
+
+        switch (cmd) {
+          case "/tools": {
+            console.log(`\n${bold("Tool groups:")}`);
+            for (const g of TOOL_GROUPS) {
+              console.log(`  ${cyan(g.group.padEnd(12))} ${dim(`${g.count} tools`)}`);
+            }
+            // If connected, request live list from gateway
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              send(ws, { type: "tools.list" } as ClientMessage);
+            }
+            break;
+          }
+
+          case "/skills": {
+            console.log(`\n${bold("Skill categories:")}`);
+            for (const s of SKILL_GROUPS) {
+              console.log(`  ${cyan(s)}`);
+            }
+            break;
+          }
+
+          case "/status": {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              send(ws, { type: "status.query" } as ClientMessage);
+              // Response printed by message handler
+            } else if (inlineMode) {
+              console.log(dim("  Running in inline mode — no gateway status available."));
+            } else {
+              console.log(yellow("  Gateway not connected. Try: omnistate start"));
+            }
+            break;
+          }
+
+          case "/health":
+            await cmdHealth();
+            break;
+
+          case "/config":
+            await cmdConfig(["show"]);
+            break;
+
+          case "/model":
+            await cmdModel([]);
+            break;
+
+          case "/clear":
+            console.clear();
+            printReplBanner(mode, "detecting...", "detecting...", "detecting...");
+            printReplToolList();
+            printReplHelp();
+            console.log();
+            break;
+
+          case "/quit":
+          case "/exit":
+            console.log("Goodbye!");
+            if (ws) ws.close();
+            rl.close();
+            return;
+
+          case "/help":
+          default:
+            printReplHelp();
+            break;
+        }
+
+        rl.prompt();
+        return;
+      }
+
+      // ── natural-language input ──────────────────────────────────────────────
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        // Daemon mode: send over WS and stream response
+        send(ws, { type: "task", goal: input });
+        const startMs = Date.now();
+
+        await new Promise<void>((resolveTask) => {
+          const onMsg = (raw: Buffer | string) => {
+            let msg: ServerMessage;
+            try {
+              msg = JSON.parse(raw.toString()) as ServerMessage;
+            } catch {
+              return;
+            }
+
+            switch (msg.type) {
+              case "task.accepted": {
+                const m = msg as TaskAcceptedMessage;
+                console.log(dim(`  task ${m.taskId.slice(0, 8)}`));
+                break;
+              }
+              case "task.step": {
+                const m = msg as TaskStepMessage;
+                if (m.status === "completed" && m.data) {
+                  printStepOutput(m.data);
+                } else if (m.status === "failed") {
+                  console.error(red(`  ✗ Step ${m.step} failed`));
+                }
+                break;
+              }
+              case "task.complete": {
+                const m = msg as TaskCompleteMessage;
+                if (typeof m.result.output === "string" && m.result.output.trim()) {
+                  console.log(m.result.output.trimEnd());
+                }
+                const elapsed = Date.now() - startMs;
+                console.log(dim(`\n  done (${elapsed}ms)`));
+                ws!.off("message", onMsg);
+                resolveTask();
+                break;
+              }
+              case "task.error": {
+                const m = msg as TaskErrorMessage;
+                console.error(`\n${red("✗")} ${m.error}`);
+                ws!.off("message", onMsg);
+                resolveTask();
+                break;
+              }
+              case "tools.report": {
+                const m = msg as ToolsReportMessage;
+                console.log(`\n${bold("Live tools from gateway:")} ${m.tools.length} tools, ${m.skills.length} skills`);
+                ws!.off("message", onMsg);
+                resolveTask();
+                break;
+              }
+              case "status.reply": {
+                const m = msg as StatusReplyMessage;
+                const uptimeSec = Math.floor(m.uptime / 1000);
+                console.log(`  ${dim("clients:")} ${m.connectedClients}  ${dim("queue:")} ${m.queueDepth}  ${dim("uptime:")} ${uptimeSec}s`);
+                ws!.off("message", onMsg);
+                resolveTask();
+                break;
+              }
+              case "error": {
+                const m = msg as ErrorMessage;
+                console.error(red(`✗ ${m.message}`));
+                ws!.off("message", onMsg);
+                resolveTask();
+                break;
+              }
+            }
+          };
+
+          ws!.on("message", onMsg);
+
+          // Safety timeout: re-prompt after 60s if no terminal event arrives
+          const timeout = setTimeout(() => {
+            ws!.off("message", onMsg);
+            resolveTask();
+          }, 60_000);
+
+          const origResolve = resolveTask;
+          resolveTask = () => {
+            clearTimeout(timeout);
+            origResolve();
+          };
+        });
+
+      } else {
+        // Inline fallback mode
+        try {
+          await cmdRunInlineRepl(input);
+        } catch (err) {
+          console.error(`${red("✗")} ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      console.error(`${red("✗")} ${(err as Error).message}`);
+    }
+
+    rl.prompt();
+  });
+
+  rl.on("close", () => {
+    if (ws) ws.close();
+    console.log("\nGoodbye!");
+    process.exit(0);
+  });
+}
+
+/**
+ * Inline execution for REPL — same as cmdRunInline but does NOT call process.exit().
+ */
+async function cmdRunInlineRepl(goal: string): Promise<void> {
+  console.log(`${cyan("[omnistate]")} ${dim("(inline)")} ${bold(goal)}\n`);
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const gatewayDist = resolve(__dirname, "../../gateway/dist");
+
+  let classifyIntent: (text: string) => Promise<{ type: string; entities: Record<string, unknown>; confidence: number; rawText: string }>;
+  let planFromIntent: (intent: unknown) => Promise<{ taskId: string; goal: string; estimatedDuration: string; nodes: Array<{ id: string; type: string; layer: string; action: { description: string; tool: string; params: Record<string, unknown> }; verify?: unknown; dependencies: string[]; onSuccess: string | null; onFailure: unknown; estimatedDurationMs: number; priority: string }> }>;
+  let optimizePlan: (plan: unknown) => unknown;
+  let Orchestrator: new () => { executePlan(plan: unknown): Promise<{ taskId: string; status: string; completedSteps: number; totalSteps: number; error?: string; stepResults?: Array<{ nodeId: string; status: string; layer: string; durationMs: number; data?: Record<string, unknown>; error?: string }> }> };
+
+  try {
+    const intentMod = await import(resolve(gatewayDist, "planner/intent.js"));
+    classifyIntent = intentMod.classifyIntent;
+    planFromIntent = intentMod.planFromIntent;
+    const optimizerMod = await import(resolve(gatewayDist, "planner/optimizer.js"));
+    optimizePlan = optimizerMod.optimizePlan;
+    const orchMod = await import(resolve(gatewayDist, "executor/orchestrator.js"));
+    Orchestrator = orchMod.Orchestrator;
+  } catch (err) {
+    throw new Error(
+      `Cannot load gateway modules. Is the gateway built? Try: pnpm build\n${(err as Error).message}`
+    );
+  }
+
+  const startMs = Date.now();
+  const intent = await classifyIntent(goal);
+  console.log(dim(`  intent: ${intent.type} (${(intent.confidence * 100).toFixed(0)}%)`));
+
+  const rawPlan = await planFromIntent(intent);
+  const plan = optimizePlan(rawPlan) as typeof rawPlan;
+  console.log(dim(`  plan: ${plan.nodes.length} step(s)\n`));
+
+  const orchestrator = new Orchestrator();
+  const result = await orchestrator.executePlan(plan);
+  const elapsed = Date.now() - startMs;
+
+  if (result.status === "failed") {
+    console.error(`${red("✗")} ${result.error ?? "Execution failed"}`);
+    if (result.stepResults) {
+      for (const step of result.stepResults) {
+        if (step.data && step.status === "ok") printStepOutput(step.data);
+      }
+    }
+    return;
+  }
+
+  if (result.stepResults) {
+    for (const step of result.stepResults) {
+      if (step.data) printStepOutput(step.data);
+    }
+  }
+
+  console.log(dim(`\n  done (${elapsed}ms)`));
+}
+
 // ─── Command: voiceprint ─────────────────────────────────────────────────────
 
 async function cmdVoiceprint(args: string[]): Promise<void> {
@@ -1034,6 +1413,10 @@ ${bold("COMMANDS")}
     ${dim("--inline")}           Force inline mode (skip daemon check)
     ${dim("(auto)")}             Tries daemon first, falls back to inline
 
+  ${cyan("chat")}               Interactive REPL mode (Hermes Agent-style)
+  ${cyan("repl")}               Alias for chat
+    ${dim("--inline")}           Run gateway in-process (no daemon needed)
+
   ${cyan("status")}             Show gateway status (clients, queue, uptime)
 
   ${cyan("config")}             Runtime config (provider/model/base URL/API key)
@@ -1063,6 +1446,8 @@ ${bold("COMMANDS")}
   ${cyan("--help")}             Print this help message
 
 ${bold("EXAMPLES")}
+  omnistate chat
+  omnistate repl --inline
   omnistate run all
   omnistate run "list all files"
   omnistate config show
@@ -1194,6 +1579,11 @@ async function main(): Promise<void> {
 
     case "voiceprint":
       await cmdVoiceprint(rest);
+      break;
+
+    case "chat":
+    case "repl":
+      await cmdRepl(rest);
       break;
 
     case "stop":

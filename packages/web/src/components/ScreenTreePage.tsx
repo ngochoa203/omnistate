@@ -144,7 +144,6 @@ function HierarchyNodeItem({ node, depth, path, defaultExpanded = false }: Hiera
           borderRadius: 4,
           cursor: hasChildren ? "pointer" : "default",
           userSelect: "none",
-          "&:hover": { background: "rgba(255,255,255,0.04)" },
         }}
         title={currentPath}
       >
@@ -299,9 +298,9 @@ export function ScreenTreePage() {
         const rawText = await res.text();
         const data = (() => {
           try {
-            return JSON.parse(rawText) as T & { ok?: boolean; error?: string };
+            return JSON.parse(rawText) as T & { ok?: boolean; error?: string; details?: string };
           } catch {
-            return { ok: res.ok, error: rawText } as T & { ok?: boolean; error?: string };
+            return { ok: res.ok, error: rawText } as T & { ok?: boolean; error?: string; details?: string };
           }
         })();
         if (res.ok && data && data.ok !== false) {

@@ -28,6 +28,7 @@ import { loadConfig } from "./config/loader.js";
 import { HealthMonitor } from "./health/monitor.js";
 import type { ServerMessage } from "./gateway/protocol.js";
 import { runLlmPreflight, shouldRequireLlm } from "./llm/preflight.js";
+import { loadLlmRuntimeConfig } from "./llm/runtime-config.js";
 
 import { logger } from "./utils/logger.js";
 // ─── .env loader (no external deps) — exported for CLI inline use ──────────
@@ -126,7 +127,21 @@ export async function startGateway(): Promise<void> {
     config.gateway.port = args.port;
   }
 
-  // 3.5. If LLM is required, fail fast on auth/credits/network issues.
+  // 3.5. Startup checks — warn on missing env vars, never throw.
+  const runtimeCfg = loadLlmRuntimeConfig();
+  if (runtimeCfg.voice.primaryProvider === "whisper-local") {
+    const model = process.env.WHISPER_MODEL ?? "small";
+    const device = process.env.WHISPER_DEVICE ?? "cpu";
+    logger.info(`[startup] STT primary=whisper-local (model=${model}, device=${device})`);
+  }
+  const usesCloud =
+    runtimeCfg.voice.primaryProvider === "whisper-cloud" ||
+    runtimeCfg.voice.fallbackProviders.includes("whisper-cloud");
+  if (!process.env.OPENAI_API_KEY && usesCloud) {
+    logger.warn("[startup] WARN: OPENAI_API_KEY not set — whisper-cloud STT will fail.");
+  }
+
+  // 3.6. If LLM is required, fail fast on auth/credits/network issues.
   const preflight = await runLlmPreflight();
   if (shouldRequireLlm() && !preflight.ok) {
     logger.warn(`[OmniState] LLM preflight warning: ${preflight.message}`);

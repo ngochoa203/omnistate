@@ -177,6 +177,9 @@ class GatewayManager: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         env["NODE_ENV"] = "production"
         env["OMNISTATE_LOG_LEVEL"] = "info"
+        if env["WHISPER_DEVICE"] == nil || env["WHISPER_DEVICE"]?.isEmpty == true {
+            env["WHISPER_DEVICE"] = "cpu"
+        }
         proc.environment = env
 
         // Handle stdout

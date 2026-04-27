@@ -1,4 +1,6 @@
 import type { StatePlan, StateNode, ExecutionLayer } from "../types/task.js";
+import { intentRegistry } from "../intents/index.js";
+import type { HandlerContext } from "../intents/index.js";
 import { ExecutionQueue } from "./queue.js";
 import { RetryEngine } from "./retry.js";
 import { verifyStep } from "./verify.js";
@@ -23,6 +25,21 @@ import * as HybridTooling from "../hybrid/tooling.js";
 import { AdvancedVision } from "../vision/advanced.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
 import { PermissionResponder, ClaudeCodeResponder } from "../vision/permission-responder.js";
+import type { StructuredResponse } from "../intents/index.js";
+
+/**
+ * Converts a StructuredResponse from the intent registry into the legacy
+ * Record<string, unknown> shape expected by executeDeep callers.
+ */
+function wrapResult(sr: StructuredResponse): Record<string, unknown> {
+  return {
+    output: sr.speak,
+    speak: sr.speak,
+    ...(sr.ui ? { ui: sr.ui } : {}),
+    ...(sr.followup ? { followup: sr.followup } : {}),
+    ...(sr.data !== undefined ? { data: sr.data } : {}),
+  };
+}
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -321,16 +338,40 @@ export class Orchestrator {
     return result;
   }
 
+  private buildHandlerContext(sessionId?: string): HandlerContext {
+    return {
+      sessionId,
+      logger: (this as any)._logger ?? console as any,
+      layers: {
+        surface: this.surface,
+        deep: this.deep,
+        browser: this.browser,
+        fleet: this.fleet,
+        hybrid: this.hybridAuto as unknown as Record<string, unknown>,
+        // expose deepOS for migrated adapters
+        ...(({ deepOS: this.deepOS } as any)),
+      } as any,
+    };
+  }
+
   private async executeDeep(
     tool: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    sessionId?: string
   ): Promise<Record<string, unknown>> {
+    // Registry fast-path: handles Siri-class tools + migrated tools
+    if (intentRegistry.has(tool)) {
+      const ctx = this.buildHandlerContext(sessionId);
+      const sr = await intentRegistry.dispatch(tool, params, ctx);
+      return wrapResult(sr);
+    }
+
     switch (tool) {
-      case "shell.exec": {
+      case "shell.exec": { // MIGRATED: src/intents/index.ts
         const output = this.deep.exec(params.command as string);
         return { output };
       }
-      case "app.launch": {
+      case "app.launch": { // MIGRATED: src/intents/index.ts
         const name = params.name as string;
         const success = await this.deep.launchApp(name);
         if (success) return { success: true };
@@ -426,6 +467,14 @@ export class Orchestrator {
       case "app.launchWithContext": {
         const success = await this.deepOS.launchAppWithContext(params.name as string, params.args as string[] | undefined, params.env as Record<string, string> | undefined);
         return { success };
+      }
+      case "app.chat": {
+        const result = await this.openChatWithPerson(
+          params.app as "messenger" | "zalo" | "imessage" | "telegram" | "whatsapp",
+          params.person as string,
+          params.message as string | undefined,
+        );
+        return result as unknown as Record<string, unknown>;
       }
       case "snapshot.create": {
         const info = await this.deepOS.createSnapshot(params.label as string);
@@ -527,7 +576,7 @@ export class Orchestrator {
         const interfaces = await this.deepOS.getNetworkInterfaces();
         return { interfaces };
       }
-      case "network.wifi": {
+      case "network.wifi": { // MIGRATED: src/intents/index.ts
         const wifi = await this.deepOS.getWiFiStatus();
         return { wifi };
       }
@@ -599,7 +648,7 @@ export class Orchestrator {
         const success = await this.deepOS.setAudioInput(params.deviceId as string);
         return { success };
       }
-      case "audio.volume": {
+      case "audio.volume": { // MIGRATED: src/intents/index.ts
         if (params.level !== undefined) {
           const success = await this.deepOS.setVolume(params.level as number);
           return { success };
@@ -2293,6 +2342,13 @@ end tell`);
       }
     }
 
+    // Registry fast-path for surface-layer tools
+    if (intentRegistry.has(tool)) {
+      const ctx = this.buildHandlerContext();
+      const sr = await intentRegistry.dispatch(tool, params, ctx);
+      return wrapResult(sr);
+    }
+
     switch (tool) {
       case "screen.capture": {
         const capture = await this.surface.captureScreen();
@@ -2374,7 +2430,7 @@ end tell`);
         await this.surface.moveMouse(params.x as number, params.y as number);
         return {};
       }
-      case "ui.click": {
+      case "ui.click": { // MIGRATED: src/intents/index.ts
         const button = (params.button as "left" | "right" | "middle" | undefined) ?? "left";
         const x = params.x as number | undefined;
         const y = params.y as number | undefined;
@@ -3073,6 +3129,107 @@ end tell`);
     const prefix = normalizeToolAlias(node.action.tool, node.action.params).tool.split(".")[0];
     const surfacePrefixes = new Set(["screen", "ui", "vision"]);
     return surfacePrefixes.has(prefix) ? "surface" : "deep";
+  }
+
+  // ── Chat opener ────────────────────────────────────────────────────────────
+
+  /**
+   * Open a specific chat conversation in a messaging app.
+   * Uses OS-level deep links where available; falls back to opening the app
+   * and returns a notice when a display name cannot be resolved to a URL.
+   */
+  async openChatWithPerson(
+    app: "messenger" | "zalo" | "imessage" | "telegram" | "whatsapp",
+    person: string,
+    message?: string,
+  ): Promise<{ ok: boolean; opened: string; notice?: string }> {
+    // Helpers — no raw string interpolation into shell
+    const isPhoneNumber = (s: string) =>
+      /^\+?\d{8,15}$/.test(s) || /^0\d{9,10}$/.test(s);
+
+    const normalizePhone = (s: string) =>
+      s.startsWith("0") ? "+84" + s.slice(1) : s;
+
+    const isTelegramUsername = (s: string) =>
+      /^[a-zA-Z][a-zA-Z0-9_]{3,}$/.test(s);
+
+    // Messenger usernames: numeric id OR lowercase-starting handle with ≥5 chars
+    const isMessengerHandle = (s: string) =>
+      /^\d+$/.test(s) || /^[a-z][\w.\-]{4,}$/.test(s);
+
+    const run = (cmd: string) => this.deep.execAsync(cmd, 10_000);
+
+    switch (app) {
+      case "messenger": {
+        if (isMessengerHandle(person)) {
+          const url = `https://www.messenger.com/t/${encodeURIComponent(person)}`;
+          await run(`open -a "Messenger" "${url}" 2>/dev/null || open "${url}"`);
+          return { ok: true, opened: url };
+        }
+        await run(`open -a "Messenger" 2>/dev/null || open "https://www.messenger.com/"`);
+        return {
+          ok: true,
+          opened: "https://www.messenger.com/",
+          notice: `Cannot deep-link by display name; opened Messenger inbox`,
+        };
+      }
+
+      case "zalo": {
+        await run(`open -a "Zalo"`);
+        return {
+          ok: true,
+          opened: "Zalo",
+          notice: `Open Zalo and find ${person} manually (deep link not supported)`,
+        };
+      }
+
+      case "imessage": {
+        if (isPhoneNumber(person)) {
+          const phone = normalizePhone(person);
+          await run(`open "imessage:${encodeURIComponent(phone)}"`);
+          return { ok: true, opened: `imessage:${phone}` };
+        }
+        await run(`open -a "Messages"`);
+        return {
+          ok: true,
+          opened: "Messages",
+          notice: `Open Messages and find ${person} manually (deep link requires phone number)`,
+        };
+      }
+
+      case "telegram": {
+        const handle = person.startsWith("@") ? person.slice(1) : person;
+        if (isTelegramUsername(handle)) {
+          const url = `tg://resolve?domain=${encodeURIComponent(handle)}`;
+          await run(`open "${url}"`);
+          return { ok: true, opened: url };
+        }
+        await run(`open -a "Telegram"`);
+        return {
+          ok: true,
+          opened: "Telegram",
+          notice: `Open Telegram and find ${person} manually (deep link requires @username)`,
+        };
+      }
+
+      case "whatsapp": {
+        if (isPhoneNumber(person)) {
+          const phone = normalizePhone(person).replace(/^\+/, "");
+          const msgParam = message
+            ? `&text=${encodeURIComponent(message)}`
+            : "";
+          const url = `https://wa.me/${phone}${msgParam}`;
+          await run(`open "${url}"`);
+          return { ok: true, opened: url };
+        }
+        await run(`open -a "WhatsApp"`);
+        return {
+          ok: true,
+          opened: "WhatsApp",
+          notice: `Open WhatsApp and find ${person} manually (deep link requires international phone number)`,
+        };
+      }
+    }
   }
 }
 

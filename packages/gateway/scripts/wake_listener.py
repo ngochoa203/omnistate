@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 try:
@@ -1012,7 +1013,12 @@ def should_reject_command(text, engine):
 
 
 def normalize_text(text):
-    return re.sub(r"\s+", " ", (text or "").strip().lower())
+    s = (text or "").strip().lower()
+    # Strip diacritics via NFKD so Vietnamese STT output without accents
+    # (e.g. "hey mimi" from "hây mimi") still matches accented aliases.
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s)
 
 
 def phrase_similarity(a, b):
@@ -1047,6 +1053,9 @@ def detect_wake(
         text = normalize_text(text)
         if not text:
             return False
+        # Fast-path: any transcript containing "mimi" is accepted immediately.
+        if "mimi" in text:
+            return True
         words = [w for w in text.split(" ") if w]
         word_count = len(words)
         leadins = {"hey", "ok", "okay", "này", "oi", "ơi", "a", "ê", "alo"}
@@ -1238,12 +1247,13 @@ def main():
     parser.add_argument("--wake-min-similarity", type=float, default=0.9)
     parser.add_argument("--max-phrase-repeat", type=int, default=1)
     parser.add_argument("--self-voice-guard-ms", type=int, default=900)
-    parser.add_argument("--wake-min-rms", type=int, default=130)
+    parser.add_argument("--wake-min-rms", type=int, default=60)
     parser.add_argument("--command-min-rms", type=int, default=55)
-    parser.add_argument("--max-energy-threshold", type=int, default=180)
+    parser.add_argument("--max-energy-threshold", type=int, default=250)
     parser.add_argument("--speaker-min-rms", type=int, default=95)
     parser.add_argument("--allow-offline-wake-fallback", action="store_true", default=False)
     parser.add_argument("--allow-offline-command-fallback", action="store_true", default=False)
+    parser.add_argument("--aliases", default="", help="Comma-separated extra wake aliases")
     parser.add_argument("--reply-voice", default="Samantha")
     parser.add_argument("--reply-rate", type=int, default=205)
     parser.add_argument("--reply-enabled", action="store_true", default=True)
@@ -1271,7 +1281,7 @@ def main():
         sys.exit(2)
 
     recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 120
+    recognizer.energy_threshold = 80
     recognizer.dynamic_energy_threshold = True
     recognizer.dynamic_energy_adjustment_damping = 0.08
     recognizer.dynamic_energy_ratio = 1.3
@@ -1288,6 +1298,10 @@ def main():
 
     profile = load_voice_profile(args.voice_profile)
     wake_aliases = profile["wakeAliases"]
+    # Merge CLI --aliases (comma-separated) with profile aliases.
+    if args.aliases:
+        cli_aliases = [normalize_text(a) for a in args.aliases.split(",") if a.strip()]
+        wake_aliases = list({*wake_aliases, *cli_aliases})
     command_corrections = profile["commandCorrections"]
     phrase_hints = profile["phraseHints"] if profile["phraseHints"] else [
         "youtube",
@@ -1320,6 +1334,7 @@ def main():
     wake_languages = profile["wakeLanguages"] if profile["wakeLanguages"] else ["vi-VN"]
     command_languages = profile["commandLanguages"] if profile["commandLanguages"] else languages
 
+    print(f"[Wake] config energy_threshold={recognizer.energy_threshold} wake_min_rms={args.wake_min_rms} phrase_time_limit=6 aliases={wake_aliases}", flush=True)
     print(f"[wake] listening phrase='{phrase}'", flush=True)
     print(f"[wake] trace file: {trace_file}", flush=True)
     show_notification("OmniState", f"Wake listener active: '{phrase}'")
@@ -1330,6 +1345,7 @@ def main():
     self_voice_guard_until_ms = 0
     startup_guard_until_ms = int(time.time() * 1000) + args.startup_guard_ms
     paused = False
+    _last_idle_log_sec = 0.0
 
     while True:
         try:
@@ -1362,7 +1378,7 @@ def main():
                     recognizer.energy_threshold = args.max_energy_threshold
                 recognizer.pause_threshold = 0.55
                 recognizer.non_speaking_duration = 0.35
-                audio = recognizer.listen(source, timeout=2, phrase_time_limit=4)
+                audio = recognizer.listen(source, timeout=4, phrase_time_limit=6)
 
             triggered, heard_wake = detect_wake(
                 recognizer,
@@ -1533,6 +1549,10 @@ def main():
                     self_voice_guard_until_ms = int(time.time() * 1000) + args.self_voice_guard_ms
 
         except sr.WaitTimeoutError:
+            _now = time.time()
+            if _now - _last_idle_log_sec >= 10.0:
+                print("[Wake] wake_idle:no_audio", flush=True)
+                _last_idle_log_sec = _now
             continue
         except KeyboardInterrupt:
             print("[wake] stopped", flush=True)

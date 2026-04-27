@@ -46,11 +46,13 @@ function makeConfig(): LlmRuntimeConfig {
       decomposeMaxTokens: 360,
       maxInputChars: 1400,
     },
+    fastPathThreshold: 0.92,
     voice: {
+      whisperLocalModel: "small",
       lowLatency: true,
       autoExecuteTranscript: true,
       primaryProvider: "native",
-      fallbackProviders: ["whisper-local", "whisper-cloud"],
+      fallbackProviders: ["whisper-cloud", "native"],
       chunkMs: 220,
       siri: {
         enabled: false,
@@ -64,6 +66,16 @@ function makeConfig(): LlmRuntimeConfig {
         phrase: "hey omni",
         cooldownMs: 2500,
         commandWindowSec: 7,
+        engine: "oww" as const,
+        aliases: ["mimi", "hey mimi", "ok mimi", "mimi ơi", "mimi oi", "mi mi"],
+        threshold: 0.5,
+      },
+      vad: {
+        enabled: true,
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
       },
     },
     session: {

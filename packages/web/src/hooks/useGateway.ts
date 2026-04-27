@@ -89,7 +89,7 @@ export function useGateway() {
           "";
         if (!speech.trim()) return;
 
-        void speakText(speech, state.appLanguage);
+        void speakText(speech, state.appLanguage === "vi" ? "vi" : "en");
       }
     }));
 
@@ -154,6 +154,28 @@ export function useGateway() {
       if (msg.type === "vibevoice.error") {
         store.setVoiceState("idle");
         store.addSystemMessage(`VibeVoice error (${msg.sessionId}): ${msg.error}`);
+      }
+    }));
+
+    unsubs.push(client.on("voice.tts.audio", (msg: ServerMessage) => {
+      if (msg.type === "voice.tts.audio") {
+        const binary = atob(msg.audio);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "audio/mpeg" });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+        void audio.play();
+      }
+    }));
+
+    unsubs.push(client.on("voice.speaker.mismatch", (msg: ServerMessage) => {
+      if (msg.type === "voice.speaker.mismatch") {
+        console.warn("[voice] speaker mismatch", msg);
+        store.addSystemMessage(
+          `Voice doesn't match enrolled profile (score: ${msg.score.toFixed(2)})`
+        );
       }
     }));
 

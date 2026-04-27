@@ -13,15 +13,17 @@ import { getCopy } from "./lib/i18n";
 import { ConfigPage } from "./components/ConfigPage";
 import { ScreenTreePage } from "./components/ScreenTreePage";
 import { TriggerPage } from "./components/TriggerPage";
+import { MemoryPalPage } from "./components/MemoryPalPage";
+import { ApprovalCenter } from "./components/ApprovalCenter";
 import { AuthPage } from "./components/AuthPage";
 import { useAuthStore } from "./lib/auth-store";
 import { initAuth } from "./lib/auth-client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OnboardingWizard, shouldShowOnboarding, markOnboardingComplete } from "./components/OnboardingWizard";
 
-type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers";
+type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers" | "memory" | "approvals";
 
-const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers"; icon: React.ReactNode }> = [
+const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers" | "memory" | "approvals"; icon: React.ReactNode }> = [
   {
     id: "dashboard",
     labelKey: "dashboard",
@@ -122,6 +124,16 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
       </svg>
     ),
+  },
+  {
+    id: "memory",
+    labelKey: "memory",
+    icon: <span style={{ fontSize: 14 }}>🧠</span>,
+  },
+  {
+    id: "approvals",
+    labelKey: "approvals",
+    icon: <span style={{ fontSize: 14 }}>🛡️</span>,
   },
 ];
 
@@ -406,6 +418,8 @@ export function App() {
           {view === "config" && <ErrorBoundary><ConfigPage /></ErrorBoundary>}
           {view === "screenTree" && <ErrorBoundary><ScreenTreePage /></ErrorBoundary>}
           {view === "triggers" && <ErrorBoundary><TriggerPage /></ErrorBoundary>}
+          {view === "memory" && <ErrorBoundary><MemoryPalPage /></ErrorBoundary>}
+          {view === "approvals" && <ErrorBoundary><ApprovalCenter /></ErrorBoundary>}
         </div>
       </main>
     </div>
