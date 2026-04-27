@@ -1,17 +1,9 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { GatewayClientCore, ConnectionState } from "@omnistate/mobile-core";
+import { mmkvStorage } from "./mmkv-storage";
 
-// ---------------------------------------------------------------------------
-// Simple in-memory storage adapter (replace with AsyncStorage in production)
-// ---------------------------------------------------------------------------
-const memoryStore = new Map<string, string>();
-
-const storage = createJSONStorage(() => ({
-  getItem: (name: string): string | null => memoryStore.get(name) ?? null,
-  setItem: (name: string, value: string): void => { memoryStore.set(name, value); },
-  removeItem: (name: string): void => { memoryStore.delete(name); },
-}));
+const storage = createJSONStorage(() => mmkvStorage);
 
 // ---------------------------------------------------------------------------
 // Types

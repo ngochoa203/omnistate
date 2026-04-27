@@ -20,6 +20,9 @@ pub enum OmniError {
     #[error("Element not found: {0}")]
     ElementNotFound(String),
 
+    #[error("Audio processing failed: {0}")]
+    AudioError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

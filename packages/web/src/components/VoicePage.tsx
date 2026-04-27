@@ -243,6 +243,28 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
   }, [wakeListenerLocal]);
 
   // ---------------------------------------------------------------------------
+  // Bridge WS transcript/error events into useVoice callbacks
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const offTranscript = getClient().on("voice.transcript", (msg: any) => {
+      if (msg?.type !== "voice.transcript") return;
+      const text = typeof msg.text === "string" ? msg.text : "";
+      voice.onTranscriptReceived(text);
+    });
+
+    const offError = getClient().on("voice.error", (msg: any) => {
+      if (msg?.type !== "voice.error") return;
+      const error = typeof msg.error === "string" ? msg.error : "Unknown voice error";
+      voice.onTranscriptError(error);
+    });
+
+    return () => {
+      offTranscript();
+      offError();
+    };
+  }, [voice]);
+
+  // ---------------------------------------------------------------------------
   // Re-arm mic 400 ms after TTS ends OR after assistant message arrives (no TTS)
   // ---------------------------------------------------------------------------
   useEffect(() => {

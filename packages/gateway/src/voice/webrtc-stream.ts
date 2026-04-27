@@ -635,7 +635,7 @@ export class VoiceStreamManager {
                 attempts.push({ provider, status: "empty" });
                 throw new Error(`empty transcript from ${provider}`);
               }
-              logger.info({ provider, textLen: text.length }, "[VoiceStream] STT success");
+              logger.info({ provider, textLen: text.length, transcript: text }, "[VoiceStream] STT success");
               attempts.push({ provider, status: "ok" });
               return { text, provider };
             } catch (err) {
@@ -664,7 +664,7 @@ export class VoiceStreamManager {
         const result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
         const text = result.text.trim();
         if (text) {
-          logger.info({ provider, textLen: text.length }, "[VoiceStream] STT success");
+          logger.info({ provider, textLen: text.length, transcript: text }, "[VoiceStream] STT success");
           attempts.push({ provider, status: "ok" });
           return { text, provider, attempts };
         }

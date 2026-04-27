@@ -129,6 +129,7 @@ type ImagePickerResponse = {
     height?: number;
     fileSize?: number;
     type?: string;
+    base64?: string;
   }>;
 };
 
@@ -139,6 +140,7 @@ type ImagePickerOptions = {
   maxHeight?: number;
   cameraType?: 'front' | 'back';
   includeExif?: boolean;
+  includeBase64?: boolean;
   saveToPhotos?: boolean;
 };
 
@@ -278,3 +280,76 @@ function createCameraCapture(): CameraCaptureModule {
 // ── Singleton export ──────────────────────────────────────────────────────────
 
 export const CameraCapture: CameraCaptureModule = createCameraCapture();
+
+// ── captureBase64 ─────────────────────────────────────────────────────────────
+
+export interface CaptureBase64Options {
+  quality?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+}
+
+export interface CaptureBase64Result {
+  /** Raw base64 string without the data: URI prefix. */
+  base64: string;
+  width: number;
+  height: number;
+  mimeType: string;
+}
+
+/**
+ * Capture a photo and return it as a base64-encoded string suitable for
+ * sending directly to the gateway for vision model inference.
+ *
+ * Defaults: quality 0.7, maxWidth 1280, maxHeight 1280.
+ */
+export async function captureBase64(
+  options: CaptureBase64Options = {},
+): Promise<CaptureBase64Result> {
+  const launchCamera = tryLoadImagePicker();
+
+  if (!launchCamera) {
+    throw new Error(
+      'react-native-image-picker is required for captureBase64. ' +
+      'Run: pnpm add react-native-image-picker',
+    );
+  }
+
+  const granted = await requestAndroidCameraPermission();
+  if (!granted) throw new Error('Camera permission denied');
+
+  const pickerOptions: ImagePickerOptions = {
+    mediaType: 'photo',
+    quality: options.quality ?? 0.7,
+    maxWidth: options.maxWidth ?? 1280,
+    maxHeight: options.maxHeight ?? 1280,
+    includeBase64: true,
+    saveToPhotos: false,
+  };
+
+  return new Promise<CaptureBase64Result>((resolve, reject) => {
+    launchCamera(pickerOptions, (response) => {
+      if (response.didCancel) {
+        reject(new Error('User cancelled camera'));
+        return;
+      }
+      if (response.errorCode) {
+        reject(
+          new Error(`Camera error (${response.errorCode}): ${response.errorMessage}`),
+        );
+        return;
+      }
+      const asset = response.assets?.[0];
+      if (!asset?.base64) {
+        reject(new Error('Camera returned no base64 data'));
+        return;
+      }
+      resolve({
+        base64: asset.base64,
+        width: asset.width ?? 0,
+        height: asset.height ?? 0,
+        mimeType: asset.type ?? 'image/jpeg',
+      });
+    });
+  });
+}

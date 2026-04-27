@@ -37,6 +37,7 @@ export type LlmStreamEvent =
 
 export interface LlmStreamOptions {
   tools?: AnthropicTool[];
+  toolChoice?: { type: "tool"; name: string } | { type: "auto" };
 }
 
 const PROVIDER_TIMEOUT_MS = 30_000;
@@ -91,6 +92,7 @@ async function* callAnthropicStream(
     ...(opts.tools && opts.tools.length > 0
       ? { tools: opts.tools as Anthropic.Tool[] }
       : {}),
+    ...(opts.toolChoice ? { tool_choice: opts.toolChoice } : {}),
   };
 
   const stream = client.messages.stream(params);
@@ -165,7 +167,11 @@ async function* callOpenAICompatibleStream(
 
   if (opts.tools && opts.tools.length > 0) {
     body.tools = toOpenAITools(opts.tools);
-    body.tool_choice = "auto";
+    if (opts.toolChoice?.type === "tool") {
+      body.tool_choice = { type: "function", function: { name: opts.toolChoice.name } };
+    } else {
+      body.tool_choice = "auto";
+    }
   }
 
   let response: Response;

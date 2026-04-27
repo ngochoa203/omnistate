@@ -51,7 +51,7 @@ function makeConfig(): LlmRuntimeConfig {
       whisperLocalModel: "small",
       lowLatency: true,
       autoExecuteTranscript: true,
-      primaryProvider: "native",
+      primaryProvider: "whisper-local",
       fallbackProviders: ["whisper-cloud", "native"],
       chunkMs: 220,
       siri: {

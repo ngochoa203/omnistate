@@ -22,6 +22,11 @@ export type ClientMessage =
   | VibeVoiceStartMessage
   | VibeVoiceChunkMessage
   | VibeVoiceEndMessage
+  | VoiceStreamStartMessage
+  | VoiceStreamStopMessage
+  | TtsCancelMessage
+  | VoiceEnrollMessage
+  | VoiceVerifyMessage
   | SystemDashboardMessage
   | PermissionPolicyGetMessage
   | PermissionPolicyUpdateMessage
@@ -32,7 +37,13 @@ export type ClientMessage =
   | VoiceEnrollSampleMessage
   | VoiceEnrollFinalizeMessage
   | VoiceEnrollCancelMessage
-  | VoiceWakeEnableMessage;
+  | VoiceWakeEnableMessage
+  | TriggerCreateMessage
+  | TriggerListMessage
+  | TriggerUpdateMessage
+  | TriggerDeleteMessage
+  | TriggerHistoryMessage
+  | ToolsListMessage;
 
 export interface VoiceWakeEnableMessage {
   type: "voice.wake.enable";
@@ -48,6 +59,8 @@ export interface ConnectMessage {
 export interface TaskMessage {
   type: "task";
   goal: string;
+  /** Optional: force routing mode. */
+  mode?: "auto" | "chat" | "task";
   /** Optional: force a specific execution layer. */
   layer?: "deep" | "surface" | "auto";
   attachments?: TaskAttachment[];
@@ -197,7 +210,8 @@ export interface AdminShutdownMessage {
 
 export interface VoiceTranscribeMessage {
   type: "voice.transcribe";
-  id: string;
+  id?: string;
+  sessionId?: string;
   /** Base64-encoded audio data. */
   audio: string;
   /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
@@ -279,6 +293,79 @@ export interface VoiceEnrollCancelMessage {
   userId: string;
 }
 
+// ── Voice Streaming (client → gateway) ───────────────────────────────────────
+
+/** Begin a streaming voice session. Binary WS frames carrying PCM16 will be associated with this sessionId. */
+export interface VoiceStreamStartMessage {
+  type: "voice.stream.start";
+  sessionId: string;
+  sampleRate: 16000;
+  codec: "pcm16";
+}
+
+/** End a streaming voice session; triggers final STT processing. */
+export interface VoiceStreamStopMessage {
+  type: "voice.stream.stop";
+  sessionId: string;
+}
+
+/** Cancel in-progress TTS playback for a session. */
+export interface TtsCancelMessage {
+  type: "tts.cancel";
+  sessionId: string;
+}
+
+export interface VoiceEnrollMessage {
+  type: "voice.enroll";
+  profileId: string;
+  /** Base64-encoded WAV audio. */
+  audio: string;
+}
+
+export interface VoiceVerifyMessage {
+  type: "voice.verify";
+  /** Base64-encoded WAV audio. */
+  audio: string;
+}
+
+// ── Trigger Messages (client → gateway) ──────────────────────────────────────
+
+export interface TriggerCreateMessage {
+  type: "trigger.create";
+  name: string;
+  description?: string;
+  condition: { type: string; config: Record<string, unknown> };
+  action: { type: "execute_task"; goal: string; layer?: "deep" | "surface" | "auto" };
+  cooldownMs?: number;
+}
+
+export interface TriggerListMessage {
+  type: "trigger.list";
+}
+
+export interface TriggerUpdateMessage {
+  type: "trigger.update";
+  triggerId: string;
+  updates: Record<string, unknown>;
+}
+
+export interface TriggerDeleteMessage {
+  type: "trigger.delete";
+  triggerId: string;
+}
+
+export interface TriggerHistoryMessage {
+  type: "trigger.history";
+  triggerId: string;
+  limit?: number;
+}
+
+// ── Tools ─────────────────────────────────────────────────────────────────────
+
+export interface ToolsListMessage {
+  type: "tools.list";
+}
+
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
@@ -314,9 +401,15 @@ export type ServerMessage =
   | VoiceEnrollProgressMessage
   | VoiceEnrollDoneMessage
   | VoiceEnrollErrorMessage
+  | VoiceEnrollResultMessage
+  | VoiceEnrollErrorGatewayMessage
+  | VoiceVerifyResultMessage
+  | VoiceVerifyErrorMessage
   | VoiceTtsAudioMessage
+  | VoiceTtsChunkMessage
   | VoiceSpeakerMismatchMessage
-  | TtsEndMessage;
+  | TtsEndMessage
+  | ToolsReportMessage;
 
 export interface TtsEndMessage {
   type: "tts.end";
@@ -377,7 +470,18 @@ export interface TaskVerifyMessage {
 export interface TaskCompleteMessage {
   type: "task.complete";
   taskId: string;
-  result: Record<string, unknown>;
+  result: {
+    /** Primary output text (backward-compatible). */
+    output?: string;
+    /** Spoken response text for voice clients. */
+    speak?: string;
+    /** Structured UI payload for rich clients. */
+    ui?: Record<string, unknown>;
+    /** Suggested follow-up prompts. */
+    followup?: string[];
+    /** Arbitrary additional data from the handler. */
+    [key: string]: unknown;
+  };
 }
 
 export interface TaskErrorMessage {
@@ -429,7 +533,7 @@ export interface LlmPreflightReportMessage {
 
 export interface RuntimeConfigReportMessage {
   type: "runtime.config.report";
-  config: Record<string, unknown>;
+  config: unknown;
 }
 
 export interface RuntimeConfigAckMessage {
@@ -437,7 +541,7 @@ export interface RuntimeConfigAckMessage {
   ok: boolean;
   key: RuntimeConfigSetMessage["key"];
   message: string;
-  config: Record<string, unknown>;
+  config: unknown;
 }
 
 export interface StatusReplyMessage {
@@ -449,13 +553,22 @@ export interface StatusReplyMessage {
 
 export interface VoiceTranscriptMessage {
   type: "voice.transcript";
-  id: string;
+  /** Legacy: one-shot transcription id. */
+  id?: string;
+  /** Streaming session id. */
+  sessionId?: string;
+  kind?: "partial" | "final";
   text: string;
+  t0?: number;
+  t1?: number;
 }
 
 export interface VoiceErrorMessage {
   type: "voice.error";
-  id: string;
+  /** Legacy: one-shot transcription id. */
+  id?: string;
+  /** Streaming session id. */
+  sessionId?: string;
   error: string;
 }
 
@@ -540,8 +653,11 @@ export interface VoiceEnrollDoneMessage {
 
 export interface VoiceEnrollErrorMessage {
   type: "voice.enroll.error";
-  code: string;
-  message: string;
+  /** Structured error code (enrollment flow). */
+  code?: string;
+  message?: string;
+  /** Legacy flat error string. */
+  error?: string;
 }
 
 export interface VoiceTtsAudioMessage {
@@ -562,6 +678,51 @@ export interface VoiceSpeakerMismatchMessage {
   userId: string;
   score: number;
   threshold: number;
+}
+
+// ── Voice Enrollment — gateway protocol variants ──────────────────────────────
+
+/** Gateway's compact voice.enroll.result (for VoiceEnrollMessage flow). */
+export interface VoiceEnrollResultMessage {
+  type: "voice.enroll.result";
+  profileId: string;
+  sampleCount: number;
+  isComplete: boolean;
+  required: number;
+}
+
+/** Gateway's compact voice.enroll.error (for VoiceEnrollMessage flow). */
+export interface VoiceEnrollErrorGatewayMessage {
+  type: "voice.enroll.error.gateway";
+  error: string;
+}
+
+export interface VoiceVerifyResultMessage {
+  type: "voice.verify.result";
+  matched: boolean;
+  profileId: string | null;
+  similarity: number;
+}
+
+export interface VoiceVerifyErrorMessage {
+  type: "voice.verify.error";
+  error: string;
+}
+
+/** Streaming TTS audio chunk from server to client. */
+export interface VoiceTtsChunkMessage {
+  type: "voice.tts.chunk";
+  sessionId: string;
+  seq: number;
+  audio: string;
+  mime: string;
+  eos: boolean;
+}
+
+export interface ToolsReportMessage {
+  type: "tools.report";
+  tools: Array<{ name: string; description: string; group: string }>;
+  skills: Array<{ name: string; group: string }>;
 }
 
 // ─── Shared supporting types ─────────────────────────────────────────────────
@@ -588,3 +749,28 @@ export interface Alert {
   severity: string;
   message: string;
 }
+
+// ─── System Events (macOS native → gateway → clients) ────────────────────────
+
+export interface SystemClipboardChangedEvent {
+  type: "system.clipboard.changed";
+  content: string;
+}
+
+export interface SystemFileDownloadedEvent {
+  type: "system.file.downloaded";
+  name: string;
+  path: string;
+  sizeBytes: number;
+}
+
+export interface SystemAppSwitchedEvent {
+  type: "system.app.switched";
+  from: string;
+  to: string;
+}
+
+export type SystemEvent =
+  | SystemClipboardChangedEvent
+  | SystemFileDownloadedEvent
+  | SystemAppSwitchedEvent;

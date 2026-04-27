@@ -232,6 +232,24 @@ export class SurfaceLayer {
     }
   }
 
+  /** Get a human-readable summary of all current screen entities for prompt context. */
+  async getScreenEntitySummary(): Promise<string> {
+    const elements = await this.getUIElements();
+    if (elements.length === 0) return "No UI elements detected on screen.";
+
+    const lines = elements
+      .filter(el => el.text || el.type !== "unknown")
+      .map(el => {
+        const label = el.text ? `"${el.text}"` : "(unlabeled)";
+        const bounds = el.bounds
+          ? `at (${el.bounds.x}, ${el.bounds.y}) ${el.bounds.width}×${el.bounds.height}`
+          : "";
+        return `  [${el.type}] ${label} ${bounds}`.trimEnd();
+      });
+
+    return `Screen entities (${lines.length} visible):\n${lines.join("\n")}`;
+  }
+
   /** Click on a detected element. */
   async clickElement(element: DetectedElement): Promise<void> {
     // Refresh fingerprints so the store reflects the latest UI state.
@@ -261,6 +279,73 @@ export class SurfaceLayer {
     // Small delay then click
     await sleep(50);
     bridge.click("left");
+  }
+
+  /**
+   * Click a UI element directly via AXPress action — no mouse simulation needed.
+   * Works even when the element is behind other windows.
+   * Falls back to regular clickElement if the direct action fails.
+   */
+  async clickElementDirect(element: DetectedElement): Promise<boolean> {
+    try {
+      const query = element.text || element.id;
+      if (!query) return false;
+      const success = bridge.pressElement(query);
+      if (success) return true;
+    } catch {
+      // Fall through to mouse-based click
+    }
+    // Fallback: use traditional mouse simulation
+    await this.clickElement(element);
+    return true;
+  }
+
+  /**
+   * Set the value of a text field directly via AXUIElement API.
+   * No need to click, clear, and type — sets the value atomically.
+   */
+  async setElementValueDirect(query: string, value: string): Promise<boolean> {
+    try {
+      return bridge.setElementValue(query, value);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get available accessibility actions for an element matching the query.
+   * Useful for LLM to know what operations are possible.
+   */
+  async getAvailableActions(query: string): Promise<string[]> {
+    try {
+      return bridge.getElementActions(query);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Perform any accessibility action on an element.
+   * Actions: "AXPress", "AXRaise", "AXShowMenu", "AXCancel", "AXConfirm"
+   */
+  async performElementAction(query: string, action: string): Promise<boolean> {
+    try {
+      return bridge.performAction(query, action);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check all system permissions before executing automation.
+   * Returns a status object so the gateway can degrade gracefully.
+   */
+  preflightPermissions(): { accessibility: boolean; screenCapture: boolean; microphone: string } {
+    try {
+      return bridge.preflightPermissions();
+    } catch {
+      return { accessibility: false, screenCapture: false, microphone: 'unknown' };
+    }
   }
 
   /** Double-click on a detected element. */

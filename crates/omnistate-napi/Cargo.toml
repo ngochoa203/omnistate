@@ -14,10 +14,14 @@ omnistate-screen = { path = "../omnistate-screen" }
 omnistate-capture = { path = "../omnistate-capture" }
 omnistate-input = { path = "../omnistate-input" }
 omnistate-a11y = { path = "../omnistate-a11y" }
+omnistate-audio = { path = "../omnistate-audio" }
 napi = { version = "2", features = ["napi9", "serde-json"] }
 napi-derive = "2"
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 [build-dependencies]
 napi-build = "2"

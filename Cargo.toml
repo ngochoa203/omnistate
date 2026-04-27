@@ -5,6 +5,7 @@ members = [
     "crates/omnistate-capture",
     "crates/omnistate-input",
     "crates/omnistate-a11y",
+    "crates/omnistate-audio",
     "crates/omnistate-napi",
 ]
 resolver = "2"

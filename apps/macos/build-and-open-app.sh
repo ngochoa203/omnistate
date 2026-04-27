@@ -36,7 +36,12 @@ sed \
 cp -R "$APP_ROOT/OmniState/Resources/." "$CONTENTS_DIR/Resources/"
 
 echo "[4/6] Codesign (ad-hoc)"
-codesign --force --deep --sign - "$DIST_APP"
+ENTITLEMENTS="$APP_ROOT/OmniState/OmniState.entitlements"
+if [ -f "$ENTITLEMENTS" ]; then
+    codesign --deep --force --options runtime --sign - --entitlements "$ENTITLEMENTS" "$DIST_APP"
+else
+    codesign --force --deep --sign - "$DIST_APP"
+fi
 
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 codesign --verify --deep --strict "$DIST_APP"

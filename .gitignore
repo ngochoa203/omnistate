@@ -68,3 +68,7 @@ packages/gateway/vendor/
 
 # Python virtual envs
 .venv-voice/
+
+# macOS app build output
+apps/macos/OmniState/dist/
+apps/macos/OmniState/OmniState/Resources/web-dist/

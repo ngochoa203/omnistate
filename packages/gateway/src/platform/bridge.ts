@@ -133,6 +133,23 @@ interface NativeBindings {
   getUiElements(): unknown;
   findElement(query: string): unknown;
   getUiTree(): unknown;
+
+  // A11y write actions
+  performAction(query: string, action: string): boolean;
+  pressElement(query: string): boolean;
+  setElementValue(query: string, value: string): boolean;
+  getElementActions(query: string): string[];
+
+  // TCC preflight
+  preflightPermissions(): {
+    accessibility: boolean;
+    screenCapture: boolean;
+    microphone: string;
+  };
+  preflightAccessibility(): boolean;
+  preflightScreenCapture(): boolean;
+  requestScreenCapture(): boolean;
+  preflightMicrophone(): string;
 }
 
 // ------------------------------------------------------------------
@@ -382,4 +399,44 @@ export function getUiTree() {
   const native = loadNative();
   if (!native?.getUiTree) return null;
   return native.getUiTree();
+}
+
+// --- A11y Write Actions ---
+
+export function performAction(query: string, action: string): boolean {
+  return getNative().performAction(query, action);
+}
+
+export function pressElement(query: string): boolean {
+  return getNative().pressElement(query);
+}
+
+export function setElementValue(query: string, value: string): boolean {
+  return getNative().setElementValue(query, value);
+}
+
+export function getElementActions(query: string): string[] {
+  return getNative().getElementActions(query);
+}
+
+// --- TCC Preflight ---
+
+export function preflightPermissions() {
+  return getNative().preflightPermissions();
+}
+
+export function preflightAccessibility(): boolean {
+  return getNative().preflightAccessibility();
+}
+
+export function preflightScreenCapture(): boolean {
+  return getNative().preflightScreenCapture();
+}
+
+export function requestScreenCapture(): boolean {
+  return getNative().requestScreenCapture();
+}
+
+export function preflightMicrophone(): string {
+  return getNative().preflightMicrophone();
 }

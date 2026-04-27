@@ -134,7 +134,7 @@ final class VoiceCaptureService: ObservableObject {
             if let converter = self?.audioConverter,
                let outFormat = self?.targetAudioFormat,
                let pcmOut = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: AVAudioFrameCount(outFormat.sampleRate * Double(buffer.frameLength) / buffer.format.sampleRate) + 1) {
-                var inputConsumed = false
+                nonisolated(unsafe) var inputConsumed = false
                 let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
                     if inputConsumed { outStatus.pointee = .noDataNow; return nil }
                     inputConsumed = true

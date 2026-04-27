@@ -63,6 +63,19 @@ unsafe extern "C" {
         value_type: u32,
         value_ptr: *mut c_void,
     ) -> bool;
+    fn AXUIElementPerformAction(
+        element: AXUIElementRef,
+        action: core_foundation_sys::string::CFStringRef,
+    ) -> AXError;
+    fn AXUIElementSetAttributeValue(
+        element: AXUIElementRef,
+        attribute: core_foundation_sys::string::CFStringRef,
+        value: core_foundation_sys::base::CFTypeRef,
+    ) -> AXError;
+    fn AXUIElementCopyActionNames(
+        element: AXUIElementRef,
+        names: *mut core_foundation_sys::array::CFArrayRef,
+    ) -> AXError;
 }
 
 
@@ -244,7 +257,190 @@ pub fn find_element(query: &str) -> OmniResult<Option<UIElement>> {
     Ok(found)
 }
 
+/// Perform an accessibility action on the element matching the query.
+/// Common actions: "AXPress", "AXRaise", "AXShowMenu", "AXCancel", "AXConfirm"
+pub fn perform_action(query: &str, action: &str) -> OmniResult<bool> {
+    if !is_trusted() {
+        return Err(OmniError::AccessibilityError(
+            "Accessibility permission not granted. Enable in System Settings → Privacy & Security → Accessibility".into(),
+        ));
+    }
+    let element_ref = find_element_ref(query)?;
+    match element_ref {
+        None => Ok(false),
+        Some(elem) => {
+            let cf_action = CFString::new(action);
+            let err = unsafe {
+                AXUIElementPerformAction(elem, cf_action.as_concrete_TypeRef())
+            };
+            if err != K_AX_ERROR_SUCCESS {
+                return Err(OmniError::AccessibilityError(format!(
+                    "AXUIElementPerformAction '{}' failed (AXError: {})", action, err
+                )));
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// Press (click) a UI element found by query — calls AXPress action directly.
+/// This works even if the window is behind other windows.
+pub fn press_element(query: &str) -> OmniResult<bool> {
+    perform_action(query, "AXPress")
+}
+
+/// Set the value of a text field found by query.
+pub fn set_element_value(query: &str, value: &str) -> OmniResult<bool> {
+    if !is_trusted() {
+        return Err(OmniError::AccessibilityError(
+            "Accessibility permission not granted. Enable in System Settings → Privacy & Security → Accessibility".into(),
+        ));
+    }
+    let element_ref = find_element_ref(query)?;
+    match element_ref {
+        None => Ok(false),
+        Some(elem) => {
+            let cf_attr = ax_attr("AXValue");
+            let cf_value = CFString::new(value);
+            let err = unsafe {
+                AXUIElementSetAttributeValue(
+                    elem,
+                    cf_attr.as_concrete_TypeRef(),
+                    cf_value.as_concrete_TypeRef() as core_foundation_sys::base::CFTypeRef,
+                )
+            };
+            if err != K_AX_ERROR_SUCCESS {
+                return Err(OmniError::AccessibilityError(format!(
+                    "AXUIElementSetAttributeValue failed (AXError: {})", err
+                )));
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// Get available actions for the element matching the query.
+pub fn get_element_actions(query: &str) -> OmniResult<Vec<String>> {
+    if !is_trusted() {
+        return Err(OmniError::AccessibilityError(
+            "Accessibility permission not granted. Enable in System Settings → Privacy & Security → Accessibility".into(),
+        ));
+    }
+    let element_ref = find_element_ref(query)?;
+    match element_ref {
+        None => Ok(vec![]),
+        Some(elem) => {
+            let mut names_ref: core_foundation_sys::array::CFArrayRef = ptr::null();
+            let err = unsafe { AXUIElementCopyActionNames(elem, &mut names_ref) };
+            if err != K_AX_ERROR_SUCCESS || names_ref.is_null() {
+                return Ok(vec![]);
+            }
+            let names: CFArray = unsafe { CFArray::wrap_under_create_rule(names_ref) };
+            let mut result = Vec::new();
+            for i in 0..names.len() {
+                let item = *names.get(i).unwrap() as core_foundation_sys::base::CFTypeRef;
+                if item.is_null() {
+                    continue;
+                }
+                let string_type_id = unsafe { core_foundation_sys::string::CFStringGetTypeID() };
+                let item_type_id = unsafe { core_foundation_sys::base::CFGetTypeID(item) };
+                if item_type_id == string_type_id {
+                    let s: CFString = unsafe { CFString::wrap_under_get_rule(item as *const _) };
+                    result.push(s.to_string());
+                }
+            }
+            Ok(result)
+        }
+    }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────
+
+/// Walk the accessibility tree and return the raw AXUIElementRef for the first
+/// element whose text or semantic role contains `query_lower` (case-insensitive).
+/// The returned pointer is only valid while the parent chain is alive; callers
+/// must use it synchronously and not CFRelease it.
+fn walk_element_for_ref(
+    element: AXUIElementRef,
+    query_lower: &str,
+    depth: u32,
+    max_depth: u32,
+) -> Option<AXUIElementRef> {
+    if depth > max_depth || element.is_null() {
+        return None;
+    }
+
+    let title = get_string_attribute(element, "AXTitle");
+    let value = get_string_attribute(element, "AXValue");
+    let description = get_string_attribute(element, "AXDescription");
+    let role = get_string_attribute(element, "AXRole").unwrap_or_default();
+
+    let text = title.or(value).or(description).filter(|t| !t.is_empty());
+
+    let matches = if let Some(ref t) = text {
+        t.to_lowercase().contains(query_lower)
+    } else {
+        role.to_lowercase().contains(query_lower)
+    };
+
+    if matches {
+        return Some(element);
+    }
+
+    for child in collect_related_children(element) {
+        if let Some(found) = walk_element_for_ref(child, query_lower, depth + 1, max_depth) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Find the raw AXUIElementRef for the first element matching query.
+/// Returns Ok(None) when not found. The ref is owned by the AX tree; callers
+/// must not CFRelease it and must use it before releasing the system-wide element.
+fn find_element_ref(query: &str) -> OmniResult<Option<AXUIElementRef>> {
+    let system_wide = unsafe { AXUIElementCreateSystemWide() };
+    if system_wide.is_null() {
+        return Err(OmniError::AccessibilityError(
+            "Failed to create system-wide accessibility element".into(),
+        ));
+    }
+
+    let focused_app = get_frontmost_app(system_wide)?;
+    let query_lower = query.to_lowercase();
+
+    let mut found: Option<AXUIElementRef> = None;
+
+    if let Ok(window) = get_attribute(focused_app, "AXFocusedWindow") {
+        if !window.is_null() {
+            found = walk_element_for_ref(window, &query_lower, 0, 10);
+        }
+    }
+
+    if found.is_none() {
+        if let Ok(children_ref) = get_attribute(focused_app, "AXChildren") {
+            if !children_ref.is_null() {
+                let children: CFArray =
+                    unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+                for i in 0..children.len().min(50) {
+                    let child: *const c_void = *children.get(i).unwrap() as *const c_void;
+                    if let Some(f) = walk_element_for_ref(child, &query_lower, 0, 8) {
+                        found = Some(f);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Note: we intentionally do NOT CFRelease system_wide here because the
+    // returned element ref is part of the AX object graph rooted at system_wide.
+    // The caller uses the ref synchronously within perform_action / set_element_value
+    // before any release occurs. The system_wide element is retained by the OS.
+    unsafe { core_foundation_sys::base::CFRelease(system_wide as *const _) };
+
+    Ok(found)
+}
 
 fn get_attribute(
     element: AXUIElementRef,
