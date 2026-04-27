@@ -26,6 +26,12 @@ export interface WakeManagerOptions {
 
 export class WakeManager {
   private child: ChildProcess | null = null;
+  private lastOptions: WakeManagerOptions | null = null;
+  private restartCount = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly MAX_RESTARTS = 3;
+  private static readonly RESTART_WINDOW_MS = 60_000;
+  private firstExitTime = 0;
 
   isRunning(): boolean {
     return this.child !== null;
@@ -48,6 +54,9 @@ export class WakeManager {
 
   start(options: WakeManagerOptions): void {
     this.stop();
+    this.lastOptions = options;
+    this.restartCount = 0;
+    this.firstExitTime = 0;
 
     if (!options.config.enabled) return;
     if (!options.token) {
@@ -99,7 +108,7 @@ export class WakeManager {
     } else {
       scriptName = "wake_listener.py";
     }
-    const scriptPath = resolve(process.cwd(), `packages/gateway/scripts/${scriptName}`);
+    const scriptPath = resolve(process.cwd(), `scripts/voice/${scriptName}`);
     if (!existsSync(scriptPath)) {
       logger.warn(`[OmniState] Wake listener script missing: ${scriptPath}`);
       return;
@@ -140,10 +149,11 @@ export class WakeManager {
       this.child.stdout?.on("data", (d) => { process.stdout.write(`[Wake] ${String(d)}`); });
       this.child.stderr?.on("data", (d) => { process.stderr.write(`[Wake] ${String(d)}`); });
       this.child.on("exit", (code) => {
+        this.child = null;
         if (code !== 0 && code !== null) {
           logger.warn(`[OmniState] Wake listener exited with code ${code}`);
+          this.scheduleRestart();
         }
-        this.child = null;
       });
       logger.info("[OmniState] Wake listener started");
       return;
@@ -153,7 +163,7 @@ export class WakeManager {
     const modelPath = resolvedEngine === "personal"
       ? personalTemplate
       : (options.config.modelPath ?? process.env.OMNISTATE_WAKE_MODEL_PATH ?? "");
-    const threshold = options.config.threshold ?? (resolvedEngine === "personal" ? 0.78 : 0.5);
+    const threshold = options.config.threshold ?? (resolvedEngine === "personal" ? 0.88 : 0.5);
 
     // Personal listener targets the wake-event broadcast endpoint, NOT the Siri command bridge.
     // Wake is a UI trigger; executing the literal phrase as a goal would confuse the planner
@@ -219,16 +229,44 @@ export class WakeManager {
     });
 
     this.child.on("exit", (code) => {
+      this.child = null;
       if (code !== 0 && code !== null) {
         logger.warn(`[OmniState] Wake listener exited with code ${code}`);
+        this.scheduleRestart();
       }
-      this.child = null;
     });
 
     logger.info("[OmniState] Wake listener started");
   }
 
+  private scheduleRestart(): void {
+    if (!this.lastOptions) return;
+    const now = Date.now();
+    if (this.firstExitTime === 0) this.firstExitTime = now;
+    if (now - this.firstExitTime > WakeManager.RESTART_WINDOW_MS) {
+      // Reset window
+      this.restartCount = 0;
+      this.firstExitTime = now;
+    }
+    this.restartCount++;
+    if (this.restartCount > WakeManager.MAX_RESTARTS) {
+      logger.error(`[Wake] Exceeded ${WakeManager.MAX_RESTARTS} restarts in ${WakeManager.RESTART_WINDOW_MS / 1000}s, giving up`);
+      return;
+    }
+    const delayMs = Math.min(2000 * Math.pow(2, this.restartCount - 1), 15000);
+    logger.info(`[Wake] Restarting in ${delayMs}ms (attempt ${this.restartCount}/${WakeManager.MAX_RESTARTS})`);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.lastOptions) this.start(this.lastOptions);
+    }, delayMs);
+  }
+
   stop(): void {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+    this.lastOptions = null;
     if (!this.child) return;
     try {
       this.child.kill("SIGTERM");

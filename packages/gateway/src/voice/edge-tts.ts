@@ -1,14 +1,13 @@
 import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import type { VoiceRuntimeConfig } from "../llm/runtime-config.js";
 
 const execFileAsync = promisify(execFile);
 
-const edgeTtsScriptPath = fileURLToPath(new URL("../../scripts/edge_tts.py", import.meta.url));
+const edgeTtsScriptPath = resolve(process.cwd(), "scripts/voice/edge_tts.py");
 
 const VI_VOICE_DEFAULT = "vi-VN-HoaiMyNeural";
 const EN_VOICE_DEFAULT = "en-US-AriaNeural";

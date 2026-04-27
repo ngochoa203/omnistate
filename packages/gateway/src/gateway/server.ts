@@ -15,6 +15,7 @@ import { createNetworkRoutes } from "../http/network-routes.js";
 import { createDeviceRoutes } from "../http/device-routes.js";
 import { checkRateLimit } from "../http/rate-limiter.js";
 import { classifyIntent, planFromIntent } from "../planner/intent.js";
+import { getScreenTree } from "../planner/screen-tree-cache.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
 import { HealthMonitor } from "../health/monitor.js";
@@ -43,7 +44,7 @@ import { cleanupEnrollSession } from "../voice/enrollment.js";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
-const speechbrainScriptPath = fileURLToPath(new URL("../../scripts/speechbrain_voiceprint.py", import.meta.url));
+const speechbrainScriptPath = resolve(process.cwd(), "scripts/voice/speechbrain_voiceprint.py");
 const allowedFileRoots = [
   tmpdir(),
 ].filter(Boolean);
@@ -686,8 +687,8 @@ export class OmniStateGateway {
       const { spawn } = await import("node:child_process");
       const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
       const templatePath = path.join(sampleDir, "personal_template.json");
-      const script = path.join(process.cwd(), "packages/gateway/scripts/train_personal_wake.py");
-      const altScript = path.resolve(process.cwd(), "scripts/train_personal_wake.py");
+      const script = path.join(process.cwd(), "scripts/voice/train_personal_wake.py");
+      const altScript = path.resolve(process.cwd(), "scripts/voice/train_personal_wake.py");
       const fs = await import("node:fs");
       const scriptPath = fs.existsSync(script) ? script : altScript;
 
@@ -809,9 +810,19 @@ export class OmniStateGateway {
       }
       try {
         const audioBuffer = Buffer.from(audio, "base64");
-        const result = await HybridAutomation.transcribeAudio(audioBuffer, "whisper-local").catch(
-          () => HybridAutomation.transcribeAudio(audioBuffer, "whisper-cloud"),
-        );
+        const voiceCfg = loadLlmRuntimeConfig().voice;
+        const sttProviders = [voiceCfg.primaryProvider, ...voiceCfg.fallbackProviders];
+        let result: { text: string };
+        let lastSttErr: Error | undefined;
+        for (const provider of sttProviders) {
+          try {
+            result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+            break;
+          } catch (err: any) {
+            lastSttErr = err;
+          }
+        }
+        if (!result!) throw lastSttErr ?? new Error("No STT provider succeeded");
         const transcript = result.text.trim();
         let similarity = 0;
         let accepted = false;
@@ -1383,17 +1394,13 @@ export class OmniStateGateway {
         const treeMode = urlObj.searchParams.get("mode") ?? "tree";
         const allowedModes = ["tree", "hierarchy"];
         const safeMode = allowedModes.includes(treeMode) ? treeMode : "tree";
-        const { stdout } = await execFileAsync(
-          process.execPath,
-          [bridgeProbeScriptPath, safeMode],
-          { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
-        );
-        json(200, JSON.parse(stdout));
+        const result = await getScreenTree(safeMode);
+        json(200, result as unknown as Record<string, unknown>);
       } catch (err) {
         json(500, {
           ok: false,
           error:
-            "Native bridge worker failed while collecting screen tree. " +
+            "Screen tree collection failed. " +
             (err instanceof Error ? err.message : String(err)),
         });
       }
@@ -2083,7 +2090,6 @@ export class OmniStateGateway {
           this.monitor.runCheck().then((report) => {
             const reply: ServerMessage = {
               type: "health.report",
-              status: report.overall,
               overall: report.overall,
               timestamp: report.timestamp,
               sensors: report.sensors as Record<string, { status: string; value: number; unit: string; message?: string }>,
@@ -2469,6 +2475,60 @@ export class OmniStateGateway {
           tools,
           skills,
         } as unknown as ServerMessage);
+        break;
+      }
+
+      case "voice.transcribe": {
+        const { audio } = msg as any;
+        if (typeof audio !== "string" || !audio) {
+          this.safeSend(ws, { type: "error", message: "voice.transcribe requires audio (base64)" } as any);
+          break;
+        }
+        try {
+          const audioBuffer = Buffer.from(audio, "base64");
+          const voiceCfg = loadLlmRuntimeConfig().voice;
+          const providers = [voiceCfg.primaryProvider, ...voiceCfg.fallbackProviders];
+          let result: { text: string };
+          let lastErr: Error | undefined;
+          for (const provider of providers) {
+            try {
+              result = await HybridAutomation.transcribeAudio(audioBuffer, provider);
+              break;
+            } catch (err: any) {
+              lastErr = err;
+            }
+          }
+          if (!result!) throw lastErr ?? new Error("No STT provider succeeded");
+          const transcript = result.text.trim();
+          this.safeSend(ws, {
+            type: "voice.transcript",
+            sessionId: (msg as any).id ?? (msg as any).sessionId,
+            kind: "final",
+            text: transcript,
+          } as unknown as ServerMessage);
+
+          // Auto-execute if configured (same pattern as voice.stream.start at line 1939-1954)
+          const voice = loadLlmRuntimeConfig().voice;
+          const shouldAutoExecute =
+            voice.autoExecuteTranscript &&
+            !(voice.siri?.enabled && voice.siri?.mode === "handoff");
+          if (shouldAutoExecute && transcript) {
+            const voiceTaskId = `voice-transcribe-${crypto.randomUUID()}`;
+            this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: transcript } as any);
+            this.executeTaskPipeline(voiceTaskId, transcript, undefined, ws).catch((err) => {
+              this.safeSend(ws, {
+                type: "task.error",
+                taskId: voiceTaskId,
+                error: err instanceof Error ? err.message : String(err),
+              } as any);
+            });
+          }
+        } catch (err: any) {
+          this.safeSend(ws, {
+            type: "error",
+            message: `voice.transcribe failed: ${err.message}`,
+          } as any);
+        }
         break;
       }
 

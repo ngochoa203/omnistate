@@ -39,7 +39,7 @@ N_MFCC = 20
 FRAME_MS = 25
 HOP_MS = 10
 PREEMPH = 0.97
-CONFIRM_FRAMES = 3             # require N of last 4 windows above threshold
+CONFIRM_FRAMES = 4             # require all 4 recent windows above threshold
 HISTORY_LEN = 4
 
 
@@ -136,7 +136,7 @@ def main() -> int:
     parser.add_argument("--template", required=True)
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--token", default="")
-    parser.add_argument("--threshold", type=float, default=0.78)
+    parser.add_argument("--threshold", type=float, default=0.88)
     parser.add_argument("--cooldown-ms", type=int, default=4000)
     parser.add_argument("--command-window-sec", type=int, default=7)
     parser.add_argument("--aliases", default="mimi,hey mimi,ok mimi")
@@ -193,8 +193,8 @@ def main() -> int:
 
             audio = np.array(ring, dtype=np.float32)
             rms = float(np.sqrt(np.mean(audio ** 2)))
-            # Require energy > max(0.020, 4.5×noise_floor) → rejects breath/hum.
-            gate = max(0.020, noise_floor * 4.5)
+            # Require energy > max(0.035, 5.0×noise_floor) → rejects breath/hum.
+            gate = max(0.035, noise_floor * 5.0)
             if rms < gate:
                 noise_floor = 0.95 * noise_floor + 0.05 * rms  # track quiet level
                 score_history.clear()
@@ -204,7 +204,7 @@ def main() -> int:
 
             # Spectral flatness check: reject noise-like windows (breath, fan, hum).
             flatness = float(librosa.feature.spectral_flatness(y=audio).mean())
-            if flatness > 0.45:
+            if flatness > 0.38:
                 score_history.clear()
                 return
 

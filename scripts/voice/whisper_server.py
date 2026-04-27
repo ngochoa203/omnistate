@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from collections import deque
 from typing import Dict, Deque
 
@@ -147,6 +148,27 @@ def main() -> None:
             msg = json.loads(raw_line)
         except json.JSONDecodeError as exc:
             emit_error(f"invalid JSON on stdin: {exc}")
+            continue
+
+        # Backward compatibility: batch protocol
+        # {"id":"...","wav_path":"...","language":"vi"}
+        if "wav_path" in msg:
+            req_id = str(msg.get("id", ""))
+            wav_path = str(msg.get("wav_path", ""))
+            language = msg.get("language")
+            t0 = time.monotonic()
+            try:
+                segments, _ = model.transcribe(
+                    wav_path,
+                    language=language or None,
+                    beam_size=3,
+                    vad_filter=False,
+                )
+                text = "".join(seg.text for seg in segments).strip()
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                emit({"id": req_id, "text": text, "durationMs": duration_ms})
+            except Exception as exc:
+                emit({"id": req_id, "error": str(exc)})
             continue
 
         cmd = msg.get("cmd")

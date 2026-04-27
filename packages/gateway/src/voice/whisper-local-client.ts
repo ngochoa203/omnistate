@@ -8,8 +8,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { childLogger } from "../utils/logger.js";
 import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 
@@ -77,10 +76,7 @@ interface StreamSubscriber {
 // Constants
 // ---------------------------------------------------------------------------
 
-const SCRIPT_PATH = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../scripts/whisper_server.py"
-);
+const SCRIPT_PATH = resolve(process.cwd(), "scripts/voice/whisper_server.py");
 
 const MAX_RESTARTS_PER_MINUTE = 3;
 const RESTART_WINDOW_MS = 60_000;
@@ -118,7 +114,8 @@ class WhisperLocalClient {
   }
 
   constructor() {
-    this.currentModel = loadLlmRuntimeConfig().voice.whisperLocalModel ?? "small";
+    const envModel = process.env.WHISPER_MODEL?.trim();
+    this.currentModel = envModel || loadLlmRuntimeConfig().voice.whisperLocalModel || "small";
   }
 
   private resetReadyGate(): void {

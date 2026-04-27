@@ -9,9 +9,7 @@ import { loadProfile } from "./profile-store.js";
 
 const execFileAsync = promisify(execFile);
 
-const voiceEmbedScriptPath = fileURLToPath(
-  new URL("../../scripts/voice_embed.py", import.meta.url),
-);
+const voiceEmbedScriptPath = resolve(process.cwd(), "scripts/voice/voice_embed.py");
 const bundledRtvcRepoDir = fileURLToPath(
   new URL("../../vendor/Real-Time-Voice-Cloning", import.meta.url),
 );

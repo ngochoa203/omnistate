@@ -34,6 +34,20 @@ import {
 } from "node:fs";
 import { createInterface } from "node:readline";
 import WebSocket from "ws";
+import type {
+  ClientMessage,
+  ServerMessage,
+  ConnectMessage,
+  TaskAcceptedMessage,
+  TaskStepMessage,
+  TaskVerifyMessage,
+  TaskCompleteMessage,
+  TaskErrorMessage,
+  StatusReplyMessage,
+  GatewayShutdownMessage,
+  ErrorMessage,
+  ToolsReportMessage,
+} from "@omnistate/shared/protocol";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -42,116 +56,6 @@ const WS_PORT = 19800;
 const WS_URL = `ws://${WS_HOST}:${WS_PORT}`;
 const CONNECT_TIMEOUT_MS = 5_000;
 const INLINE_DETECT_TIMEOUT_MS = 300;
-
-// ─── Types (inline subset of gateway protocol) ───────────────────────────────
-
-interface ConnectMessage {
-  type: "connect";
-  auth: { token?: string };
-  role: "cli";
-}
-
-interface TaskMessage {
-  type: "task";
-  goal: string;
-  layer?: "deep" | "surface" | "auto";
-}
-
-interface StatusQueryMessage {
-  type: "status.query";
-}
-
-interface ShutdownMessage {
-  type: "admin.shutdown";
-}
-
-interface ToolsListMessage {
-  type: "tools.list";
-}
-
-type ClientMessage =
-  | ConnectMessage
-  | TaskMessage
-  | StatusQueryMessage
-  | ShutdownMessage
-  | ToolsListMessage;
-
-interface ConnectedMessage {
-  type: "connected";
-  clientId: string;
-  capabilities: string[];
-}
-
-interface TaskAcceptedMessage {
-  type: "task.accepted";
-  taskId: string;
-  goal: string;
-}
-
-interface TaskStepMessage {
-  type: "task.step";
-  taskId: string;
-  step: number;
-  status: "executing" | "completed" | "failed";
-  layer: "deep" | "surface" | "fleet";
-  data?: Record<string, unknown>;
-}
-
-interface TaskVerifyMessage {
-  type: "task.verify";
-  taskId: string;
-  step: number;
-  result: "pass" | "fail" | "ambiguous";
-  confidence?: number;
-}
-
-interface TaskCompleteMessage {
-  type: "task.complete";
-  taskId: string;
-  result: Record<string, unknown>;
-}
-
-interface TaskErrorMessage {
-  type: "task.error";
-  taskId: string;
-  error: string;
-}
-
-interface StatusReplyMessage {
-  type: "status.reply";
-  connectedClients: number;
-  queueDepth: number;
-  uptime: number;
-}
-
-interface GatewayShutdownMessage {
-  type: "gateway.shutdown";
-  reason: string;
-}
-
-interface ErrorMessage {
-  type: "error";
-  message: string;
-}
-
-interface ToolsReportMessage {
-  type: "tools.report";
-  tools: Array<{ name: string; description: string; group: string }>;
-  skills: Array<{ name: string; group: string }>;
-}
-
-type ServerMessage =
-  | ConnectedMessage
-  | TaskAcceptedMessage
-  | TaskStepMessage
-  | TaskVerifyMessage
-  | TaskCompleteMessage
-  | TaskErrorMessage
-  | StatusReplyMessage
-  | GatewayShutdownMessage
-  | ErrorMessage
-  | ToolsReportMessage
-  | { type: string; [key: string]: unknown };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -1324,9 +1228,7 @@ async function cmdRunInlineRepl(goal: string): Promise<void> {
 // ─── Command: voiceprint ─────────────────────────────────────────────────────
 
 async function cmdVoiceprint(args: string[]): Promise<void> {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const scriptPath = resolve(__dirname, "../../gateway/scripts/speechbrain_voiceprint.py");
+  const scriptPath = resolve(process.cwd(), "scripts/voice/speechbrain_voiceprint.py");
   const pythonBin = process.env.OMNISTATE_PYTHON || `${process.env.HOME}/.pyenv/versions/3.12.12/bin/python3`;
 
   if (args.length === 0) {
