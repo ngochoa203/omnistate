@@ -329,7 +329,8 @@ export class OmniStateGateway {
     }
 
     const host = endpoint.hostname || "127.0.0.1";
-    const port = Number(endpoint.port || "19801");
+    const portOverride = process.env.OMNISTATE_SIRI_BRIDGE_PORT ? Number(process.env.OMNISTATE_SIRI_BRIDGE_PORT) : NaN;
+    const port = Number.isFinite(portOverride) ? portOverride : Number(endpoint.port || "19801");
     const path = endpoint.pathname && endpoint.pathname !== "/" ? endpoint.pathname : "/siri/command";
 
     const server = createServer((req, res) => {
@@ -910,8 +911,49 @@ export class OmniStateGateway {
       return;
     }
 
+    if (req.method === "POST" && requestPath === "/api/tts/preview") {
+      const rawChunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        req.on("data", (chunk) => rawChunks.push(Buffer.from(chunk)));
+        req.on("end", () => resolve());
+        req.on("aborted", () => reject(new Error("Request aborted")));
+        req.on("error", (err) => reject(err));
+      }).catch((err) => {
+        json(400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      });
+      if (res.writableEnded) return;
+
+      let ttsBody: { text?: string } = {};
+      try {
+        ttsBody = JSON.parse(Buffer.concat(rawChunks).toString("utf-8"));
+      } catch {
+        json(400, { error: { code: "INVALID_JSON", message: "Invalid JSON body" } });
+        return;
+      }
+
+      const text = ttsBody.text;
+      if (!text) {
+        json(400, { error: { code: "MISSING_TEXT", message: "text is required" } });
+        return;
+      }
+      if (text.length > 500) {
+        json(400, { error: { code: "TEXT_TOO_LONG", message: "text exceeds 500 characters" } });
+        return;
+      }
+
+      try {
+        const { synthesize, detectLanguage, pickVoice } = await import("../voice/edge-tts.js");
+        const voiceName = pickVoice(detectLanguage(text));
+        const result = await synthesize(text, { voice: voiceName });
+        json(200, { audio: result.toString("base64"), voice: voiceName });
+      } catch (err) {
+        json(500, { error: { code: "TTS_FAILED", message: err instanceof Error ? err.message : String(err) } });
+      }
+      return;
+    }
+
     if (req.method !== "POST") {
-      json(404, { ok: false, error: "Not found" });
+      json(404, { ok: false, error: { code: "NOT_FOUND", message: "Not found" } });
       return;
     }
 

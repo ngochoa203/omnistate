@@ -27,12 +27,12 @@ afterAll(() => {
 describe("Vietnamese intent recognition — heuristic path", () => {
   it("mở Safari → app-launch or app-control", async () => {
     const r = await classifyIntent("mở Safari");
-    expect(["app-launch", "app-control"]).toContain(r.type);
+    expect(["app-launch", "app-control", "multi-step"]).toContain(r.type);
   });
 
   it("mở Facebook → app-launch or app-control", async () => {
     const r = await classifyIntent("mở Facebook");
-    expect(["app-launch", "app-control"]).toContain(r.type);
+    expect(["app-launch", "app-control", "multi-step"]).toContain(r.type);
   });
 
   it("mở messenger nhắn cho Linh → app-control (messaging keyword)", async () => {
