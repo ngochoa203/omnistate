@@ -127,15 +127,7 @@ export class GatewayClient {
       | "voice.siri.mode"
       | "voice.siri.shortcutName"
       | "voice.siri.endpoint"
-      | "voice.siri.token"
-      | "tts.provider"
-      | "tts.voiceVi"
-      | "tts.voiceEn"
-      | "speakerVerification.enabled"
-      | "speakerVerification.threshold"
-      | "speakerVerification.onMismatch"
-      | "voice.sttProvider"
-      | "voice.whisperLocalModel",
+      | "voice.siri.token",
     value: string | boolean | number,
   ): void {
     this.send({ type: "runtime.config.set", key, value } as ClientMessage);
@@ -164,20 +156,39 @@ export class GatewayClient {
 
   sendVoice(audioBase64: string, id?: string): void {
     const msgId = id || `voice-${Date.now()}`;
-    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64, language: "vi" } as ClientMessage);
+    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64 } as ClientMessage);
   }
 
-  enableWakeListener(enabled: boolean): void {
-    this.send({ type: "voice.wake.enable", enabled } as unknown as ClientMessage);
+  startVoiceStream(options: { sessionId?: string; mimeType?: string; sampleRate?: number } = {}): string {
+    const sessionId = options.sessionId || `voice-${Date.now()}`;
+    this.send({
+      type: "voice.stream.start",
+      sessionId,
+      mimeType: options.mimeType,
+      sampleRate: options.sampleRate,
+    } as unknown as ClientMessage);
+    return sessionId;
+  }
+
+  sendVoiceChunk(sessionId: string, base64Chunk: string, seq: number): void {
+    this.send({ type: "voice.stream.chunk", sessionId, chunk: base64Chunk, seq } as unknown as ClientMessage);
+  }
+
+  stopVoiceStream(sessionId: string, reason?: string): void {
+    this.send({ type: "voice.stream.stop", sessionId, reason } as unknown as ClientMessage);
+  }
+
+  cancelVoiceSession(sessionId: string, reason?: string): void {
+    this.send({ type: "voice.session.cancel", sessionId, reason } as unknown as ClientMessage);
+  }
+
+  cancelTask(taskId: string, reason?: string): void {
+    this.send({ type: "task.cancel", taskId, reason } as unknown as ClientMessage);
   }
 
   requestSystemDashboard(id?: string): void {
     const msgId = id || `sys-${Date.now()}`;
     this.send({ type: "system.dashboard", id: msgId } as ClientMessage);
-  }
-
-  requestToolsList(): void {
-    this.send({ type: "tools.list" } as any);
   }
 
   on(event: string, handler: EventHandler): () => void {

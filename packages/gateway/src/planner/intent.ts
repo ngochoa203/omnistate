@@ -1,24 +1,8 @@
 import type { StatePlan, StateNode, FailureStrategy } from "../types/task.js";
-import { requestLlmTextWithFallback, requestLlmStream } from "../llm/router.js";
+import type { OSContextPayload } from "../context/os-context.js";
+import { summarizeForIntent } from "../context/os-context.js";
+import { requestLlmTextWithFallback } from "../llm/router.js";
 import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { EXTRACT_INTENT_TOOL, isValidParsedCommand, normalizeParsedCommand } from "../llm/intent-tool.js";
-import type { ParsedCommand } from "./parsed-command.js";
-import { appWordBoundaryMatch } from "./app-resolver.js";
-import { StateGraph } from "./graph.js";
-import { PRE_LLM_RULES } from "./pre-llm-rules.js";
-import { buildKeyboardAction } from "./applescript-builder.js";
-
-// ---------------------------------------------------------------------------
-// Exported classification type
-// ---------------------------------------------------------------------------
-
-export type IntentClassificationSource = "regex" | "quick" | "llm" | "phrase";
-
-export interface IntentClassification {
-  intent: string;
-  confidence: number;
-  source: IntentClassificationSource;
-}
 
 /**
  * Intent classification — convert natural language to structured intent.
@@ -32,13 +16,19 @@ export interface Intent {
   entities: Record<string, Entity>;
   confidence: number;
   rawText: string;
-  _parsedCommand?: ParsedCommand;
 }
 
 export interface Entity {
   type: "file" | "app" | "url" | "person" | "text" | "command";
   value: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface IntentContext {
+  source?: "voice" | "text" | "wake" | "siri-handoff";
+  os?: OSContextPayload;
+  transcriptProvider?: string;
+  sessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,24 +76,6 @@ const INTENT_TYPES = [
 ] as const;
 
 type IntentType = (typeof INTENT_TYPES)[number];
-
-// ---------------------------------------------------------------------------
-// Fast-path confidence gate
-// ---------------------------------------------------------------------------
-
-/**
- * When a pre-LLM rule or quick-map match reaches this confidence, the result
- * is returned immediately without calling the LLM. Configurable via
- * OMNISTATE_FAST_PATH_THRESHOLD env var (float 0–1) or runtime-config.
- */
-const FAST_PATH_THRESHOLD: number = (() => {
-  const env = process.env.OMNISTATE_FAST_PATH_THRESHOLD;
-  if (env) {
-    const val = parseFloat(env);
-    if (Number.isFinite(val) && val > 0 && val <= 1) return val;
-  }
-  return 0.92;
-})();
 
 function isLlmRequired(): boolean {
   // Default: required. Tests/dev can explicitly disable with OMINSTATE_REQUIRE_LLM=false.
@@ -256,16 +228,10 @@ interface LLMClassificationResult {
   entities: Record<string, Entity>;
 }
 
-/** @deprecated Use classifyWithToolUse. Kept for reference during P6 cleanup. */
 async function classifyWithLLM(
   text: string,
   strict: boolean,
 ): Promise<LLMClassificationResult | null> {
-  // When LLM is not required, skip the call entirely if no explicit API key is configured.
-  // This prevents tests and dev environments from making unexpected network calls.
-  if (!strict && !process.env.ANTHROPIC_API_KEY && !process.env.OMNISTATE_ROUTER9_API_KEY) {
-    return null;
-  }
   const budget = resolveEffectiveBudget();
   const userText = text.slice(0, budget.maxInputChars);
 
@@ -311,87 +277,6 @@ async function classifyWithLLM(
     }
     return null;
   }
-}
-
-// Keep reference to avoid noUnusedLocals until P6 cleanup removes this function
-void (classifyWithLLM as unknown);
-
-// ---------------------------------------------------------------------------
-// Tool-use based classification (replaces classifyWithLLM)
-// ---------------------------------------------------------------------------
-
-async function classifyWithToolUse(
-  text: string,
-  strict: boolean,
-): Promise<(LLMClassificationResult & { _parsedCommand?: ParsedCommand }) | null> {
-  if (!strict && !process.env.ANTHROPIC_API_KEY && !process.env.OMNISTATE_ROUTER9_API_KEY) {
-    return null;
-  }
-
-  const budget = resolveEffectiveBudget();
-  const userText = text.slice(0, budget.maxInputChars);
-  // Reduce token budget — tool-use only emits structured JSON, not prose
-  const maxTokens = Math.min(budget.intentMax, 200);
-
-  try {
-    let parsedCommand: ParsedCommand | null = null;
-
-    for await (const event of requestLlmStream(
-      {
-        system: "Classify the user's automation command by calling the extract_intent tool.",
-        user: userText,
-        maxTokens,
-      },
-      {
-        tools: [EXTRACT_INTENT_TOOL],
-        toolChoice: { type: "tool", name: "extract_intent" },
-      },
-    )) {
-      if (event.kind === "tool_use" && event.name === "extract_intent") {
-        if (isValidParsedCommand(event.input)) {
-          parsedCommand = normalizeParsedCommand(event.input as unknown as Record<string, unknown>);
-        }
-      }
-    }
-
-    if (!parsedCommand) {
-      if (strict) throw new Error("LLM did not return a valid extract_intent tool call");
-      return null;
-    }
-
-    // Convert ParsedCommand → LLMClassificationResult for backward compat
-    return parsedCommandToClassification(parsedCommand);
-  } catch (err) {
-    if (strict) throw new Error(formatLlmError(err));
-    return null;
-  }
-}
-
-/** Adapter: ParsedCommand → LLMClassificationResult, preserving full command */
-function parsedCommandToClassification(
-  cmd: ParsedCommand,
-): LLMClassificationResult & { _parsedCommand?: ParsedCommand } {
-  const entities: Record<string, Entity> = {};
-
-  for (const [key, val] of Object.entries(cmd.entities ?? {})) {
-    entities[key] = {
-      type: (val.type as Entity["type"]) ?? "text",
-      value: val.value ?? "",
-      ...(val.metadata ? { metadata: val.metadata } : {}),
-    };
-  }
-
-  // If target_app is set but no app entity exists, add one
-  if (cmd.target_app && !entities.app) {
-    entities.app = { type: "app", value: cmd.target_app };
-  }
-
-  return {
-    type: cmd.intent_type,
-    confidence: cmd.confidence,
-    entities,
-    _parsedCommand: cmd,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -575,13 +460,13 @@ const HEURISTIC_RULES: Array<{
     // App control: stop, close, quit, pause, mute, refresh, tab management
     // Must come BEFORE app-launch so "close Safari" → app-control, not app-launch
     pattern:
-      /\b(stop|close|quit|exit|đóng|tắt|dừng|pause|mute|unmute|resume|refresh|reload|go back|go forward|next tab|prev(?:ious)? tab|close tab|new tab|full ?screen|minimize|maximize|play|volume)\b/i,
+      /\b(stop|close|quit|exit|pause|mute|unmute|resume|refresh|reload|go back|go forward|next tab|prev(?:ious)? tab|close tab|new tab|full ?screen|minimize|maximize|play|volume)\b/i,
     type: "app-control",
     entityExtractor: (m) => {
       const text = m.input ?? "";
       // Try to extract app name from "X on/in Y" or "X Y" patterns
       const appMatch = text.match(/\b(?:on|in|from)\s+(\w+)\s*$/i)
-        ?? text.match(/\b(safari|chrome|firefox|slack|vscode|terminal|finder|spotify|music|youtube|discord|telegram|brave|facebook|messenger|instagram|whatsapp|zalo)\b/i);
+        ?? text.match(/\b(safari|chrome|firefox|slack|vscode|terminal|finder|spotify|music|youtube|discord|telegram|brave)\b/i);
       return {
         action: { type: "command", value: m[1] },
         ...(appMatch ? { app: { type: "app", value: appMatch[1] } } : {}),
@@ -596,14 +481,13 @@ const HEURISTIC_RULES: Array<{
     entityExtractor: () => ({}),
   },
   {
-    // Browser media intent: "open <query> on youtube" / Vietnamese variants
-    pattern:
-      /(?:(?:^|\s)(?:mở|phát|bật|xem)(?:\s+(?:video|bài(?:\s+hát)?))?\s+[''"«"]([^''"»"]+)[''"»"]\s+(?:trên|ở|tại)\s+youtube(?:\b|$)|\bopen\s+(.+?)\s+on\s+youtube\b)/i,
+    // Browser media intent: "open <query> on youtube" should route to browser control
+    pattern: /\bopen\s+(.+?)\s+on\s+youtube\b/i,
     type: "app-control",
     entityExtractor: (m) => ({
       action: { type: "command", value: "open" },
       app: { type: "app", value: "safari" },
-      query: { type: "text", value: (m[1] ?? m[2])?.trim() ?? "" },
+      query: { type: "text", value: m[1]?.trim() ?? "" },
     }),
   },
   {
@@ -618,7 +502,7 @@ const HEURISTIC_RULES: Array<{
   },
   {
     pattern:
-      /\b(open|launch|start|activate|switch to|mở|bật|khởi chạy)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
+      /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
     type: "app-launch",
     entityExtractor: (m) => ({
       app: { type: "app", value: m[0] },
@@ -626,7 +510,7 @@ const HEURISTIC_RULES: Array<{
   },
   {
     // App launch — shorter form "open <AppName>"
-    pattern: /\b(?:open|mở|bật)\s+([A-Z][a-zA-Z\s]+)/,
+    pattern: /\bopen\s+([A-Z][a-zA-Z\s]+)/,
     type: "app-launch",
     entityExtractor: (m) => ({
       app: { type: "app", value: m[1]?.trim() ?? m[0] },
@@ -652,26 +536,6 @@ const HEURISTIC_RULES: Array<{
     type: "system-query",
     entityExtractor: () => ({}),
   },
-  // Social app messaging (app-control — must come before simple app-launch patterns)
-  {
-    pattern: /\b(?:nh[aắ]n.*tin|chat|message|send\s+(?:\w+\s+)?message|g[iử]i\s*tin)\b.{0,60}\b(?:facebook|messenger|fb|instagram|ig|insta|whatsapp)\b|\b(?:facebook|messenger|fb|instagram|ig|insta|whatsapp)\b.{0,60}\b(?:message|nhắn|chat)\b/i,
-    type: "app-control",
-    entityExtractor: (m) => {
-      const text = m.input ?? "";
-      const appMatch = text.match(/\b(facebook|messenger|fb|instagram|ig|insta|whatsapp)\b/i);
-      return { app: { type: "app", value: (appMatch?.[1] ?? "messenger").toLowerCase() } };
-    },
-  },
-  // Social app launch
-  {
-    pattern: /(?:^|\s)(?:m[oở]|open|launch|start)\s+(?:facebook|fb|face|messenger|m\.me|instagram|ig|insta|whatsapp)\b/i,
-    type: "app-launch",
-    entityExtractor: (m) => {
-      const text = m.input ?? "";
-      const appMatch = text.match(/\b(facebook|fb|face|messenger|instagram|ig|insta|whatsapp)\b/i);
-      return { app: { type: "app", value: (appMatch?.[1] ?? "facebook").toLowerCase() } };
-    },
-  },
 ];
 
 function classifyWithHeuristics(text: string): LLMClassificationResult {
@@ -694,43 +558,6 @@ function classifyWithHeuristics(text: string): LLMClassificationResult {
 }
 
 // ---------------------------------------------------------------------------
-// Public: classifyIntentSpeculative — partial-transcript fast path
-// ---------------------------------------------------------------------------
-
-/**
- * Run only preLlmRules + QUICK_INTENT_MAP against a partial transcript.
- * Returns null if no match meets FAST_PATH_THRESHOLD, so callers can decide
- * whether to wait for the final transcript before invoking the LLM.
- *
- * Cancellable via AbortSignal — returns null immediately if already aborted.
- */
-export function classifyIntentSpeculative(
-  partialText: string,
-  finalSignal: AbortSignal,
-): IntentClassification | null {
-  if (finalSignal.aborted) return null;
-
-  const preLlmRules = PRE_LLM_RULES;
-
-  for (const rule of preLlmRules) {
-    if (finalSignal.aborted) return null;
-    if (rule.pattern.test(partialText) && rule.confidence >= FAST_PATH_THRESHOLD) {
-      return { intent: rule.type, confidence: rule.confidence, source: "regex" };
-    }
-  }
-
-  if (finalSignal.aborted) return null;
-
-  const normalized = partialText.toLowerCase().trim();
-  const quickMatch = QUICK_INTENT_MAP[normalized];
-  if (quickMatch && quickMatch.confidence >= FAST_PATH_THRESHOLD) {
-    return { intent: quickMatch.type, confidence: quickMatch.confidence, source: "quick" };
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // Public: classifyIntent
 // ---------------------------------------------------------------------------
 
@@ -740,28 +567,113 @@ export function classifyIntentSpeculative(
  * Attempts LLM classification first; falls back to regex heuristics if the
  * API key is absent or the call fails.
  */
-export async function classifyIntent(text: string): Promise<Intent> {
+export async function classifyIntent(text: string, context?: IntentContext): Promise<Intent> {
+  const contextSummary = context?.os ? summarizeForIntent(context.os) : "";
+  const effectiveText = contextSummary ? `${text}\n\n[OS context summary]\n${contextSummary}` : text;
   const forceUiInteraction = /\b(mouse|cursor|click|double\s*click|right\s*click|drag|drop|scroll|move\s+mouse|click\s+at|x\s*\d+\s*y\s*\d+|k[ée]o|nh[aá]p|chu[ộo]t|cu[ộo]n)\b/i.test(text);
   const strictLlm = isLlmRequired();
   const normalized = text.toLowerCase().trim();
 
   // Deterministic high-signal routing to keep critical planner paths stable
   // even when LLM output drifts or provider/network is unavailable.
-  const preLlmRules = PRE_LLM_RULES;
+  const preLlmRules: Array<{ pattern: RegExp; type: IntentType; confidence: number }> = [
+    {
+      pattern: /\b(?:run|execute)\b.*\b(?:npm|pnpm|yarn|git|python|node|bash|sh|make|cargo)\b/i,
+      type: "shell-command",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+        {
+          pattern: /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i,
+          type: "app-control",
+          confidence: 0.94,
+        },
+    {
+      pattern: /\b(split|tile|snap|arrange)\b.{0,30}\b(window|windows)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(fill|autofill|form|đi[ềe]n\s*form|bi[ểe]u\s*m[ẫa]u)\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(vault|bitwarden|1password|autofill\s+password|password\s+manager|điền\s+mật\s+khẩu)\b/i,
+      type: "security-management",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\bopen\s+.+\s+on\s+youtube\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:on|in)\s+safari\b/i,
+      type: "app-control",
+      confidence: 0.92,
+    },
+    {
+      pattern: /\b(?:switch|mirror|extend|external\s+display|monitor)\b.*\b(display|screen|monitor)\b/i,
+      type: "display-audio",
+      confidence: 0.93,
+    },
+    {
+      pattern: /(?:\b(?:bluetooth|\bbt\b)\b.*\b(?:toggle|turn\s*off|disable|tắt)\b)|(?:\b(?:toggle|turn\s*off|disable|tắt)\b.*\b(?:bluetooth|\bbt\b)\b)/i,
+      type: "peripheral-management",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(bookmark|save\s+page|lưu\s+trang\s+dấu|d[ấa]u\s+trang)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(open|show|view)\b.*\b(history)\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(clear|delete|x[oó]a|d[ọo]n)\b.*\b(history|cache|cookies|browsing data)\b/i,
+      type: "app-control",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:defrag|trimforce|trim\s*ssd|ssd\s*trim|disk\s*optimization|optimi[sz]e\s*disk|lên\s*lịch\s*tối\s*ưu\s*đĩa)\b/i,
+      type: "disk-cleanup",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:summari[sz]e\b.*\b(?:context|workspace|work)\b|context\s*summary|t[oó]m\s*tắt\b.*\b(?:ng[ữu]\s*cảnh|màn\s*hình|công\s*việc)\b)\b/i,
+      type: "system-query",
+      confidence: 0.94,
+    },
+    {
+      pattern: /\b(?:connect|join|kết\s*nối)\b.*\b(?:wifi|wi-fi|wireless)\b/i,
+      type: "network-control",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:translate\s*(?:screen|this|selection|text)|dịch\s*(?:màn\s*hình|đoạn\s*này|văn\s*bản|nội\s*dung))\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:screenshot|screen\s*capture|capture\s*screen|chụp\s*màn\s*hình|chup\s*man\s*hinh)\b/i,
+      type: "ui-interaction",
+      confidence: 0.95,
+    },
+  ];
 
   for (const rule of preLlmRules) {
-    if (rule.pattern.test(text) && rule.confidence >= FAST_PATH_THRESHOLD) {
-      // Enrich entities from heuristic rules (which carry entityExtractors)
-      const heuristicEntities = (() => {
-        for (const hr of HEURISTIC_RULES) {
-          const m = text.match(hr.pattern);
-          if (m && hr.entityExtractor) return hr.entityExtractor(m);
-        }
-        return {};
-      })();
+    if (rule.pattern.test(text)) {
       return {
         type: rule.type,
-        entities: heuristicEntities,
+        entities: {},
         confidence: rule.confidence,
         rawText: text,
       };
@@ -771,48 +683,34 @@ export async function classifyIntent(text: string): Promise<Intent> {
   // Quick match for single-word commands
   const quickMatch = QUICK_INTENT_MAP[normalized];
   if (!strictLlm && quickMatch) {
-    if (quickMatch.confidence >= FAST_PATH_THRESHOLD) {
-      return {
-        type: quickMatch.type,
-        entities: {},
-        confidence: quickMatch.confidence,
-        rawText: text,
-      };
-    }
+    return {
+      type: quickMatch.type,
+      entities: {},
+      confidence: quickMatch.confidence,
+      rawText: text,
+    };
   }
 
-  // L707 confidence gate: skip LLM if any earlier layer already produced a
-  // high-confidence result that did not trigger the fast-path return above
-  // (e.g. when strictLlm=false and quickMatch exists but below threshold).
-  const preConfidence = quickMatch?.confidence ?? 0;
-  const skipLlm = preConfidence >= FAST_PATH_THRESHOLD;
-
-  const llmResult = skipLlm ? null : await classifyWithToolUse(text, strictLlm);
+  const llmResult = await classifyWithLLM(effectiveText, strictLlm);
 
   if (strictLlm) {
     if (!llmResult) {
       throw new Error("LLM API is required but no classification result was returned.");
     }
     if (forceUiInteraction && llmResult.type !== "ui-interaction") {
-      return Object.assign(
-        {
-          type: "ui-interaction",
-          entities: llmResult.entities,
-          confidence: Math.max(llmResult.confidence, 0.92),
-          rawText: text,
-        },
-        (llmResult as any)._parsedCommand ? { _parsedCommand: (llmResult as any)._parsedCommand } : {},
-      );
-    }
-    return Object.assign(
-      {
-        type: llmResult.type,
+      return {
+        type: "ui-interaction",
         entities: llmResult.entities,
-        confidence: llmResult.confidence,
+        confidence: Math.max(llmResult.confidence, 0.92),
         rawText: text,
-      },
-      (llmResult as any)._parsedCommand ? { _parsedCommand: (llmResult as any)._parsedCommand } : {},
-    );
+      };
+    }
+    return {
+      type: llmResult.type,
+      entities: llmResult.entities,
+      confidence: llmResult.confidence,
+      rawText: text,
+    };
   }
 
   // Prefer heuristic routing before phrase shortcuts to avoid broad regex
@@ -829,26 +727,20 @@ export async function classifyIntent(text: string): Promise<Intent> {
   }
 
   if (forceUiInteraction && result.type !== "ui-interaction") {
-    return Object.assign(
-      {
-        type: "ui-interaction",
-        entities: result.entities,
-        confidence: Math.max(result.confidence, 0.92),
-        rawText: text,
-      },
-      (llmResult as any)?._parsedCommand ? { _parsedCommand: (llmResult as any)._parsedCommand } : {},
-    );
+    return {
+      type: "ui-interaction",
+      entities: result.entities,
+      confidence: Math.max(result.confidence, 0.92),
+      rawText: text,
+    };
   }
 
-  return Object.assign(
-    {
-      type: result.type,
-      entities: result.entities,
-      confidence: result.confidence,
-      rawText: text,
-    },
-    (llmResult as any)?._parsedCommand ? { _parsedCommand: (llmResult as any)._parsedCommand } : {},
-  );
+  return {
+    type: result.type,
+    entities: result.entities,
+    confidence: result.confidence,
+    rawText: text,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,19 +1113,6 @@ function extractQuotedText(raw: string): string | null {
 
   const tail = raw.match(/\b(?:type|enter|input|write)\b\s+(.+)/i);
   if (tail?.[1]) return tail[1].trim();
-  return null;
-}
-
-/** Extract UI element target from text like "click vào My Documents" or "mở folder ABC". */
-function extractUiTarget(text: string): string | null {
-  // Vietnamese: "click vào X", "nhấp vào X", "bấm vào X", "chọn X", "ấn vào X", "tap vào X"
-  const viMatch = text.match(/(?:click|nhấp|bấm|chọn|ấn|tap)\s+(?:vào|vô|lên|trên)\s+(.+?)(?:\s+(?:rồi|sau đó|và|then|and)\b|$)/i);
-  if (viMatch?.[1]) return viMatch[1].trim();
-
-  // English: "click on X", "click X", "select X", "press X"
-  const enMatch = text.match(/(?:click|tap|select|press)\s+(?:on\s+)?(.+?)(?:\s+(?:then|and|after)\b|$)/i);
-  if (enMatch?.[1]) return enMatch[1].trim();
-
   return null;
 }
 
@@ -1714,10 +1593,6 @@ const KNOWN_APPS = [
   ...BROWSERS,
   ...MEDIA_APPS,
   "zalo",
-  "facebook",
-  "messenger",
-  "instagram",
-  "whatsapp",
   "finder",
   "terminal",
   "vscode",
@@ -1735,18 +1610,7 @@ function extractAppName(intent: Intent): string | null {
   const raw = intent.rawText;
 
   // Web target flows should still control a browser app.
-  if (/(?:(?:^|\s)(?:mở|phát|bật|xem)(?:\s+(?:video|bài\s*hát?|nhạc))?\s+.{1,60}?\s+(?:trên|ở|tại)\s+youtube(?:\b|$)|\bopen\s+\S.{0,60}?\s+on\s+youtube\b)/i.test(raw)) {
-    // Respect explicit browser context (e.g. "ở safari", "ở chrome")
-    const browserCtx = raw.match(/(?:trên|ở|tại|on|in)\s+(safari|chrome|firefox|arc|brave|edge)\b/i)?.[1];
-    if (browserCtx) {
-      const b = browserCtx.toLowerCase();
-      if (b === "safari") return "Safari";
-      if (b === "chrome") return "Google Chrome";
-      if (b === "firefox") return "Firefox";
-      if (b === "arc") return "Arc";
-      if (b === "brave") return "Brave Browser";
-      if (b === "edge") return "Microsoft Edge";
-    }
+  if (/\bopen\b.+\bon\s+youtube\b/i.test(raw)) {
     return "safari";
   }
 
@@ -1771,7 +1635,7 @@ function extractAppName(intent: Intent): string | null {
     const candidate = contextMatch[1].trim();
     const candidateLower = candidate.toLowerCase();
     for (const app of KNOWN_APPS) {
-      if (appWordBoundaryMatch(candidateLower, app)) return app;
+      if (candidateLower.includes(app)) return app;
     }
     return candidate;
   }
@@ -1782,7 +1646,7 @@ function extractAppName(intent: Intent): string | null {
     const candidate = launchMatch[1].trim();
     const candidateLower = candidate.toLowerCase();
     for (const app of KNOWN_APPS) {
-      if (appWordBoundaryMatch(candidateLower, app)) return app;
+      if (candidateLower.includes(app)) return app;
     }
   }
 
@@ -1793,7 +1657,7 @@ function extractAppName(intent: Intent): string | null {
   // From known app names in text
   const lower = intent.rawText.toLowerCase();
   for (const app of KNOWN_APPS) {
-    if (appWordBoundaryMatch(lower, app)) return app;
+    if (lower.includes(app)) return app;
   }
 
   return null;
@@ -1820,10 +1684,6 @@ function normalizeAppName(name: string): string {
     "messages": "Messages",
     "preview": "Preview",
     "zalo": "Zalo",
-    "facebook": "Facebook",
-    "messenger": "Messenger",
-    "instagram": "Instagram",
-    "whatsapp": "WhatsApp",
   };
   return map[name.toLowerCase()] ?? name;
 }
@@ -2043,166 +1903,15 @@ function isMessagingIntentText(text: string): boolean {
   return /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i.test(text);
 }
 
-function extractMessageRecipient(intent: Intent): string | null {
-  // Prefer explicit entities: phone, contact, recipient.
-  const ent: any = intent.entities ?? {};
-  const fromEntity =
-    ent.phone ?? ent.phoneNumber ?? ent.contact ?? ent.recipient ?? ent.to;
-  if (typeof fromEntity === "string" && fromEntity.trim()) return fromEntity.trim();
-
-  const text = intent.rawText;
-  // Vietnamese phone numbers: 10-11 digits, optional +84 prefix.
-  const phone = text.match(/(?:\+?84|0)\d{9,10}/);
-  if (phone) return phone[0];
-  // "cho/tới <name>" or "for/to <name>" — up to the word "nói"/"say"/quote.
-  const vi = text.match(/(?:cho|tới|đến)\s+([^"']+?)(?=\s+(?:và\s+)?(?:nói|bảo|gửi|rằng|message|nhắn)|["'"])/i);
-  if (vi?.[1]) return vi[1].trim();
-  const en = text.match(/\b(?:to|for)\s+([^"']+?)(?=\s+(?:and\s+)?(?:say|saying|message|tell)|["'"])/i);
-  if (en?.[1]) return en[1].trim();
-  return null;
-}
-
-// ── App-specific messaging recipes (keyboard shortcuts verified per app) ───
-// Returns a deterministic AppleScript template or null (fallback to LLM).
-function buildMessagingScriptFromRecipe(
-  app: string,
-  recipient: string,
-  message: string,
-): string | null {
-  const safeApp = escapeAppleScriptString(app);
-  const safeRecipient = escapeAppleScriptString(recipient);
-  const safeMessage = escapeAppleScriptString(message);
-  const appLower = app.toLowerCase();
-
-  // Zalo: Cmd+K opens global contact search.
-  // CRITICAL: if a chat is already open, the composer steals focus and eats Cmd+K
-  // (typed input ends up in the chat). Press Escape FIRST to drop composer focus,
-  // then Cmd+K is reliably routed to the search bar. After picking the contact,
-  // Escape again drops any lingering overlay before typing the message.
-  if (appLower === "zalo") {
-    return [
-      `tell application "${safeApp}" to activate`,
-      `delay 1.5`,
-      `tell application "System Events"`,
-      `  tell process "${safeApp}"`,
-      `    key code 53`,           // ESC #1: defocus composer if open
-      `    delay 0.3`,
-      `    key code 53`,           // ESC #2: dismiss any modal layered on top
-      `    delay 0.3`,
-      `    keystroke "k" using command down`,
-      `    delay 1.5`,
-      `    keystroke "${safeRecipient}"`,
-      `    delay 1.8`,
-      `    key code 36`,           // Return: open conversation
-      `    delay 1.5`,
-      `    key code 53`,           // ESC: drop search overlay
-      `    delay 0.5`,
-      `    keystroke "${safeMessage}"`,
-      `    delay 0.4`,
-      `    key code 36`,           // Return: send
-      `  end tell`,
-      `end tell`,
-    ].join("\n");
-  }
-
-  // Messages (iMessage): Cmd+N opens a new message composer.
-  if (appLower === "messages") {
-    return [
-      `tell application "${safeApp}" to activate`,
-      `delay 1`,
-      `tell application "System Events"`,
-      `  tell process "${safeApp}"`,
-      `    keystroke "n" using command down`,
-      `    delay 0.6`,
-      `    keystroke "${safeRecipient}"`,
-      `    delay 0.8`,
-      `    key code 36`,
-      `    delay 0.6`,
-      `    keystroke "${safeMessage}"`,
-      `    delay 0.3`,
-      `    key code 36`,
-      `  end tell`,
-      `end tell`,
-    ].join("\n");
-  }
-
-  // Telegram / Slack / Discord: Cmd+K = quick switcher / jump-to-chat.
-  if (appLower === "telegram" || appLower === "slack" || appLower === "discord") {
-    return [
-      `tell application "${safeApp}" to activate`,
-      `delay 1`,
-      `tell application "System Events"`,
-      `  tell process "${safeApp}"`,
-      `    keystroke "k" using command down`,
-      `    delay 0.6`,
-      `    keystroke "${safeRecipient}"`,
-      `    delay 0.8`,
-      `    key code 36`,
-      `    delay 0.8`,
-      `    keystroke "${safeMessage}"`,
-      `    delay 0.3`,
-      `    key code 36`,
-      `  end tell`,
-      `end tell`,
-    ].join("\n");
-  }
-
-  // Facebook / Messenger / Instagram / WhatsApp: Cmd+N opens new chat (WhatsApp);
-  // for Facebook/Instagram no reliable keyboard shortcut — activate and let user navigate.
-  const SOCIAL_URL_MAP: Record<string, string> = {
-    facebook: "https://facebook.com",
-    messenger: "https://www.messenger.com",
-    instagram: "https://instagram.com",
-    whatsapp: "https://web.whatsapp.com",
-  };
-  if (appLower in SOCIAL_URL_MAP) {
-    const fallbackUrl = SOCIAL_URL_MAP[appLower]!;
-    if (appLower === "whatsapp") {
-      // WhatsApp Desktop: Cmd+N opens new chat
-      return [
-        `tell application "${safeApp}" to activate`,
-        `delay 1`,
-        `tell application "System Events"`,
-        `  tell process "${safeApp}"`,
-        `    keystroke "n" using command down`,
-        `    delay 0.6`,
-        `    keystroke "${safeRecipient}"`,
-        `    delay 0.8`,
-        `    key code 36`,
-        `    delay 0.8`,
-        `    keystroke "${safeMessage}"`,
-        `    delay 0.3`,
-        `    key code 36`,
-        `  end tell`,
-        `end tell`,
-      ].join("\n");
-    }
-    // Facebook / Messenger / Instagram: open via URL as fallback
-    return [
-      `do shell script "open \\"${fallbackUrl}\\""`,
-    ].join("\n");
-  }
-
-  return null;
-}
-
 async function buildMessagingScriptWithLLM(intent: Intent): Promise<string> {
-  const appRaw = extractAppName(intent) ?? "Zalo";
-  const app = normalizeAppName(appRaw);
-
-  // Prefer deterministic recipe when available (no LLM round-trip needed).
-  const recipient = extractMessageRecipient(intent) ?? "";
-  const message = extractQuotedText(intent.rawText) ?? "";
-  if (recipient && message) {
-    const recipe = buildMessagingScriptFromRecipe(app, recipient, message);
-    if (recipe) return recipe;
-  }
-
   if (!isLlmRequired()) {
     throw new Error("No enabled LLM providers configured for messaging script generation.");
   }
 
   const runtime = loadLlmRuntimeConfig();
+
+  const appRaw = extractAppName(intent) ?? "Zalo";
+  const app = normalizeAppName(appRaw);
 
   const system = `You are generating safe AppleScript for macOS chat-app automation.
 Task: send a message in a desktop chat app.
@@ -2212,13 +1921,7 @@ Rules:
 - Do not include shell commands.
 - Keep script concise and deterministic.
 - Use System Events keystrokes only when necessary.
-- Do not add markdown fences.
-App-specific shortcuts (USE THESE, do NOT use Cmd+F which is in-page find):
-- Zalo: Cmd+K opens global contact search
-- Messages: Cmd+N opens new composer
-- Telegram / Slack / Discord: Cmd+K jumps to chat
-- WhatsApp: Cmd+N new chat
-After typing the recipient, press Return (key code 36), wait ~1.2s, then type the message and press Return.`;
+- Do not add markdown fences.`;
 
   const user = JSON.stringify({
     app,
@@ -2425,34 +2128,28 @@ function buildAppControlScript(intent: Intent): string | null {
 
   // ── Browser + YouTube search flow ──
   // Example: "open youtube on safari and play video first in search '...'
-  if (isBrowser && /(?:(?:^|\s)(?:mở|phát|bật|xem|open|play|search|watch)(?:\s|$).+?\byoutube\b|\byoutube\b.+?(?:^|\s)(?:mở|phát|bật|xem|open|play|search|watch)(?:\s|$))/i.test(text)) {
-    const searchMatch = intent.rawText.match(/\bsearch\s+[“'””]?(.+?)[“'””]?$/i);
-    const openOnYoutubeMatch =
-      intent.rawText.match(/(?:(?:^|\s)(?:mở|phát|bật|xem)(?:\s+(?:video|bài(?:\s+hát)?))?\s+['”«”\x22]([^'”»”\x22]+)['”»”\x22]\s+(?:trên|ở|tại)\s+youtube(?:\b|$)|\bopen\s+(.+?)\s+on\s+youtube\b)/i);
-    const query = searchMatch?.[1]?.trim() ?? (openOnYoutubeMatch?.[1] ?? openOnYoutubeMatch?.[2])?.trim();
-    const autoPlay = /(^|\s)(play|first video|video first|phát|mở|bật)(\s|$)/i.test(text) && !!query;
+  if (isBrowser && /\byoutube\b/i.test(text)) {
+    const searchMatch = intent.rawText.match(/\bsearch\s+["'“”]?(.+?)["'“”]?$/i);
+    const openOnYoutubeMatch = intent.rawText.match(/\bopen\s+(.+?)\s+on\s+youtube\b/i);
+    const query = searchMatch?.[1]?.trim() ?? openOnYoutubeMatch?.[1]?.trim();
     const url = query
       ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
       : "https://www.youtube.com";
     const safeUrl = escapeAppleScriptString(url);
 
     if (app === "Safari") {
-      if (autoPlay) {
+      if (/\b(play|first video|video first)\b/i.test(text) && query) {
         const js = escapeAppleScriptString("setTimeout(function(){var l=document.querySelector('ytd-video-renderer a#thumbnail, ytd-video-renderer a#video-title'); if(l){l.click();}}, 1000);");
         return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\ndelay 1.2\ndo JavaScript "${js}" in current tab of front window\nend tell`;
       }
       return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\nend tell`;
     }
 
-    if (autoPlay) {
-      const js = escapeAppleScriptString("setTimeout(function(){var l=document.querySelector('ytd-video-renderer a#thumbnail, ytd-video-renderer a#video-title'); if(l){l.click();}}, 1000);");
-      return `tell application "${safeApp}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeUrl}"\ndelay 1.2\ndo JavaScript "${js}" in current tab of front window\nend tell`;
-    }
     return `tell application "${safeApp}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeUrl}"\nend tell`;
   }
 
   // ── Quit app ──
-  if (/\b(quit|exit|tắt)\b/i.test(text) && app) {
+  if (/\b(quit|exit)\b/i.test(text) && app) {
     return `tell application "${safeApp}" to quit`;
   }
 
@@ -2467,7 +2164,7 @@ function buildAppControlScript(intent: Intent): string | null {
   }
 
   // ── Close window ──
-  if (/\b(?:close|đóng)\b/i.test(text) && app) {
+  if (/\bclose\b/i.test(text) && app) {
     return `tell application "${safeApp}" to close front window`;
   }
 
@@ -2529,7 +2226,86 @@ function buildAppControlScript(intent: Intent): string | null {
   return null;
 }
 
-// buildKeyboardAction is imported from ./applescript-builder.js
+/**
+ * Build a keyboard shortcut action for app-control.
+ * Returns params for the ui.key orchestrator tool.
+ */
+function buildKeyboardAction(intent: Intent): Record<string, unknown> | null {
+  const text = intent.rawText.toLowerCase();
+
+  // Bookmark current page (UC4.6)
+  if (/\b(bookmark|save\s+page|lưu\s+trang\s+dấu|d[ấa]u\s+trang)\b/i.test(text)) {
+    return { key: "d", modifiers: { meta: true } };
+  }
+
+  // Open bookmarks view/manager (UC4.6)
+  if (/\b(open|show|view)\b.*\b(bookmark|bookmarks)\b/i.test(text)) {
+    return { key: "b", modifiers: { meta: true, shift: true } };
+  }
+
+  // History/cache management (UC4.7)
+  if (/\b(open|show|view)\b.*\b(history)\b/i.test(text)) {
+    return { key: "y", modifiers: { meta: true } };
+  }
+  if (/\b(clear|delete|x[oó]a|d[ọo]n)\b.*\b(history|cache|cookies|browsing data)\b/i.test(text)) {
+    return { key: "backspace", modifiers: { meta: true, shift: true } };
+  }
+
+  // Refresh → Cmd+R
+  if (/\b(refresh|reload)\b/i.test(text)) {
+    return { key: "r", modifiers: { meta: true } };
+  }
+
+  // Go back → Cmd+[
+  if (/\bgo back\b/i.test(text)) {
+    return { key: "[", modifiers: { meta: true } };
+  }
+
+  // Go forward → Cmd+]
+  if (/\bgo forward\b/i.test(text)) {
+    return { key: "]", modifiers: { meta: true } };
+  }
+
+  // Next tab → Ctrl+Tab
+  if (/\bnext tab\b/i.test(text)) {
+    return { key: "Tab", modifiers: { control: true } };
+  }
+
+  // Previous tab → Ctrl+Shift+Tab
+  if (/\bprev(?:ious)? tab\b/i.test(text)) {
+    return { key: "Tab", modifiers: { control: true, shift: true } };
+  }
+
+  // Full screen → Ctrl+Cmd+F
+  if (/\bfull ?screen\b/i.test(text)) {
+    return { key: "f", modifiers: { meta: true, control: true } };
+  }
+
+  // Split/tile window left/right → Ctrl+Option+Cmd+Arrow
+  if (/\b(split|tile|snap|arrange)\b/i.test(text) && /\bleft\b/i.test(text)) {
+    return { key: "left", modifiers: { meta: true, control: true, alt: true } };
+  }
+  if (/\b(split|tile|snap|arrange)\b/i.test(text) && /\bright\b/i.test(text)) {
+    return { key: "right", modifiers: { meta: true, control: true, alt: true } };
+  }
+
+  // Pause/play media → Space (for video players in browser)
+  if (/\b(pause|play|resume)\b/i.test(text)) {
+    return { key: "space", modifiers: {} };
+  }
+
+  // New tab → Cmd+T
+  if (/\bnew tab\b/i.test(text)) {
+    return { key: "t", modifiers: { meta: true } };
+  }
+
+  // Close tab → Cmd+W
+  if (/\bclose tab\b/i.test(text)) {
+    return { key: "w", modifiers: { meta: true } };
+  }
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -3365,39 +3141,7 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
  */
 export async function planFromIntent(intent: Intent): Promise<StatePlan> {
   const taskId = `task-${Date.now()}`;
-  const graph = new StateGraph();
   const nodes: StateNode[] = [];
-
-  // ── Context dependency pre-nodes ──
-  const depNodeIds: string[] = [];
-  const ctxDeps = intent._parsedCommand?.context_dependencies ?? [];
-
-  if (ctxDeps.includes("screen-tree")) {
-    const screenNode = actionNode(
-      "ctx-screen-tree",
-      "Collect screen tree for context",
-      "screen.tree",
-      "surface",
-      {},
-    );
-    graph.addNode(screenNode);
-    depNodeIds.push(screenNode.id);
-  }
-
-  for (const dep of ctxDeps) {
-    if (dep.startsWith("file:")) {
-      const filePath = dep.slice(5);
-      const fileNode = actionNode(
-        `ctx-file-${depNodeIds.length}`,
-        `Read file ${filePath}`,
-        "file.read",
-        "deep",
-        { path: filePath },
-      );
-      graph.addNode(fileNode);
-      depNodeIds.push(fileNode.id);
-    }
-  }
 
   switch (intent.type as IntentType) {
     // ── shell-command ────────────────────────────────────────────────────────
@@ -3421,51 +3165,18 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         (e) => e.type === "app",
       );
       const appName = appEntity?.value ?? intent.rawText;
-      const SOCIAL_LAUNCH_URL: Record<string, string> = {
-        facebook: "https://facebook.com",
-        fb: "https://facebook.com",
-        messenger: "https://www.messenger.com",
-        instagram: "https://instagram.com",
-        ig: "https://instagram.com",
-        insta: "https://instagram.com",
-        whatsapp: "https://web.whatsapp.com",
-      };
-      const appLower = (typeof appName === "string" ? appName : "").toLowerCase();
-      const socialUrl = SOCIAL_LAUNCH_URL[appLower];
-      if (socialUrl) {
-        // Try native app first, fall back to browser URL
-        const nativeName = normalizeAppName(appLower);
-        const script = [
-          `try`,
-          `  tell application "${nativeName}" to activate`,
-          `on error`,
-          `  do shell script "open \\"${socialUrl}\\""`,
-          `end try`,
-        ].join("\n");
-        nodes.push(
-          actionNode(
-            "launch",
-            `Launch ${nativeName}`,
-            "app.script",
-            "deep",
-            { script, entities: intent.entities },
-            [],
-            "verify-launch",
-          ),
-        );
-      } else {
-        nodes.push(
-          actionNode(
-            "launch",
-            `Launch ${appName}`,
-            "app.launch",
-            "deep",
-            { name: appName, entities: intent.entities },
-            [],
-            "verify-launch",
-          ),
-        );
-      }
+
+      nodes.push(
+        actionNode(
+          "launch",
+          `Launch ${appName}`,
+          "app.launch",
+          "deep",
+          { name: appName, entities: intent.entities },
+          [],
+          "verify-launch",
+        ),
+      );
       nodes.push(
         verifyNode(
           "verify-launch",
@@ -3544,35 +3255,6 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         );
       }
 
-      // Deep-link chat path for social messaging apps — tries OS-level URL
-      // schemes (messenger.com/t/, imessage:, tg://resolve, wa.me/) before
-      // falling back to AppleScript/keyboard automation.
-      const chatApps = new Set(["messenger", "zalo", "imessage", "messages", "telegram", "whatsapp"]);
-      const chatAppAlias: Record<string, "messenger" | "zalo" | "imessage" | "telegram" | "whatsapp"> = {
-        messenger: "messenger",
-        zalo: "zalo",
-        imessage: "imessage",
-        messages: "imessage",
-        telegram: "telegram",
-        whatsapp: "whatsapp",
-      };
-      if (app && isMessaging && chatApps.has(app)) {
-        const person = extractMessageRecipient(intent);
-        if (person) {
-          nodes.push(
-            actionNode(
-              "chat",
-              `Open chat with ${person} in ${app}`,
-              "app.chat",
-              "deep",
-              { app: chatAppAlias[app], person },
-              app ? ["activate"] : [],
-            ),
-          );
-          break;
-        }
-      }
-
       // Try AppleScript first (more precise), keyboard shortcut as fallback
       const script = isMessaging
         ? await buildMessagingScriptWithLLM(intent)
@@ -3626,23 +3308,6 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
             "generic.execute",
             "deep",
             { intent: intent.rawText, entities: intent.entities },
-          ),
-        );
-      }
-
-      // If the command targets a specific UI element, add a surface-layer
-      // find+click step that uses the accessibility tree instead of coordinates.
-      const uiTarget = extractUiTarget(intent.rawText);
-      if (uiTarget) {
-        const lastNodeId = nodes[nodes.length - 1]?.id ?? "activate";
-        nodes.push(
-          actionNode(
-            "ui-find-click",
-            `Find and click "${uiTarget}" via accessibility tree`,
-            "ui.click",
-            "surface",
-            { query: uiTarget, useAccessibilityTree: true },
-            [lastNodeId],
           ),
         );
       }
@@ -4027,14 +3692,12 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     }
   }
 
-  // Transfer staged nodes into graph, injecting context dependencies
-  for (const node of nodes) {
-    // First node(s) in the plan depend on context pre-nodes
-    if (depNodeIds.length > 0 && node.dependencies.length === 0) {
-      node.dependencies = [...depNodeIds];
-    }
-    graph.addNode(node);
-  }
+  const totalMs = nodes.reduce((sum, n) => sum + n.estimatedDurationMs, 0);
 
-  return graph.toPlan(taskId, intent.rawText);
+  return {
+    taskId,
+    goal: intent.rawText,
+    estimatedDuration: `${Math.round(totalMs / 1000)}s`,
+    nodes,
+  };
 }

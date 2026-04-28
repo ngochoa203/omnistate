@@ -19,36 +19,20 @@ export type ClientMessage =
   | StatusQueryMessage
   | AdminShutdownMessage
   | VoiceTranscribeMessage
+  | VoiceStreamStartMessage
+  | VoiceStreamChunkMessage
+  | VoiceStreamStopMessage
+  | VoiceSessionCancelMessage
+  | TaskCancelMessage
   | VibeVoiceStartMessage
   | VibeVoiceChunkMessage
   | VibeVoiceEndMessage
-  | VoiceStreamStartMessage
-  | VoiceStreamStopMessage
-  | TtsCancelMessage
-  | VoiceEnrollMessage
-  | VoiceVerifyMessage
   | SystemDashboardMessage
   | PermissionPolicyGetMessage
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage
-  | VoiceEnrollStartMessage
-  | VoiceEnrollSampleMessage
-  | VoiceEnrollFinalizeMessage
-  | VoiceEnrollCancelMessage
-  | VoiceWakeEnableMessage
-  | TriggerCreateMessage
-  | TriggerListMessage
-  | TriggerUpdateMessage
-  | TriggerDeleteMessage
-  | TriggerHistoryMessage
-  | ToolsListMessage;
-
-export interface VoiceWakeEnableMessage {
-  type: "voice.wake.enable";
-  enabled: boolean;
-}
+  | PermissionStopMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -59,8 +43,6 @@ export interface ConnectMessage {
 export interface TaskMessage {
   type: "task";
   goal: string;
-  /** Optional: force routing mode. */
-  mode?: "auto" | "chat" | "task";
   /** Optional: force a specific execution layer. */
   layer?: "deep" | "surface" | "auto";
   attachments?: TaskAttachment[];
@@ -210,12 +192,46 @@ export interface AdminShutdownMessage {
 
 export interface VoiceTranscribeMessage {
   type: "voice.transcribe";
-  id?: string;
-  sessionId?: string;
+  id: string;
   /** Base64-encoded audio data. */
   audio: string;
   /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
   format?: string;
+}
+
+export type VoiceState = "idle" | "wake-listening" | "wake-detected" | "recording" | "transcribing" | "thinking" | "executing" | "speaking" | "interrupted" | "error";
+
+export interface VoiceStreamStartMessage {
+  type: "voice.stream.start";
+  sessionId: string;
+  source?: "voice" | "wake" | "siri-handoff";
+  mimeType?: string;
+  sampleRate?: number;
+  autoExecute?: boolean;
+  includeContext?: boolean;
+}
+
+export interface VoiceStreamChunkMessage {
+  type: "voice.stream.chunk";
+  sessionId: string;
+  audio: string;
+}
+
+export interface VoiceStreamStopMessage {
+  type: "voice.stream.stop";
+  sessionId: string;
+  autoExecute?: boolean;
+  includeContext?: boolean;
+}
+
+export interface VoiceSessionCancelMessage {
+  type: "voice.session.cancel";
+  sessionId: string;
+}
+
+export interface TaskCancelMessage {
+  type: "task.cancel";
+  taskId: string;
 }
 
 export interface VibeVoiceStartMessage {
@@ -269,103 +285,6 @@ export interface PermissionStopMessage {
   type: "permission.stop";
 }
 
-// ── Voice Enrollment (client → gateway) ──────────────────────────────────────
-
-export interface VoiceEnrollStartMessage {
-  type: "voice.enroll.start";
-  userId: string;
-}
-
-export interface VoiceEnrollSampleMessage {
-  type: "voice.enroll.sample";
-  audio: string;
-  format: string;
-  phraseIndex: number;
-}
-
-export interface VoiceEnrollFinalizeMessage {
-  type: "voice.enroll.finalize";
-  userId: string;
-}
-
-export interface VoiceEnrollCancelMessage {
-  type: "voice.enroll.cancel";
-  userId: string;
-}
-
-// ── Voice Streaming (client → gateway) ───────────────────────────────────────
-
-/** Begin a streaming voice session. Binary WS frames carrying PCM16 will be associated with this sessionId. */
-export interface VoiceStreamStartMessage {
-  type: "voice.stream.start";
-  sessionId: string;
-  sampleRate: 16000;
-  codec: "pcm16";
-}
-
-/** End a streaming voice session; triggers final STT processing. */
-export interface VoiceStreamStopMessage {
-  type: "voice.stream.stop";
-  sessionId: string;
-}
-
-/** Cancel in-progress TTS playback for a session. */
-export interface TtsCancelMessage {
-  type: "tts.cancel";
-  sessionId: string;
-}
-
-export interface VoiceEnrollMessage {
-  type: "voice.enroll";
-  profileId: string;
-  /** Base64-encoded WAV audio. */
-  audio: string;
-}
-
-export interface VoiceVerifyMessage {
-  type: "voice.verify";
-  /** Base64-encoded WAV audio. */
-  audio: string;
-}
-
-// ── Trigger Messages (client → gateway) ──────────────────────────────────────
-
-export interface TriggerCreateMessage {
-  type: "trigger.create";
-  name: string;
-  description?: string;
-  condition: { type: string; config: Record<string, unknown> };
-  action: { type: "execute_task"; goal: string; layer?: "deep" | "surface" | "auto" };
-  cooldownMs?: number;
-}
-
-export interface TriggerListMessage {
-  type: "trigger.list";
-}
-
-export interface TriggerUpdateMessage {
-  type: "trigger.update";
-  triggerId: string;
-  updates: Record<string, unknown>;
-}
-
-export interface TriggerDeleteMessage {
-  type: "trigger.delete";
-  triggerId: string;
-}
-
-export interface TriggerHistoryMessage {
-  type: "trigger.history";
-  triggerId: string;
-  limit?: number;
-}
-
-// ── Tools ─────────────────────────────────────────────────────────────────────
-
-export interface ToolsListMessage {
-  type: "tools.list";
-}
-
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
@@ -390,32 +309,19 @@ export type ServerMessage =
   | StatusReplyMessage
   | VoiceTranscriptMessage
   | VoiceErrorMessage
+  | VoiceStateMessage
+  | VoiceTranscriptPartialMessage
+  | VoiceTranscriptFinalMessage
+  | VoiceContextMessage
+  | VoiceStreamErrorMessage
+  | TaskCancelledMessage
   | VibeVoicePartialMessage
   | VibeVoiceTranscriptMessage
   | VibeVoiceErrorMessage
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage
-  | VoiceEnrollReadyMessage
-  | VoiceEnrollProgressMessage
-  | VoiceEnrollDoneMessage
-  | VoiceEnrollErrorMessage
-  | VoiceEnrollResultMessage
-  | VoiceEnrollErrorGatewayMessage
-  | VoiceVerifyResultMessage
-  | VoiceVerifyErrorMessage
-  | VoiceTtsAudioMessage
-  | VoiceTtsChunkMessage
-  | VoiceSpeakerMismatchMessage
-  | TtsEndMessage
-  | ToolsReportMessage;
-
-export interface TtsEndMessage {
-  type: "tts.end";
-  taskId?: string;
-  timestamp: string;
-}
+  | PermissionStatusMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -470,18 +376,7 @@ export interface TaskVerifyMessage {
 export interface TaskCompleteMessage {
   type: "task.complete";
   taskId: string;
-  result: {
-    /** Primary output text (backward-compatible). */
-    output?: string;
-    /** Spoken response text for voice clients. */
-    speak?: string;
-    /** Structured UI payload for rich clients. */
-    ui?: Record<string, unknown>;
-    /** Suggested follow-up prompts. */
-    followup?: string[];
-    /** Arbitrary additional data from the handler. */
-    [key: string]: unknown;
-  };
+  result: Record<string, unknown>;
 }
 
 export interface TaskErrorMessage {
@@ -533,7 +428,7 @@ export interface LlmPreflightReportMessage {
 
 export interface RuntimeConfigReportMessage {
   type: "runtime.config.report";
-  config: unknown;
+  config: Record<string, unknown>;
 }
 
 export interface RuntimeConfigAckMessage {
@@ -541,7 +436,7 @@ export interface RuntimeConfigAckMessage {
   ok: boolean;
   key: RuntimeConfigSetMessage["key"];
   message: string;
-  config: unknown;
+  config: Record<string, unknown>;
 }
 
 export interface StatusReplyMessage {
@@ -553,23 +448,56 @@ export interface StatusReplyMessage {
 
 export interface VoiceTranscriptMessage {
   type: "voice.transcript";
-  /** Legacy: one-shot transcription id. */
-  id?: string;
-  /** Streaming session id. */
-  sessionId?: string;
-  kind?: "partial" | "final";
+  id: string;
   text: string;
-  t0?: number;
-  t1?: number;
 }
 
 export interface VoiceErrorMessage {
   type: "voice.error";
-  /** Legacy: one-shot transcription id. */
-  id?: string;
-  /** Streaming session id. */
-  sessionId?: string;
+  id: string;
   error: string;
+}
+
+export interface VoiceStateMessage {
+  type: "voice.state";
+  sessionId?: string;
+  state: VoiceState;
+  source?: string;
+  taskId?: string;
+  error?: string;
+}
+
+export interface VoiceTranscriptPartialMessage {
+  type: "voice.transcript.partial";
+  sessionId: string;
+  text: string;
+  provider?: string;
+}
+
+export interface VoiceTranscriptFinalMessage {
+  type: "voice.transcript.final";
+  sessionId: string;
+  text: string;
+  provider?: string;
+  taskId?: string;
+}
+
+export interface VoiceContextMessage {
+  type: "voice.context";
+  sessionId: string;
+  context: unknown;
+}
+
+export interface VoiceStreamErrorMessage {
+  type: "voice.stream.error";
+  sessionId: string;
+  error: string;
+}
+
+export interface TaskCancelledMessage {
+  type: "task.cancelled";
+  taskId: string;
+  reason?: string;
 }
 
 export interface VibeVoicePartialMessage {
@@ -630,101 +558,6 @@ export interface PermissionStatusMessage {
   running: boolean;
 }
 
-// ── Voice Enrollment (gateway → client) ──────────────────────────────────────
-
-export interface VoiceEnrollReadyMessage {
-  type: "voice.enroll.ready";
-  phraseIndex: number;
-  prompt: string;
-}
-
-export interface VoiceEnrollProgressMessage {
-  type: "voice.enroll.progress";
-  accepted: boolean;
-  phraseIndex: number;
-  reason?: string;
-}
-
-export interface VoiceEnrollDoneMessage {
-  type: "voice.enroll.done";
-  userId: string;
-  sampleCount: number;
-}
-
-export interface VoiceEnrollErrorMessage {
-  type: "voice.enroll.error";
-  /** Structured error code (enrollment flow). */
-  code?: string;
-  message?: string;
-  /** Legacy flat error string. */
-  error?: string;
-}
-
-export interface VoiceTtsAudioMessage {
-  type: "voice.tts.audio";
-  taskId?: string;
-  audio: string;       // base64-encoded MP3
-  format: "mp3";
-  lang: "vi" | "en";
-  voice?: string;      // TTS voice identifier (e.g. "vi-VN-HoaiMyNeural")
-  text?: string;       // spoken text for subtitle/transcript display
-}
-
-// ── Voice Speaker Verification (gateway → client) ─────────────────────────────
-
-export interface VoiceSpeakerMismatchMessage {
-  type: "voice.speaker.mismatch";
-  sessionId: string;
-  userId: string;
-  score: number;
-  threshold: number;
-}
-
-// ── Voice Enrollment — gateway protocol variants ──────────────────────────────
-
-/** Gateway's compact voice.enroll.result (for VoiceEnrollMessage flow). */
-export interface VoiceEnrollResultMessage {
-  type: "voice.enroll.result";
-  profileId: string;
-  sampleCount: number;
-  isComplete: boolean;
-  required: number;
-}
-
-/** Gateway's compact voice.enroll.error (for VoiceEnrollMessage flow). */
-export interface VoiceEnrollErrorGatewayMessage {
-  type: "voice.enroll.error.gateway";
-  error: string;
-}
-
-export interface VoiceVerifyResultMessage {
-  type: "voice.verify.result";
-  matched: boolean;
-  profileId: string | null;
-  similarity: number;
-}
-
-export interface VoiceVerifyErrorMessage {
-  type: "voice.verify.error";
-  error: string;
-}
-
-/** Streaming TTS audio chunk from server to client. */
-export interface VoiceTtsChunkMessage {
-  type: "voice.tts.chunk";
-  sessionId: string;
-  seq: number;
-  audio: string;
-  mime: string;
-  eos: boolean;
-}
-
-export interface ToolsReportMessage {
-  type: "tools.report";
-  tools: Array<{ name: string; description: string; group: string }>;
-  skills: Array<{ name: string; group: string }>;
-}
-
 // ─── Shared supporting types ─────────────────────────────────────────────────
 
 export interface HistoryEntry {
@@ -749,28 +582,3 @@ export interface Alert {
   severity: string;
   message: string;
 }
-
-// ─── System Events (macOS native → gateway → clients) ────────────────────────
-
-export interface SystemClipboardChangedEvent {
-  type: "system.clipboard.changed";
-  content: string;
-}
-
-export interface SystemFileDownloadedEvent {
-  type: "system.file.downloaded";
-  name: string;
-  path: string;
-  sizeBytes: number;
-}
-
-export interface SystemAppSwitchedEvent {
-  type: "system.app.switched";
-  from: string;
-  to: string;
-}
-
-export type SystemEvent =
-  | SystemClipboardChangedEvent
-  | SystemFileDownloadedEvent
-  | SystemAppSwitchedEvent;

@@ -1,25 +1,9 @@
 import { useState, useRef, useCallback, useEffect, type DragEvent } from "react";
 import { useVoice } from "../hooks/useVoice";
+import { useVoiceSession } from "../hooks/useVoiceSession";
+import { useVoiceStream } from "../hooks/useVoiceStream";
 import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
-import { onTtsEnd } from "../lib/tts";
-
-// ---------------------------------------------------------------------------
-// localStorage helpers
-// ---------------------------------------------------------------------------
-const LS_AUTO_SEND = "omnistate.voice.autoSend";
-const LS_AUTO_EXECUTE = "omnistate.voice.autoExecute";
-const LS_WAKE_LOCAL = "omnistate.voice.wakeListenerLocal";
-
-function lsGet(key: string, fallback: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : v === "true";
-  } catch { return fallback; }
-}
-function lsSet(key: string, val: boolean) {
-  try { localStorage.setItem(key, String(val)); } catch { /* ignore */ }
-}
 
 type VoiceTab = "input" | "train" | "settings";
 
@@ -129,197 +113,41 @@ function VoiceMicButton({
 }
 
 function VoiceInputTab({ isVi }: { isVi: boolean }) {
-  // ---------------------------------------------------------------------------
-  // Persisted toggles
-  // ---------------------------------------------------------------------------
-  const [autoSend, setAutoSendState] = useState(() => lsGet(LS_AUTO_SEND, true));
-  const [autoExecute, setAutoExecuteState] = useState(() => lsGet(LS_AUTO_EXECUTE, true));
-  const [wakeListenerLocal, setWakeListenerLocalState] = useState(() => lsGet(LS_WAKE_LOCAL, true));
-
-  const setAutoSend = (v: boolean) => { setAutoSendState(v); lsSet(LS_AUTO_SEND, v); };
-  const setAutoExecute = (v: boolean) => { setAutoExecuteState(v); lsSet(LS_AUTO_EXECUTE, v); };
-  const setWakeListenerLocal = (v: boolean) => {
-    setWakeListenerLocalState(v);
-    lsSet(LS_WAKE_LOCAL, v);
-    // Inform gateway
-    getClient().enableWakeListener(v);
-  };
-
-  // ---------------------------------------------------------------------------
-  // Transcript accumulation (concat per-session, clear on mic-open)
-  // ---------------------------------------------------------------------------
   const [transcript, setTranscript] = useState("");
-  const sessionTranscriptRef = useRef("");
-
-  // ---------------------------------------------------------------------------
-  // Mic visibility (big visualizer vs. idle indicator)
-  // ---------------------------------------------------------------------------
-  const [micVisible, setMicVisible] = useState(false);
-
-  // Track whether last mic-open was from wake event vs. manual
-  const fromWakeRef = useRef(false);
-
+  const [autoSend, setAutoSend] = useState(true);
   const connectionState = useChatStore((s) => s.connectionState);
-  const rearmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const taskDispatchedRef = useRef(false);
 
   const voice = useVoice({
-    silenceMs: 5000,
-    noSpeechMs: 5000,
-    maxMs: 25000,
     sendAudio: (base64) => {
       useChatStore.getState().setVoiceState("transcribing");
       getClient().sendVoice(base64);
     },
-    onTranscript: (text, meta?: { confidence?: number }) => {
-      // Accumulate within the session
-      const sep = sessionTranscriptRef.current ? " " : "";
-      sessionTranscriptRef.current += sep + text;
-      setTranscript(sessionTranscriptRef.current);
-
+    onTranscript: (text) => {
+      setTranscript(text);
       useChatStore.getState().setVoiceState("idle");
-
-      const full = sessionTranscriptRef.current.trim();
-      if (autoSend && full) {
-        const LOW_CONFIDENCE = ["[unintelligible]", "[inaudible]", "..."];
-        const isGibberish =
-          full.split(/\s+/).filter(Boolean).length < 2 ||
-          LOW_CONFIDENCE.includes(full.toLowerCase()) ||
-          /^[\s\p{P}]+$/u.test(full) ||
-          (meta?.confidence !== undefined && meta.confidence < 0.5);
-        if (isGibberish) {
-          useChatStore.getState().addSystemMessage("Mình nghe chưa rõ, bạn nói lại giúp nhé");
-          return;
-        }
-        useChatStore.getState().addUserMessage(full);
-        const shouldAutoExecute = autoExecute || fromWakeRef.current;
-        if (shouldAutoExecute) {
-          // Auto-execute: fire the task immediately
-          getClient().sendTask(full);
-          taskDispatchedRef.current = true;
-        } else {
-          taskDispatchedRef.current = false;
-        }
-        fromWakeRef.current = false;
-        // If !autoExecute, transcript is in the box for user to confirm via Send button
-        sessionTranscriptRef.current = "";
+      if (autoSend && text.trim()) {
+        useChatStore.getState().addUserMessage(text);
+        getClient().sendTask(text);
       }
-    },
-    onNoSpeech: () => {
-      // No speech detected for 5 s — hide the big mic UI
-      setMicVisible(false);
-      fromWakeRef.current = false;
     },
     onError: (error) => {
       useChatStore.getState().setVoiceState("idle");
       useChatStore.getState().addSystemMessage(`${isVi ? "Lỗi voice" : "Voice error"}: ${error}`);
     },
   });
+  const session = useVoiceSession();
+  const voiceStream = useVoiceStream({
+    onFallback: voice.startRecording,
+    onError: (error) => useChatStore.getState().addSystemMessage(`${isVi ? "Lỗi voice" : "Voice error"}: ${error}`),
+  });
+  const voiceState = voiceStream.isStreaming ? "recording" : voice.state;
 
-  // ---------------------------------------------------------------------------
-  // Enable wake listener on mount (if toggle is on)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (wakeListenerLocal) {
-      getClient().enableWakeListener(true);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ---------------------------------------------------------------------------
-  // Listen for voice.wake WS events → show UI + start recording
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const unsub = getClient().on("voice.wake", () => {
-      if (!wakeListenerLocal) return;
-      fromWakeRef.current = true;
-      setMicVisible(true);
-      sessionTranscriptRef.current = "";
-      setTranscript("");
-      void voice.startRecording();
-    });
-    return unsub;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wakeListenerLocal]);
-
-  // ---------------------------------------------------------------------------
-  // Bridge WS transcript/error events into useVoice callbacks
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const offTranscript = getClient().on("voice.transcript", (msg: any) => {
-      if (msg?.type !== "voice.transcript") return;
-      const text = typeof msg.text === "string" ? msg.text : "";
-      voice.onTranscriptReceived(text);
-    });
-
-    const offError = getClient().on("voice.error", (msg: any) => {
-      if (msg?.type !== "voice.error") return;
-      const error = typeof msg.error === "string" ? msg.error : "Unknown voice error";
-      voice.onTranscriptError(error);
-    });
-
-    return () => {
-      offTranscript();
-      offError();
-    };
-  }, [voice]);
-
-  // ---------------------------------------------------------------------------
-  // Re-arm mic 400 ms after TTS ends OR after assistant message arrives (no TTS)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    onTtsEnd(() => {
-      if (!taskDispatchedRef.current) return;
-      taskDispatchedRef.current = false;
-      rearmTimerRef.current = setTimeout(() => {
-        setMicVisible(true);
-        sessionTranscriptRef.current = "";
-        setTranscript("");
-        void voice.startRecording();
-      }, 400);
-    });
-    return () => {
-      onTtsEnd(null);
-      if (rearmTimerRef.current) clearTimeout(rearmTimerRef.current);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ---------------------------------------------------------------------------
-  // Re-arm when assistant message arrives (TTS disabled path)
-  // ---------------------------------------------------------------------------
-  const ttsEnabled = useChatStore((s) => s.ttsEnabled);
-  useEffect(() => {
-    if (ttsEnabled) return; // handled by onTtsEnd branch above
-    const unsub = useChatStore.subscribe((state, prev) => {
-      const msgs = state.messages;
-      const prevMsgs = prev.messages;
-      if (msgs.length > prevMsgs.length && taskDispatchedRef.current) {
-        const last = msgs[msgs.length - 1];
-        if (last?.role === "system") {
-          taskDispatchedRef.current = false;
-          rearmTimerRef.current = setTimeout(() => {
-            setMicVisible(true);
-            sessionTranscriptRef.current = "";
-            setTranscript("");
-            void voice.startRecording();
-          }, 400);
-        }
-      }
-    });
-    return unsub;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsEnabled]);
-
-  // ---------------------------------------------------------------------------
-  // Local duration display
-  // ---------------------------------------------------------------------------
   const [duration, setDuration] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
 
   useEffect(() => {
-    if (voice.state === "recording") {
+    if (voiceState === "recording") {
       startRef.current = Date.now();
       timerRef.current = setInterval(() => setDuration(Date.now() - startRef.current), 100);
     } else {
@@ -327,41 +155,41 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
       setDuration(0);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [voice.state]);
+  }, [voiceState]);
 
   const formatDur = (ms: number) => {
     const s = Math.floor(ms / 1000);
     return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
   };
 
-  // ---------------------------------------------------------------------------
-  // Manual mic button open — always shows visualizer
-  // ---------------------------------------------------------------------------
-  const handleManualStart = useCallback(() => {
-    fromWakeRef.current = false;
-    setMicVisible(true);
-    sessionTranscriptRef.current = "";
-    setTranscript("");
-    void voice.startRecording();
-  }, [voice]);
-
   const sendTranscript = () => {
     if (!transcript.trim()) return;
     useChatStore.getState().addUserMessage(transcript);
-    if (autoExecute) {
-      getClient().sendTask(transcript);
-      taskDispatchedRef.current = true;
-    } else {
-      taskDispatchedRef.current = false;
-    }
+    getClient().sendTask(transcript);
     setTranscript("");
-    sessionTranscriptRef.current = "";
+  };
+
+  const startVoiceInput = () => {
+    void voiceStream.start();
+  };
+
+  const stopVoiceInput = () => {
+    if (voiceStream.isStreaming) {
+      voiceStream.stop();
+      return;
+    }
+    void voice.stopRecording();
+  };
+
+  const cancelVoiceInput = () => {
+    if (voiceStream.isStreaming) {
+      voiceStream.cancel();
+      return;
+    }
+    voice.cancel();
   };
 
   const isConnected = connectionState === "connected";
-
-  // Big visualizer is shown when micVisible OR actively recording/transcribing
-  const showBigUI = micVisible || voice.state === "recording" || voice.state === "transcribing";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 32, padding: "32px 24px" }}>
@@ -369,24 +197,22 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
       <div style={{ textAlign: "center" }}>
         <div style={{
           fontSize: "1rem", fontWeight: 600, marginBottom: 6,
-          color: voice.state === "recording" ? "#f43f5e"
-            : voice.state === "transcribing" ? "#f59e0b"
+          color: voiceState === "recording" ? "#f43f5e"
+            : voiceState === "transcribing" ? "#f59e0b"
             : "var(--color-text-secondary)"
         }}>
-          {voice.state === "recording"
+          {voiceState === "recording"
             ? (isVi ? "🔴 Đang ghi âm..." : "🔴 Recording...")
-            : voice.state === "transcribing"
+            : voiceState === "transcribing"
               ? (isVi ? "⏳ Đang chuyển giọng nói thành chữ..." : "⏳ Transcribing...")
-              : showBigUI
-                ? (isVi ? "🎙️ Sẵn sàng — hãy nói..." : "🎙️ Ready — speak now...")
-                : (isVi ? "Sẵn sàng lắng nghe" : "Ready to listen")}
+              : (isVi ? "Sẵn sàng lắng nghe" : "Ready to listen")}
         </div>
-        {voice.state === "recording" && (
+        {voiceState === "recording" && (
           <div style={{ fontFamily: "monospace", fontSize: "1.5rem", color: "#f43f5e", fontWeight: 700 }}>
             {formatDur(duration)}
           </div>
         )}
-        {voice.state === "idle" && !showBigUI && (
+        {voiceState === "idle" && (
           <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
             {isConnected
               ? (isVi ? "Bấm mic hoặc dùng wake word để nói" : "Click the mic or use wake word to speak")
@@ -395,55 +221,35 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
         )}
       </div>
 
-      {/* Waveform + mic button — shown only when micVisible */}
-      {showBigUI ? (
-        <>
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            gap: 0, height: 60, padding: "0 16px",
-            background: "rgba(255,255,255,0.03)", borderRadius: 30,
-            border: "1px solid rgba(255,255,255,0.06)", minWidth: 240,
-          }}>
-            <WaveVisualizer active={voice.state === "recording"} />
-          </div>
+      {/* Waveform */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        gap: 0, height: 60, padding: "0 16px",
+        background: "rgba(255,255,255,0.03)", borderRadius: 30,
+        border: "1px solid rgba(255,255,255,0.06)", minWidth: 240,
+      }}>
+        <WaveVisualizer active={voiceState === "recording"} />
+      </div>
 
-          <VoiceMicButton
-            state={voice.state}
-            onStart={handleManualStart}
-            onStop={voice.stopRecording}
-            onCancel={() => { voice.cancel(); setMicVisible(false); }}
-            disabled={!isConnected}
-            isVi={isVi}
-          />
+      {/* Mic button */}
+      <VoiceMicButton
+        state={voiceState}
+        onStart={startVoiceInput}
+        onStop={stopVoiceInput}
+        onCancel={cancelVoiceInput}
+        disabled={!isConnected}
+        isVi={isVi}
+      />
 
-          <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", textAlign: "center" }}>
-            {voice.state === "recording"
-              ? (isVi ? "Bấm để dừng và chuyển thành chữ" : "Click to stop and transcribe")
-              : (isVi ? "Bấm để bắt đầu ghi âm" : "Click to start recording")}
-          </div>
-        </>
-      ) : (
-        /* Small idle indicator */
-        <button
-          onClick={handleManualStart}
-          disabled={!isConnected}
-          title={isVi ? "Bấm để nói" : "Click to speak"}
-          style={{
-            width: 48, height: 48, borderRadius: "50%",
-            border: "1px solid rgba(99,102,241,0.3)",
-            background: "rgba(99,102,241,0.08)",
-            cursor: isConnected ? "pointer" : "not-allowed",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "rgba(99,102,241,0.8)", fontSize: 20,
-            opacity: isConnected ? 1 : 0.4,
-          }}
-        >
-          🎙️
-        </button>
-      )}
+      {/* Hint text */}
+      <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", textAlign: "center" }}>
+        {voiceState === "recording"
+          ? (isVi ? "Bấm để dừng và chuyển thành chữ" : "Click to stop and transcribe")
+          : (isVi ? "Bấm để bắt đầu ghi âm" : "Click to start recording")}
+      </div>
 
       {/* Transcript area */}
-      {(transcript || voice.state !== "idle") && (
+      {(transcript || voiceState !== "idle") && (
         <div className="animate-fade-in" style={{ width: "100%", maxWidth: 480 }}>
           <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
             {isVi ? "Bản ghi" : "Transcript"}
@@ -453,20 +259,14 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
             borderRadius: 12, padding: "14px 16px", minHeight: 60,
             fontSize: "0.9rem", color: "var(--color-text-primary)", lineHeight: 1.6,
           }}>
-            {transcript || <span style={{ color: "var(--color-text-muted)" }}>{isVi ? "Đang chờ bản ghi..." : "Waiting for transcription..."}</span>}
+            {transcript || session.partialTranscript || session.transcript || <span style={{ color: "var(--color-text-muted)" }}>{isVi ? "Đang chờ bản ghi..." : "Waiting for transcription..."}</span>}
           </div>
           {transcript && (
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              {autoExecute ? (
-                <button className="btn-primary" style={{ flex: 1 }} onClick={sendTranscript}>
-                  {isVi ? "Thực thi tác vụ" : "Execute Task"}
-                </button>
-              ) : (
-                <button className="btn-primary" style={{ flex: 1 }} onClick={sendTranscript}>
-                  {isVi ? "Gửi để xác nhận" : "Send for Confirmation"}
-                </button>
-              )}
-              <button className="btn-ghost" onClick={() => { setTranscript(""); sessionTranscriptRef.current = ""; }} style={{ padding: "10px 16px" }}>
+              <button className="btn-primary" style={{ flex: 1 }} onClick={sendTranscript}>
+                {isVi ? "Gửi thành tác vụ" : "Send as Task"}
+              </button>
+              <button className="btn-ghost" onClick={() => setTranscript("")} style={{ padding: "10px 16px" }}>
                 {isVi ? "Xoá" : "Clear"}
               </button>
             </div>
@@ -474,52 +274,19 @@ function VoiceInputTab({ isVi }: { isVi: boolean }) {
         </div>
       )}
 
-      {/* Toggles */}
-      <div style={{ width: "100%", maxWidth: 480, display: "flex", flexDirection: "column", gap: 8 }}>
-        {/* Auto-Send toggle */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <div>
-            <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", fontWeight: 500 }}>
-              {isVi ? "Tự động gửi bản ghi" : "Auto-Send Transcript"}
-            </div>
-            <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
-              {isVi ? "Gửi bản ghi ngay sau khi nhận được" : "Send transcript as soon as it arrives"}
-            </div>
+      {/* Auto-send toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div>
+          <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", fontWeight: 500 }}>
+            {isVi ? "Tự động thực thi" : "Auto-Execute"}
           </div>
-          <button onClick={() => setAutoSend(!autoSend)} className={`toggle ${autoSend ? "on" : ""}`}>
-            <div className="toggle-knob" />
-          </button>
-        </div>
-
-        {/* Auto-Execute toggle */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <div>
-            <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", fontWeight: 500 }}>
-              {isVi ? "Tự động thực thi tác vụ" : "Auto-Execute Task"}
-            </div>
-            <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
-              {isVi ? "Bật: gọi sendTask ngay. Tắt: chỉ đưa vào ô nhập để xác nhận" : "ON: call sendTask immediately. OFF: append to input for confirmation"}
-            </div>
+          <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+            {isVi ? "Chạy tác vụ ngay sau khi có bản ghi" : "Run tasks immediately after transcription"}
           </div>
-          <button onClick={() => setAutoExecute(!autoExecute)} className={`toggle ${autoExecute ? "on" : ""}`}>
-            <div className="toggle-knob" />
-          </button>
         </div>
-
-        {/* Wake Listener Local toggle */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          <div>
-            <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", fontWeight: 500 }}>
-              {isVi ? "Wake listener cục bộ" : "Wake Listener Local"}
-            </div>
-            <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
-              {isVi ? "Nghe wake word nền, mở mic khi phát hiện. Giao diện chỉ hiện khi có wake." : "Background wake-word detection. UI appears only on wake event, not 24/7."}
-            </div>
-          </div>
-          <button onClick={() => setWakeListenerLocal(!wakeListenerLocal)} className={`toggle ${wakeListenerLocal ? "on" : ""}`}>
-            <div className="toggle-knob" />
-          </button>
-        </div>
+        <button onClick={() => setAutoSend(!autoSend)} className={`toggle ${autoSend ? "on" : ""}`}>
+          <div className="toggle-knob" />
+        </button>
       </div>
     </div>
   );
@@ -620,16 +387,6 @@ function VoiceTrainTab({ isVi }: { isVi: boolean }) {
       return;
     }
     const latest = recorded[recorded.length - 1];
-    const MIN_DURATION_MS = 1500;
-    const MIN_BLOB_BYTES = 8 * 1024;
-    if (latest.durationMs < MIN_DURATION_MS) {
-      setVoiceResult({ ok: false, data: { error: isVi ? "Ghi âm quá ngắn (tối thiểu 1.5 giây)." : "Recording too short (minimum 1.5 s)." } });
-      return;
-    }
-    if (latest.file.size < MIN_BLOB_BYTES) {
-      setVoiceResult({ ok: false, data: { error: isVi ? "File âm thanh quá nhỏ (tối thiểu 8 KB)." : "Audio file too small (minimum 8 KB)." } });
-      return;
-    }
     try {
       setVoiceBusy(true);
       setVoiceResult(null);
@@ -758,27 +515,11 @@ function VoiceTrainTab({ isVi }: { isVi: boolean }) {
 function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
   const ttsEnabled = useChatStore((s) => s.ttsEnabled);
   const setTtsEnabled = useChatStore((s) => s.setTtsEnabled);
-  const runtimeConfig = useChatStore((s) => s.runtimeConfig) as {
-    voice?: { sttProvider?: string; whisperLocalModel?: string };
-  } | null;
 
   const [wakeEnabled, setWakeEnabled] = useState(false);
   const [wakePhrase, setWakePhrase] = useState("hey omnistate");
   const [sttProvider, setSttProvider] = useState("whisper-local");
   const [cooldownMs, setCooldownMs] = useState("3000");
-
-  // Sync sttProvider from runtimeConfig when it arrives
-  useEffect(() => {
-    const p = runtimeConfig?.voice?.sttProvider;
-    if (p === "whisper-local" || p === "whisper-cloud" || p === "native") {
-      setSttProvider(p);
-    }
-  }, [runtimeConfig]);
-
-  const handleSttProviderChange = (val: string) => {
-    setSttProvider(val);
-    getClient().setRuntimeConfig("voice.sttProvider", val);
-  };
 
   return (
     <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -830,13 +571,13 @@ function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
         </div>
         <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
           {[
-            { val: "whisper-local", label: isVi ? "Whisper (Cục bộ)" : "Whisper (Local)", sub: isVi ? "Nhanh, riêng tư, chạy trên máy — mặc định" : "Fast, private, runs on-device — default", recommended: true },
-            { val: "whisper-cloud", label: isVi ? "Whisper (Đám mây)" : "Whisper (Cloud)", sub: isVi ? "OpenAI API, cần API key" : "OpenAI API, requires key", recommended: false },
-            { val: "native", label: isVi ? "Native (Safari/Chrome)" : "Native (Safari/Chrome)", sub: isVi ? "Web Speech API của trình duyệt" : "Browser Web Speech API", recommended: false },
+            { val: "whisper-local", label: isVi ? "Whisper (Cục bộ)" : "Whisper (Local)", sub: isVi ? "Nhanh, riêng tư, chạy trên máy" : "Fast, private, runs on-device" },
+            { val: "whisper-cloud", label: isVi ? "Whisper (Đám mây)" : "Whisper (Cloud)", sub: isVi ? "OpenAI API, cần API key" : "OpenAI API, requires key" },
+            { val: "native", label: isVi ? "Native (Safari/Chrome)" : "Native (Safari/Chrome)", sub: isVi ? "Web Speech API của trình duyệt" : "Browser Web Speech API" },
           ].map((opt) => (
             <button
               key={opt.val}
-              onClick={() => handleSttProviderChange(opt.val)}
+              onClick={() => setSttProvider(opt.val)}
               style={{
                 display: "flex", alignItems: "center", gap: 12,
                 padding: "12px 14px", borderRadius: 10, cursor: "pointer",
@@ -850,15 +591,8 @@ function VoiceSettingsTab({ isVi }: { isVi: boolean }) {
                 border: `2px solid ${sttProvider === opt.val ? "#6366f1" : "rgba(255,255,255,0.2)"}`,
                 background: sttProvider === opt.val ? "#6366f1" : "transparent",
               }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: "0.875rem", color: "white", fontWeight: 500, display: "flex", alignItems: "center", gap: 8 }}>
-                  {opt.label}
-                  {opt.recommended && (
-                    <span style={{ fontSize: "0.65rem", padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.15)", color: "#22c55e", fontWeight: 600, letterSpacing: "0.04em" }}>
-                      {isVi ? "MẶC ĐỊNH" : "DEFAULT"}
-                    </span>
-                  )}
-                </div>
+              <div>
+                <div style={{ fontSize: "0.875rem", color: "white", fontWeight: 500 }}>{opt.label}</div>
                 <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{opt.sub}</div>
               </div>
             </button>
