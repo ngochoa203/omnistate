@@ -102,3 +102,8 @@ export function toPublicEntry(entry: MemoryEntry): MemoryEntry & { maskedValue?:
   }
   return entry;
 }
+
+/** Returns all entries for knowledge graph import. */
+export function getAllEntriesForKGImport(): MemoryEntry[] {
+  return loadEntries();
+}

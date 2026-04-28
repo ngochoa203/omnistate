@@ -3,6 +3,11 @@ import type { OSContextPayload } from "../context/os-context.js";
 import { summarizeForIntent } from "../context/os-context.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
+import { EpisodicStore } from "../memory/episodic-store.js";
+import { getEmbeddingProvider } from "../memory/embeddings.js";
+import { getDb } from "../db/database.js";
+import { logger } from "../utils/logger.js";
+import { KnowledgeGraph } from "../memory/knowledge-graph.js";
 
 /**
  * Intent classification — convert natural language to structured intent.
@@ -827,6 +832,8 @@ function normalizeStepTool(rawTool: string, type: IntentType): string {
 
 async function decomposeMultiStep(
   text: string,
+  episodicContext?: string,
+  kgContext?: string,
 ): Promise<DecomposedStep[] | null> {
   if (!isLlmRequired()) {
     return null;
@@ -835,8 +842,11 @@ async function decomposeMultiStep(
   const budget = resolveEffectiveBudget();
 
   try {
+    let systemPrompt = DECOMPOSE_SYSTEM_PROMPT;
+    if (episodicContext) systemPrompt += episodicContext;
+    if (kgContext) systemPrompt += `\n\nKnown context:\n${kgContext}`;
     const response = await requestLlmTextWithFallback({
-      system: DECOMPOSE_SYSTEM_PROMPT,
+      system: systemPrompt,
       user: text.slice(0, budget.maxInputChars),
       maxTokens: budget.decomposeMax,
     });
@@ -3136,12 +3146,63 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 // Public: planFromIntent
 // ---------------------------------------------------------------------------
 
+let _episodicStore: EpisodicStore | null = null;
+function getEpisodicStore(): EpisodicStore {
+  if (!_episodicStore) {
+    _episodicStore = new EpisodicStore(getDb(), getEmbeddingProvider());
+  }
+  return _episodicStore;
+}
+
+let _knowledgeGraph: KnowledgeGraph | null = null;
+function getKnowledgeGraph(): KnowledgeGraph {
+  if (!_knowledgeGraph) {
+    _knowledgeGraph = new KnowledgeGraph(getDb());
+  }
+  return _knowledgeGraph;
+}
+
 /**
  * Build a StatePlan (DAG of StateNodes) from a classified intent.
  */
 export async function planFromIntent(intent: Intent): Promise<StatePlan> {
   const taskId = `task-${Date.now()}`;
   const nodes: StateNode[] = [];
+
+  // Inject episodic recall context into intent for downstream planning
+  let episodicContext = "";
+  try {
+    const store = getEpisodicStore();
+    const episodes = await store.recall(intent.rawText, { limit: 3 });
+    if (episodes.length > 0) {
+      episodicContext =
+        "\n\nPast relevant experiences:\n" +
+        episodes
+          .map(
+            (e) =>
+              `- Goal: "${e.goal}" → ${e.success ? "succeeded" : "failed"} (tools: ${e.toolsUsed.join(", ")}). Summary: ${e.summary}`,
+          )
+          .join("\n");
+      logger.debug({ count: episodes.length }, "[planFromIntent] injected episodic context");
+    }
+  } catch (err) {
+    logger.warn({ err }, "[planFromIntent] episodic recall failed, continuing without context");
+  }
+  // episodicContext is threaded into decomposeMultiStep for the multi-step planning path
+
+  // Inject KG entity context for downstream planning
+  let kgContext = "";
+  try {
+    const kg = getKnowledgeGraph();
+    const entity = kg.resolveReference(intent.rawText);
+    if (entity) {
+      const related = kg.getRelated(entity.id);
+      kgContext = kg.toContextSnippet([entity, ...related.map((r) => r.entity)]);
+      logger.debug({ entityId: entity.id, name: entity.name }, "[planFromIntent] resolved KG entity");
+    }
+  } catch (err) {
+    logger.warn({ err }, "[planFromIntent] KG entity resolution failed, continuing without context");
+  }
 
   switch (intent.type as IntentType) {
     // ── shell-command ────────────────────────────────────────────────────────
@@ -3582,7 +3643,7 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         break;
       }
 
-      const steps = await decomposeMultiStep(intent.rawText);
+      const steps = await decomposeMultiStep(intent.rawText, episodicContext || undefined, kgContext || undefined);
 
       if (steps && steps.length > 0) {
         const layerFor: Record<IntentType, StateNode["layer"]> = {
