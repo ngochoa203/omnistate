@@ -14,7 +14,8 @@ type TriggerConditionType =
   | "cron"
   | "filesystem_change"
   | "process_event"
-  | "webhook";
+  | "webhook"
+  | "event_match";
 
 interface TriggerCondition {
   type: TriggerConditionType;
@@ -106,6 +107,12 @@ function conditionIcon(type: TriggerConditionType) {
           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
         </svg>
       );
+    case "event_match":
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+        </svg>
+      );
   }
 }
 
@@ -117,6 +124,7 @@ function conditionLabel(type: TriggerConditionType): string {
     filesystem_change: "File System",
     process_event: "Process Event",
     webhook: "Webhook",
+    event_match: "Event Match",
   };
   return map[type];
 }
@@ -130,6 +138,10 @@ function conditionSummary(condition: TriggerCondition): string {
   if (type === "filesystem_change") return String(config.path ?? "");
   if (type === "process_event") return `${config.name} ${config.event}`;
   if (type === "webhook") return "POST /webhook/:id";
+  if (type === "event_match") {
+    const parts = [config.source, config.kind, config.severity].filter(Boolean);
+    return parts.length > 0 ? parts.join(" / ") : "any event";
+  }
   return "";
 }
 
@@ -165,6 +177,12 @@ const DEFAULT_FORM = {
   // process
   processName: "",
   processEvent: "start",
+  // event_match
+  eventMatchSource: "",
+  eventMatchKind: "",
+  eventMatchSeverity: "",
+  eventMatchTagsAny: "",
+  eventMatchText: "",
   // action
   goal: "",
   layer: "auto" as "deep" | "surface" | "auto",
@@ -189,6 +207,17 @@ function buildCondition(form: FormState): TriggerCondition {
       return { type: "process_event", config: { name: form.processName, event: form.processEvent } };
     case "webhook":
       return { type: "webhook", config: {} };
+    case "event_match":
+      return {
+        type: "event_match",
+        config: {
+          ...(form.eventMatchSource && { source: form.eventMatchSource }),
+          ...(form.eventMatchKind && { kind: form.eventMatchKind }),
+          ...(form.eventMatchSeverity && { severity: form.eventMatchSeverity }),
+          ...(form.eventMatchTagsAny && { tagsAny: form.eventMatchTagsAny.split(",").map((t) => t.trim()).filter(Boolean) }),
+          ...(form.eventMatchText && { text: form.eventMatchText }),
+        },
+      };
   }
 }
 
@@ -215,6 +244,13 @@ function triggerToForm(t: TriggerDef): FormState {
   if (t.condition.type === "process_event") {
     base.processName = String(cfg.name ?? "");
     base.processEvent = String(cfg.event ?? "start");
+  }
+  if (t.condition.type === "event_match") {
+    base.eventMatchSource = String(cfg.source ?? "");
+    base.eventMatchKind = String(cfg.kind ?? "");
+    base.eventMatchSeverity = String(cfg.severity ?? "");
+    base.eventMatchTagsAny = Array.isArray(cfg.tagsAny) ? (cfg.tagsAny as string[]).join(", ") : "";
+    base.eventMatchText = String(cfg.text ?? "");
   }
   return base;
 }
@@ -414,6 +450,48 @@ function ConditionConfigPanel({ form, setForm }: { form: FormState; setForm: (f:
           </div>
         </div>
       );
+    case "event_match":
+      return (
+        <div>
+          <Input
+            label="Source (optional)"
+            value={form.eventMatchSource}
+            onChange={(v) => set({ eventMatchSource: v })}
+            placeholder="app.monitor"
+          />
+          <Input
+            label="Kind (optional)"
+            value={form.eventMatchKind}
+            onChange={(v) => set({ eventMatchKind: v })}
+            placeholder="cpu.spike"
+          />
+          <Select
+            label="Severity (optional)"
+            value={form.eventMatchSeverity}
+            onChange={(v) => set({ eventMatchSeverity: v })}
+            options={[
+              { value: "", label: "Any severity" },
+              { value: "debug", label: "Debug" },
+              { value: "info", label: "Info" },
+              { value: "warning", label: "Warning" },
+              { value: "error", label: "Error" },
+              { value: "critical", label: "Critical" },
+            ]}
+          />
+          <Input
+            label="Tags Any (comma-separated, optional)"
+            value={form.eventMatchTagsAny}
+            onChange={(v) => set({ eventMatchTagsAny: v })}
+            placeholder="cpu, alert"
+          />
+          <Input
+            label="Text search (optional)"
+            value={form.eventMatchText}
+            onChange={(v) => set({ eventMatchText: v })}
+            placeholder="high usage"
+          />
+        </div>
+      );
   }
 }
 
@@ -475,6 +553,7 @@ function TriggerModal({
             { value: "filesystem_change", label: "File System Change" },
             { value: "process_event", label: "Process Event" },
             { value: "webhook", label: "Webhook" },
+            { value: "event_match", label: "Event Match" },
           ]}
         />
 

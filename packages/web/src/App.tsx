@@ -13,6 +13,8 @@ import { getCopy } from "./lib/i18n";
 import { ConfigPage } from "./components/ConfigPage";
 import { ScreenTreePage } from "./components/ScreenTreePage";
 import { TriggerPage } from "./components/TriggerPage";
+import { MemoryPage } from "./components/MemoryPage";
+import { EventsPage } from "./components/EventsPage";
 import { AuthPage } from "./components/AuthPage";
 import { useAuthStore } from "./lib/auth-store";
 import { initAuth } from "./lib/auth-client";
@@ -20,9 +22,9 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OnboardingWizard, shouldShowOnboarding, markOnboardingComplete } from "./components/OnboardingWizard";
 import { ListeningBubble } from "./components/ListeningBubble";
 
-type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers";
+type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers" | "memory" | "events";
 
-const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers"; icon: React.ReactNode }> = [
+const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "screenTree" | "triggers" | "memory" | "events"; icon: React.ReactNode }> = [
   {
     id: "dashboard",
     labelKey: "dashboard",
@@ -121,6 +123,26 @@ const NAV_ITEMS: Array<{ id: View; labelKey: "dashboard" | "chat" | "voice" | "h
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+      </svg>
+    ),
+  },
+  {
+    id: "memory",
+    labelKey: "memory",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+        <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3" />
+      </svg>
+    ),
+  },
+  {
+    id: "events",
+    labelKey: "events",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
       </svg>
     ),
   },
@@ -408,6 +430,8 @@ export function App() {
           {view === "config" && <ErrorBoundary><ConfigPage /></ErrorBoundary>}
           {view === "screenTree" && <ErrorBoundary><ScreenTreePage /></ErrorBoundary>}
           {view === "triggers" && <ErrorBoundary><TriggerPage /></ErrorBoundary>}
+          {view === "memory" && <ErrorBoundary><MemoryPage /></ErrorBoundary>}
+          {view === "events" && <ErrorBoundary><EventsPage /></ErrorBoundary>}
         </div>
       </main>
     </div>

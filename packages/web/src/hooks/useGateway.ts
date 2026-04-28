@@ -53,6 +53,32 @@ export function useGateway() {
       client.requestLlmPreflight();
       client.requestRuntimeConfig();
       client.queryClaudeMem();
+      client.queryEvents({ limit: 50 });
+      client.queryMemoryRecords({ limit: 50 });
+    }));
+
+    unsubs.push(client.on("event.ingested", (msg: ServerMessage) => {
+      if (msg.type === "event.ingested") store.upsertEvent(msg.event);
+    }));
+
+    unsubs.push(client.on("event.query.result", (msg: ServerMessage) => {
+      if (msg.type === "event.query.result") store.setEvents(msg.events);
+    }));
+
+    unsubs.push(client.on("event.detail", (msg: ServerMessage) => {
+      if (msg.type === "event.detail") store.setSelectedEvent(msg.event);
+    }));
+
+    unsubs.push(client.on("memory.record.saved", (msg: ServerMessage) => {
+      if (msg.type === "memory.record.saved") store.upsertMemoryRecordLocal(msg.record);
+    }));
+
+    unsubs.push(client.on("memory.record.query.result", (msg: ServerMessage) => {
+      if (msg.type === "memory.record.query.result") store.setMemoryRecords(msg.records);
+    }));
+
+    unsubs.push(client.on("memory.record.deleted", (msg: ServerMessage) => {
+      if (msg.type === "memory.record.deleted") store.removeMemoryRecord(msg.id);
     }));
 
     unsubs.push(client.on("_disconnected", () => {

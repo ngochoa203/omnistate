@@ -3,7 +3,7 @@ import { useChatStore } from "../lib/chat-store";
 import { getClient } from "../hooks/useGateway";
 import { getCopy } from "../lib/i18n";
 
-type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config";
+type View = "dashboard" | "chat" | "voice" | "health" | "system" | "settings" | "config" | "events" | "memory";
 
 interface Props {
   onNavigate: (view: View) => void;
@@ -207,6 +207,8 @@ export function DashboardOverview({ onNavigate }: Props) {
             { label: isVi ? "Điều khiển giọng nói" : "Voice Control", sub: isVi ? "Nói chuyện với OmniState" : "Speak to OmniState", icon: "🎙️", view: "voice" as const, color: "#22d3ee" },
             { label: isVi ? "Theo dõi hệ thống" : "Health Monitor", sub: isVi ? "Chẩn đoán hệ thống" : "System diagnostics", icon: "❤️‍🔥", view: "health" as const, color: "#f43f5e" },
             { label: isVi ? "Cấu hình" : "Config", sub: isVi ? "Provider & model" : "Provider & model", icon: "⚙️", view: "config" as const, color: "#10b981" },
+            { label: "Events", sub: "Live observations", icon: "⚡", view: "events" as const, color: "#a78bfa" },
+            { label: "Memory", sub: "Durable records", icon: "🧠", view: "memory" as const, color: "#22d3ee" },
           ].map((item, idx) => (
             <button
               key={item.label}

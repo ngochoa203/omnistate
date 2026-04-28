@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from "./protocol";
+import type { ClientMessage, EventRecord, EventSeverity, MemoryRecord, ServerMessage } from "./protocol";
 import type { ClaudeMemPayload } from "./protocol";
 import type { TaskAttachment } from "./protocol";
 import { useAuthStore } from "./auth-store";
@@ -189,6 +189,70 @@ export class GatewayClient {
   requestSystemDashboard(id?: string): void {
     const msgId = id || `sys-${Date.now()}`;
     this.send({ type: "system.dashboard", id: msgId } as ClientMessage);
+  }
+
+  // Events API
+  ingestEvent(event: {
+    id?: string;
+    source: string;
+    kind: string;
+    severity?: EventSeverity;
+    title: string;
+    body?: string;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+    occurredAt?: string;
+  }): void {
+    this.send({ type: "event.ingest", ...event } as ClientMessage);
+  }
+
+  queryEvents(opts?: { source?: string; kind?: string; severity?: EventSeverity; tagsAny?: string[]; text?: string; before?: string; limit?: number }): void {
+    this.send({ type: "event.query", ...opts } as ClientMessage);
+  }
+
+  getEvent(id: string): void {
+    this.send({ type: "event.get", id } as ClientMessage);
+  }
+
+  upsertMemoryRecord(record: {
+    id?: string;
+    scope?: MemoryRecord["scope"];
+    conversationId?: string;
+    title: string;
+    content: string;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  }): void {
+    this.send({ type: "memory.record.upsert", ...record } as ClientMessage);
+  }
+
+  queryMemoryRecords(opts?: { scope?: MemoryRecord["scope"]; conversationId?: string; tagsAny?: string[]; text?: string; before?: string; limit?: number }): void {
+    this.send({ type: "memory.record.query", ...opts } as ClientMessage);
+  }
+
+  deleteMemoryRecord(id: string): void {
+    this.send({ type: "memory.record.delete", id } as ClientMessage);
+  }
+
+  queryEventRules(): void {
+    this.send({ type: "events.rules.list" } as unknown as ClientMessage);
+  }
+
+  addEventRule(rule: { name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> } }): void {
+    this.send({ type: "events.rules.add", ...rule } as unknown as ClientMessage);
+  }
+
+  toggleEventRule(ruleId: string, enabled: boolean): void {
+    this.send({ type: "events.rules.toggle", ruleId, enabled } as unknown as ClientMessage);
+  }
+
+  // Memory API
+  queryEpisodes(query?: string, limit?: number): void {
+    this.send({ type: "memory.episodes.query", query, limit } as unknown as ClientMessage);
+  }
+
+  queryKGEntities(query?: { type?: string; name?: string }): void {
+    this.send({ type: "memory.kg.query", ...query } as unknown as ClientMessage);
   }
 
   on(event: string, handler: EventHandler): () => void {
