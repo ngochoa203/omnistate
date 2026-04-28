@@ -7,6 +7,12 @@ export type ClientMessage =
   | TaskMessage
   | ClaudeMemQueryMessage
   | ClaudeMemSyncMessage
+  | EventIngestMessage
+  | EventQueryMessage
+  | EventGetMessage
+  | MemoryRecordUpsertMessage
+  | MemoryRecordQueryMessage
+  | MemoryRecordDeleteMessage
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
@@ -33,7 +39,11 @@ export type ClientMessage =
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage;
+  | PermissionStopMessage
+  | EventsQueryMessage
+  | EventRulesListMessage
+  | EventRuleAddMessage
+  | EventRuleToggleMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -84,6 +94,93 @@ export interface ClaudeMemQueryMessage {
 export interface ClaudeMemSyncMessage {
   type: "claude.mem.sync";
   payload: ClaudeMemPayload;
+}
+
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+export type EventSeverity = "debug" | "info" | "warning" | "error" | "critical";
+
+export interface EventRecord {
+  id: string;
+  source: string;
+  kind: string;
+  severity: EventSeverity;
+  title: string;
+  body: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface EventIngestMessage {
+  type: "event.ingest";
+  id?: string;
+  source: string;
+  kind: string;
+  severity?: EventSeverity;
+  title: string;
+  body?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  occurredAt?: string;
+}
+
+export interface EventQueryMessage {
+  type: "event.query";
+  source?: string;
+  kind?: string;
+  severity?: EventSeverity;
+  tagsAny?: string[];
+  text?: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface EventGetMessage {
+  type: "event.get";
+  id: string;
+}
+
+// ── Durable Memory Records ───────────────────────────────────────────────────
+
+export interface MemoryRecord {
+  id: string;
+  scope: "global" | "conversation" | "user";
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryRecordUpsertMessage {
+  type: "memory.record.upsert";
+  id?: string;
+  scope?: MemoryRecord["scope"];
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryRecordQueryMessage {
+  type: "memory.record.query";
+  scope?: MemoryRecord["scope"];
+  conversationId?: string;
+  tagsAny?: string[];
+  text?: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface MemoryRecordDeleteMessage {
+  type: "memory.record.delete";
+  id: string;
 }
 
 export interface HistoryQueryMessage {
@@ -226,7 +323,16 @@ export type ServerMessage =
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage;
+  | PermissionStatusMessage
+  | EventIngestedMessage
+  | EventQueryResultMessage
+  | EventDetailMessage
+  | MemoryRecordSavedMessage
+  | MemoryRecordQueryResultMessage
+  | MemoryRecordDeletedMessage
+  | EventsListMessage
+  | EventRulesListResultMessage
+  | EventBusStreamMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -486,3 +592,47 @@ export interface PermissionStatusMessage {
   type: "permission.status";
   running: boolean;
 }
+
+export interface EventIngestedMessage {
+  type: "event.ingested";
+  event: EventRecord;
+}
+
+export interface EventQueryResultMessage {
+  type: "event.query.result";
+  events: EventRecord[];
+}
+
+export interface EventDetailMessage {
+  type: "event.detail";
+  event: EventRecord | null;
+}
+
+export interface MemoryRecordSavedMessage {
+  type: "memory.record.saved";
+  record: MemoryRecord;
+}
+
+export interface MemoryRecordQueryResultMessage {
+  type: "memory.record.query.result";
+  records: MemoryRecord[];
+}
+
+export interface MemoryRecordDeletedMessage {
+  type: "memory.record.deleted";
+  id: string;
+  deleted: boolean;
+}
+
+// ─── Event Bus Messages ───────────────────────────────────────────────────────
+
+// Client → gateway
+export interface EventsQueryMessage { type: "events.query"; limit?: number; since?: number; eventType?: string }
+export interface EventRulesListMessage { type: "events.rules.list" }
+export interface EventRuleAddMessage { type: "events.rules.add"; name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> } }
+export interface EventRuleToggleMessage { type: "events.rules.toggle"; ruleId: string; enabled: boolean }
+
+// Gateway → client
+export interface EventsListMessage { type: "events.list"; events: Array<{ id: string; type: string; source: string; payload: Record<string, unknown>; timestamp: number }> }
+export interface EventRulesListResultMessage { type: "events.rules.result"; rules: Array<{ id: string; name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> }; enabled: boolean }> }
+export interface EventBusStreamMessage { type: "events.stream"; event: { id: string; type: string; source: string; payload: Record<string, unknown>; timestamp: number } }

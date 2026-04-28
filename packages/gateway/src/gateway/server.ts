@@ -29,6 +29,12 @@ import { VoiceSessionService } from "../voice/session-service.js";
 import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { TriggerEngine } from "../triggers/index.js";
+import { getDb } from "../db/database.js";
+import { EventBus } from "../events/event-bus.js";
+import { OSFirehose } from "../events/os-firehose.js";
+import { RuleEngine } from "../events/rule-engine.js";
+import { EventRepository } from "../events/event-repository.js";
+import { MemoryRepository } from "../memory/memory-repository.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
 import { ClaudeCodeResponder } from "../vision/permission-responder.js";
@@ -151,6 +157,9 @@ export class OmniStateGateway {
   private voiceSessions = new VoiceSessionService((message) => this.broadcast(message));
   private cancellationRegistry = new CancellationRegistry();
   private triggerEngine: TriggerEngine = new TriggerEngine();
+  private eventBus: EventBus = new EventBus();
+  private firehose: OSFirehose = new OSFirehose(this.eventBus);
+  private ruleEngine: RuleEngine = new RuleEngine(this.eventBus);
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -166,6 +175,8 @@ export class OmniStateGateway {
     durationMs: number;
   }> = [];
   private claudeMemStore = new ClaudeMemStore();
+  private eventRepository = new EventRepository(getDb());
+  private memoryRepository = new MemoryRepository(getDb());
   private approvalEngine?: ApprovalEngine;
   private claudeCodeResponder?: ClaudeCodeResponder;
 
@@ -238,6 +249,16 @@ export class OmniStateGateway {
       const taskId = `trigger-${trigger.id}-${crypto.randomUUID()}`;
       this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch((err) => logger.error({ err }, "unhandled promise rejection"));
     });
+    this.triggerEngine.bridgeToEventBus(this.eventBus);
+    this.firehose.start();
+    this.ruleEngine.start(async (_rule, event) => {
+      logger.info({ eventType: event.type }, "[rule-engine] Rule fired");
+    });
+
+    // Broadcast all events to connected WS clients
+    this.eventBus.onPattern("**", (event) => {
+      this.broadcast({ type: "events.stream", event } as import("./protocol.js").ServerMessage);
+    });
 
     // Start Claude Code permission auto-responder if configured and enabled
     if (this.claudeCodeResponder) {
@@ -263,6 +284,8 @@ export class OmniStateGateway {
     this.siriBridgeServer = null;
     this.wakeManager.stop();
     this.triggerEngine.stop();
+    this.firehose.stop();
+    this.ruleEngine.stop();
     if (this.claudeCodeResponder?.isRunning) {
       void this.claudeCodeResponder.stop();
     }
@@ -802,6 +825,66 @@ export class OmniStateGateway {
       return;
     }
 
+    // GET /api/events — recent events from event bus
+    if (req.method === "GET" && requestPath === "/api/events") {
+      const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      const limitRaw = parseInt(urlObj.searchParams.get("limit") ?? "100", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 100;
+      const type = urlObj.searchParams.get("type") ?? undefined;
+      const events = this.eventBus.getRecent({ limit, type });
+      jsonResponse(res, 200, { events });
+      return;
+    }
+
+    // GET /api/events/rules — list rules
+    if (req.method === "GET" && requestPath === "/api/events/rules") {
+      jsonResponse(res, 200, { rules: this.ruleEngine.listRules() });
+      return;
+    }
+
+    // POST /api/events/rules — add rule
+    if (req.method === "POST" && requestPath === "/api/events/rules") {
+      try {
+        const body = await parseBody(req);
+        const name = String(body?.name ?? "").trim();
+        const eventPattern = String(body?.eventPattern ?? "").trim();
+        if (!name || !eventPattern) {
+          jsonResponse(res, 400, { error: { code: "VALIDATION_ERROR", message: "name and eventPattern are required" } });
+          return;
+        }
+        const rule = this.ruleEngine.addRule({
+          name,
+          eventPattern,
+          condition: body?.condition ? String(body.condition) : undefined,
+          action: body?.action ?? { type: "notify", config: {} },
+          enabled: body?.enabled !== false,
+        });
+        jsonResponse(res, 201, { rule });
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: { code: "BAD_REQUEST", message: err?.message ?? "Bad request" } });
+      }
+      return;
+    }
+
+    // POST /api/events/rules/:id/toggle — toggle rule
+    const toggleMatch = requestPath.match(/^\/api\/events\/rules\/([^/]+)\/toggle$/);
+    if (req.method === "POST" && toggleMatch) {
+      try {
+        const ruleId = toggleMatch[1];
+        const body = await parseBody(req);
+        const enabled = Boolean(body?.enabled ?? true);
+        const rule = this.ruleEngine.toggleRule(ruleId, enabled);
+        if (!rule) {
+          jsonResponse(res, 404, { error: { code: "NOT_FOUND", message: "Rule not found" } });
+          return;
+        }
+        jsonResponse(res, 200, { rule });
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: { code: "BAD_REQUEST", message: err?.message ?? "Bad request" } });
+      }
+      return;
+    }
+
     if (req.method === "GET" && requestPath === "/latency/benchmark") {
       if (!isLocalRequest) {
         json(403, { ok: false, error: "Only local requests are allowed" });
@@ -1151,6 +1234,68 @@ export class OmniStateGateway {
           payload: state.payload,
           updatedAt: state.updatedAt,
         } as ServerMessage);
+        break;
+      }
+
+      case "event.ingest": {
+        try {
+          const event = this.eventRepository.ingest(msg);
+          const reply: ServerMessage = { type: "event.ingested", event };
+          this.broadcast(reply);
+          await this.triggerEngine.evaluateEvent(event);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Invalid event ingest request" });
+        }
+        break;
+      }
+
+      case "event.query": {
+        try {
+          const events = this.eventRepository.query(msg);
+          this.safeSend(ws, { type: "event.query.result", events } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Event query failed" });
+        }
+        break;
+      }
+
+      case "event.get": {
+        try {
+          const event = this.eventRepository.get(msg.id);
+          this.safeSend(ws, { type: "event.detail", event } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Event lookup failed" });
+        }
+        break;
+      }
+
+      case "memory.record.upsert": {
+        try {
+          const record = this.memoryRepository.upsert(msg);
+          this.safeSend(ws, { type: "memory.record.saved", record } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Invalid memory record request" });
+        }
+        break;
+      }
+
+      case "memory.record.query": {
+        try {
+          const records = this.memoryRepository.query(msg);
+          this.safeSend(ws, { type: "memory.record.query.result", records } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Memory record query failed" });
+        }
+        break;
+      }
+
+      case "memory.record.delete": {
+        try {
+          const deleted = this.memoryRepository.delete(msg);
+          this.safeSend(ws, { type: "memory.record.deleted", id: msg.id, deleted } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Memory record delete failed" });
+        }
         break;
       }
 
@@ -1809,6 +1954,55 @@ export class OmniStateGateway {
           await this.claudeCodeResponder.stop();
         }
         this.safeSend(ws, { type: "permission.status", running: false } as unknown as ServerMessage);
+        break;
+      }
+
+      case "events.query": {
+        const events = this.eventBus.getRecent({
+          type: (msg as import("./protocol.js").EventsQueryMessage).eventType,
+          limit: (msg as import("./protocol.js").EventsQueryMessage).limit,
+          since: (msg as import("./protocol.js").EventsQueryMessage).since,
+        });
+        this.safeSend(ws, { type: "events.list", events } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.list": {
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id,
+          name: r.name,
+          eventPattern: r.eventPattern,
+          condition: r.condition,
+          action: r.action,
+          enabled: r.enabled,
+        }));
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.add": {
+        const addMsg = msg as import("./protocol.js").EventRuleAddMessage;
+        this.ruleEngine.addRule({
+          name: addMsg.name,
+          eventPattern: addMsg.eventPattern,
+          condition: addMsg.condition,
+          action: addMsg.action as import("../events/rule-engine.js").EventRule["action"],
+          enabled: true,
+        });
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id, name: r.name, eventPattern: r.eventPattern, condition: r.condition, action: r.action, enabled: r.enabled,
+        }));
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.toggle": {
+        const toggleMsg = msg as import("./protocol.js").EventRuleToggleMessage;
+        this.ruleEngine.toggleRule(toggleMsg.ruleId, toggleMsg.enabled);
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id, name: r.name, eventPattern: r.eventPattern, condition: r.condition, action: r.action, enabled: r.enabled,
+        }));
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
         break;
       }
 

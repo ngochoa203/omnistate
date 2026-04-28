@@ -213,6 +213,120 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_devices_user ON registered_devices(user_id);
     `,
   },
+  {
+    version: 7,
+    name: "episodic_memories",
+    sql: `
+      CREATE TABLE IF NOT EXISTS episodic_memories (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        tools_used TEXT NOT NULL DEFAULT '[]',
+        success INTEGER NOT NULL DEFAULT 1,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_episodic_task ON episodic_memories(task_id);
+      CREATE INDEX IF NOT EXISTS idx_episodic_created ON episodic_memories(created_at DESC);
+    `,
+  },
+  {
+    version: 8,
+    name: "knowledge_graph",
+    sql: `
+      CREATE TABLE IF NOT EXISTS kg_entities (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK (type IN ('app','person','location','project','device','preference','credential')),
+        name TEXT NOT NULL,
+        properties_json TEXT NOT NULL DEFAULT '{}',
+        confidence REAL NOT NULL DEFAULT 1.0,
+        source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user','inferred','memory-pal')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_kg_entities_type ON kg_entities(type);
+      CREATE INDEX IF NOT EXISTS idx_kg_entities_name ON kg_entities(name);
+
+      CREATE TABLE IF NOT EXISTS kg_relations (
+        id TEXT PRIMARY KEY,
+        subject_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+        predicate TEXT NOT NULL,
+        object_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user','inferred','memory-pal')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_kg_relations_subject ON kg_relations(subject_id);
+      CREATE INDEX IF NOT EXISTS idx_kg_relations_object ON kg_relations(object_id);
+      CREATE INDEX IF NOT EXISTS idx_kg_relations_predicate ON kg_relations(predicate);
+    `,
+  },
+  {
+    version: 9,
+    name: "task_history_trace_id",
+    sql: `
+      ALTER TABLE task_history ADD COLUMN trace_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_task_history_trace ON task_history(trace_id);
+    `,
+  },
+  {
+    version: 10,
+    name: "event_rules",
+    sql: `
+      CREATE TABLE IF NOT EXISTS event_rules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        event_pattern TEXT NOT NULL,
+        condition_expr TEXT,
+        action_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_event_rules_pattern ON event_rules(event_pattern);
+    `,
+  },
+  {
+    version: 11,
+    name: "events",
+    sql: `
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warning', 'error', 'critical')),
+        title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_events_occurred ON events(occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_source_kind ON events(source, kind, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity, occurred_at DESC);
+    `,
+  },
+  {
+    version: 12,
+    name: "memory_records",
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_records (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL DEFAULT 'global' CHECK (scope IN ('global', 'conversation', 'user')),
+        conversation_id TEXT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_records_scope ON memory_records(scope, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_records_conversation ON memory_records(conversation_id, updated_at DESC);
+    `,
+  },
 ];
 
 function runMigrations(db: Database.Database): void {

@@ -5,6 +5,12 @@ export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 
 /** Messages sent from client to gateway. */
 export type ClientMessage =
+  | { type: "event.ingest"; id?: string; source: string; kind: string; severity?: EventSeverity; title: string; body?: string; tags?: string[]; metadata?: Record<string, unknown>; occurredAt?: string }
+  | { type: "event.query"; source?: string; kind?: string; severity?: EventSeverity; tagsAny?: string[]; text?: string; before?: string; limit?: number }
+  | { type: "event.get"; id: string }
+  | { type: "memory.record.upsert"; id?: string; scope?: MemoryRecord["scope"]; conversationId?: string; title: string; content: string; tags?: string[]; metadata?: Record<string, unknown> }
+  | { type: "memory.record.query"; scope?: MemoryRecord["scope"]; conversationId?: string; tagsAny?: string[]; text?: string; before?: string; limit?: number }
+  | { type: "memory.record.delete"; id: string }
   | ConnectMessage
   | TaskMessage
   | ClaudeMemQueryMessage
@@ -117,6 +123,36 @@ export interface OpenClawTaskMessage {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
+
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+export type EventSeverity = "debug" | "info" | "warning" | "error" | "critical";
+
+export interface EventRecord {
+  id: string;
+  source: string;
+  kind: string;
+  severity: EventSeverity;
+  title: string;
+  body: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface MemoryRecord {
+  id: string;
+  scope: "global" | "conversation" | "user";
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface HistoryQueryMessage {
   type: "history.query";
@@ -289,6 +325,12 @@ export interface PermissionStopMessage {
 
 /** Messages sent from gateway to client. */
 export type ServerMessage =
+  | { type: "event.ingested"; event: EventRecord }
+  | { type: "event.query.result"; events: EventRecord[] }
+  | { type: "event.detail"; event: EventRecord | null }
+  | { type: "memory.record.saved"; record: MemoryRecord }
+  | { type: "memory.record.query.result"; records: MemoryRecord[] }
+  | { type: "memory.record.deleted"; id: string; deleted: boolean }
   | ConnectedMessage
   | ClaudeMemStateMessage
   | ClaudeMemAckMessage

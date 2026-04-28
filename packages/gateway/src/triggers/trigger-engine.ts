@@ -2,6 +2,8 @@ import { cpus, freemem, totalmem } from "node:os";
 import { watch, type FSWatcher } from "node:fs";
 import { getDb } from "../db/database.js";
 import { v4 as uuid } from "uuid";
+import type { EventBus } from "../events/event-bus.js";
+import type { EventRecord, EventSeverity } from "../gateway/protocol.js";
 
 import { logger } from "../utils/logger.js";
 export type TriggerConditionType =
@@ -10,7 +12,17 @@ export type TriggerConditionType =
   | "cron"
   | "filesystem_change"
   | "process_event"
-  | "webhook";
+  | "webhook"
+  | "event_match";
+
+
+export interface EventMatchTriggerConfig {
+  source?: string;
+  kind?: string;
+  severity?: EventSeverity;
+  tagsAny?: string[];
+  text?: string;
+}
 
 export interface TriggerCondition {
   type: TriggerConditionType;
@@ -120,6 +132,38 @@ export class TriggerEngine {
     }
   }
 
+
+  async evaluateEvent(event: EventRecord): Promise<void> {
+    const db = getDb();
+    const triggers = db.prepare(
+      "SELECT * FROM triggers WHERE enabled = 1 AND json_extract(condition_json, '$.type') = 'event_match'"
+    ).all() as any[];
+
+    for (const row of triggers) {
+      const trigger = this.rowToTrigger(row);
+      if (!this.checkCooldown(trigger)) continue;
+      if (this.matchesEvent(trigger.condition.config as EventMatchTriggerConfig, event)) {
+        await this.fireTrigger(trigger, { eventId: event.id, event });
+      }
+    }
+  }
+
+  private matchesEvent(config: EventMatchTriggerConfig, event: EventRecord): boolean {
+    if (config.source && config.source !== event.source) return false;
+    if (config.kind && config.kind !== event.kind) return false;
+    if (config.severity && config.severity !== event.severity) return false;
+    if (Array.isArray(config.tagsAny) && config.tagsAny.length > 0) {
+      const eventTags = new Set(event.tags.map((tag) => tag.toLowerCase()));
+      const hasTag = config.tagsAny.some((tag) => eventTags.has(String(tag).toLowerCase()));
+      if (!hasTag) return false;
+    }
+    if (config.text) {
+      const needle = String(config.text).trim().toLowerCase();
+      if (needle && !`${event.title} ${event.body}`.toLowerCase().includes(needle)) return false;
+    }
+    return true;
+  }
+
   private setupCronTrigger(trigger: TriggerDef): void {
     const config = trigger.condition.config as { expression: string };
     const nextFire = this.getNextCronTime(config.expression);
@@ -155,23 +199,23 @@ export class TriggerEngine {
     }
   }
 
-  private async fireTrigger(trigger: TriggerDef): Promise<void> {
+  private async fireTrigger(trigger: TriggerDef, context?: Record<string, unknown>): Promise<void> {
     const db = getDb();
     const now = new Date().toISOString();
     const logId = uuid();
 
     // Log the fire event
     db.prepare(`
-      INSERT INTO trigger_log (id, trigger_id, user_id, fired_at, status)
-      VALUES (?, ?, ?, ?, 'fired')
-    `).run(logId, trigger.id, trigger.userId, now);
+      INSERT INTO trigger_log (id, trigger_id, user_id, fired_at, condition_snapshot, status)
+      VALUES (?, ?, ?, ?, ?, 'fired')
+    `).run(logId, trigger.id, trigger.userId, now, JSON.stringify({ condition: trigger.condition, ...(context ?? {}) }));
 
     // Update trigger
     db.prepare(`
       UPDATE triggers SET fire_count = fire_count + 1, last_fired_at = ? WHERE id = ?
     `).run(now, trigger.id);
 
-    logger.info(`[triggers] Fired: ${trigger.name} (${trigger.id})`);
+    logger.info({ triggerId: trigger.id, eventId: context?.eventId }, `[triggers] Fired: ${trigger.name} (${trigger.id})`);
 
     // Execute the action
     try {
@@ -324,6 +368,21 @@ export class TriggerEngine {
     return getDb().prepare(
       "SELECT * FROM trigger_log WHERE trigger_id = ? ORDER BY fired_at DESC LIMIT ?"
     ).all(triggerId, limit);
+  }
+
+  /** Bridge existing trigger fires into the EventBus. */
+  bridgeToEventBus(bus: EventBus): void {
+    const originalOnFire = this.onFire;
+    this.onFire = async (trigger) => {
+      bus.emit({
+        id: uuid(),
+        type: `trigger.fired`,
+        source: "trigger-engine",
+        payload: { triggerId: trigger.id, name: trigger.name, conditionType: trigger.condition.type },
+        timestamp: Date.now(),
+      });
+      if (originalOnFire) await originalOnFire(trigger);
+    };
   }
 
   private rowToTrigger(row: any): TriggerDef {
