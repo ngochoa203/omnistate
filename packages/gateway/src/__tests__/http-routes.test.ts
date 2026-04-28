@@ -19,7 +19,7 @@ import supertest from "supertest";
 
 vi.mock("../db/database.js", () => ({
   getDb: () => ({
-    prepare: () => ({ get: () => ({ result: 1 }), run: () => ({}) }),
+    prepare: () => ({ get: () => ({ result: 1 }), run: () => ({}), all: () => [] }),
   }),
   closeDb: () => {},
   getTestDb: () => ({}),
@@ -51,7 +51,7 @@ vi.mock("../llm/runtime-config.js", async (importOriginal) => {
         enabled: false,
         mode: "handoff" as const,
         shortcutName: "",
-        endpoint: "http://127.0.0.1:19801/siri/command",
+        endpoint: "http://127.0.0.1:0/siri/command",
         token: "",
       },
       wake: {
@@ -105,6 +105,7 @@ vi.mock("../voice/wake-manager.js", () => ({
 // Mock trigger engine
 vi.mock("../triggers/index.js", () => ({
   TriggerEngine: class {
+    onFire = null;
     start() {}
     stop() {}
     createTrigger() {}
@@ -112,6 +113,8 @@ vi.mock("../triggers/index.js", () => ({
     updateTrigger() {}
     deleteTrigger() {}
     getTriggerHistory() { return []; }
+    bridgeToEventBus() {}
+    evaluateEvent() {}
   },
 }));
 
@@ -193,7 +196,7 @@ describe("Gateway HTTP routes", () => {
     // Wait for the HTTP server to bind
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
-    const httpServer = (gateway as any).gatewayHttpServer as http.Server;
+    const httpServer = (gateway as any).siriBridgeServer as http.Server;
     const port = await getServerPort(httpServer);
     agent = supertest(`http://127.0.0.1:${port}`);
   });

@@ -257,6 +257,99 @@ fn bgra_to_rgba(src: &[u8], width: usize, height: usize, bytes_per_row: usize) -
     dst
 }
 
+/// Capture a region of the screen using CPU crop on the raw pixel buffer.
+///
+/// Instead of transferring a full 4K frame (~33MB) to JavaScript just to crop
+/// a small region, this crops in Rust with only one allocation (the output buffer).
+///
+/// Steps:
+/// 1. Capture the full frame via ScreenCaptureKit (IOSurface zero-copy)
+/// 2. Crop using byte-offset math — one row-slice copy per row
+/// 3. Optionally nearest-neighbor resize for vision model input
+pub fn capture_region_gpu(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    target_width: Option<u32>,
+    target_height: Option<u32>,
+) -> OmniResult<CapturedFrame> {
+    let config = CaptureConfig::default();
+    let frame = capture_frame(&config)?;
+
+    // Clamp region to frame bounds
+    let x = x.min(frame.width.saturating_sub(1));
+    let y = y.min(frame.height.saturating_sub(1));
+    let width = width.min(frame.width.saturating_sub(x));
+    let height = height.min(frame.height.saturating_sub(y));
+
+    if width == 0 || height == 0 {
+        return Err(OmniError::CaptureError(
+            "Crop region is empty after clamping to frame bounds".into(),
+        ));
+    }
+
+    let bpp = frame.pixel_format.bytes_per_pixel() as u32;
+    let src_bpr = frame.bytes_per_row as u32;
+    let dst_bpr = width * bpp;
+    let mut cropped = Vec::with_capacity((height * dst_bpr) as usize);
+
+    for row in 0..height {
+        let src_start = ((y + row) * src_bpr + x * bpp) as usize;
+        let src_end = src_start + dst_bpr as usize;
+        if src_end <= frame.data.len() {
+            cropped.extend_from_slice(&frame.data[src_start..src_end]);
+        }
+    }
+
+    // Apply nearest-neighbor resize if requested
+    let (final_data, final_width, final_height, final_bpr) =
+        match (target_width, target_height) {
+            (Some(tw), Some(th)) if tw > 0 && th > 0 => {
+                let resized = nearest_neighbor_resize(&cropped, width, height, tw, th, bpp);
+                let bpr = tw * bpp;
+                (resized, tw, th, bpr as usize)
+            }
+            _ => (cropped, width, height, dst_bpr as usize),
+        };
+
+    Ok(CapturedFrame {
+        width: final_width,
+        height: final_height,
+        bytes_per_row: final_bpr,
+        pixel_format: frame.pixel_format,
+        timestamp: frame.timestamp,
+        data: final_data,
+    })
+}
+
+/// Nearest-neighbor downscale/upscale for pixel buffers.
+///
+/// Simple and fast — suitable for vision model input where bilinear quality
+/// is not required and speed matters more.
+fn nearest_neighbor_resize(
+    data: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    bpp: u32,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity((dst_w * dst_h * bpp) as usize);
+    for dy in 0..dst_h {
+        let sy = (dy * src_h / dst_h).min(src_h - 1);
+        for dx in 0..dst_w {
+            let sx = (dx * src_w / dst_w).min(src_w - 1);
+            let src_offset = (sy * src_w * bpp + sx * bpp) as usize;
+            let end = src_offset + bpp as usize;
+            if end <= data.len() {
+                out.extend_from_slice(&data[src_offset..end]);
+            }
+        }
+    }
+    out
+}
+
 /// Capture a single frame using the stream-based API.
 ///
 /// This sets up an SCStream, captures one frame via the output handler callback,

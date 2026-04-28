@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@omnistate/gateway": "workspace:*",
+    "@omnistate/shared": "workspace:*",
     "ws": "^8.18.0"
   },
   "devDependencies": {

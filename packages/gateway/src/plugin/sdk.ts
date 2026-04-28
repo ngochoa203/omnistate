@@ -3,6 +3,8 @@
  * capabilities with the OmniState gateway.
  */
 
+import type { PermissionGuard } from "./permission.js";
+
 export interface OmniStatePluginAPI {
   /** Register a new tool (capability). */
   registerTool(
@@ -101,4 +103,15 @@ export interface VisionAccess {
     screenshot: Buffer,
     query: string
   ): Promise<Array<{ x: number; y: number; width: number; height: number; text?: string }>>;
+}
+
+/**
+ * Create a permission-wrapped plugin API.
+ * Used by PluginRegistry when loading sandboxed plugins.
+ */
+export function createGuardedApi(
+  base: OmniStatePluginAPI,
+  guard: PermissionGuard
+): OmniStatePluginAPI {
+  return guard.wrapApi(base);
 }

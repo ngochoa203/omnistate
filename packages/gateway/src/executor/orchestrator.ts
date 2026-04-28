@@ -26,6 +26,9 @@ import { AdvancedVision } from "../vision/advanced.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
 import { PermissionResponder, ClaudeCodeResponder } from "../vision/permission-responder.js";
 import type { StructuredResponse } from "../intents/index.js";
+import { WorkingMemory } from "../memory/working-memory.js";
+import { TraceContext } from "../tracing/tracer.js";
+import { exportTrace } from "../tracing/exporters.js";
 
 /**
  * Converts a StructuredResponse from the intent registry into the legacy
@@ -163,6 +166,9 @@ export class Orchestrator {
   private vision: AdvancedVision;
   private activeMacroSessionId: string | null;
 
+  workingMemory: WorkingMemory;
+  private traceCtx: TraceContext | null = null;
+
   // Permission responder system (optional — wired in when approvalPolicy is configured)
   approvalEngine?: ApprovalEngine;
   permissionResponder?: PermissionResponder | ClaudeCodeResponder;
@@ -188,6 +194,7 @@ export class Orchestrator {
     this.hybridTools = HybridTooling;
     this.vision = new AdvancedVision();
     this.activeMacroSessionId = null;
+    this.workingMemory = new WorkingMemory();
   }
 
   /** Get current queue depth. */
@@ -198,12 +205,24 @@ export class Orchestrator {
   /**
    * Execute a complete plan.
    */
+  getWorkingMemory(): WorkingMemory {
+    return this.workingMemory;
+  }
+
+  getTraceContext(): TraceContext | null {
+    return this.traceCtx;
+  }
+
   async executePlan(plan: StatePlan): Promise<ExecutionResult> {
+    this.traceCtx = new TraceContext();
+    this.workingMemory.clearScope("task");
     const completed = new Set<string>();
     const results: Map<string, StepResult> = new Map();
 
     for (const node of plan.nodes) {
+      const spanCtx = this.traceCtx.startSpan("step.execute", { nodeId: node.id, tool: node.action.tool });
       const result = await this.executeNode(node, results);
+      this.traceCtx.endSpan(spanCtx, result.status === "ok" ? "ok" : "error");
       results.set(node.id, result);
 
       if (result.status === "ok") {
@@ -219,6 +238,7 @@ export class Orchestrator {
           completed.add(node.id);
           results.set(node.id, retried);
         } else {
+          exportTrace(this.traceCtx.getAllSpans()).catch(() => {});
           return {
             taskId: plan.taskId,
             status: "failed",
@@ -231,13 +251,24 @@ export class Orchestrator {
       }
     }
 
-    return {
+    const finalResult = {
       taskId: plan.taskId,
-      status: "complete",
+      status: "complete" as const,
       completedSteps: completed.size,
       totalSteps: plan.nodes.length,
       stepResults: Array.from(results.values()),
     };
+
+    this.workingMemory.set("lastTaskResult", {
+      taskId: plan.taskId,
+      goal: plan.goal,
+      status: "complete",
+      completedSteps: completed.size,
+      totalSteps: plan.nodes.length,
+    }, { scope: "task" });
+
+    exportTrace(this.traceCtx.getAllSpans()).catch(() => {});
+    return finalResult;
   }
 
   private async executeNode(

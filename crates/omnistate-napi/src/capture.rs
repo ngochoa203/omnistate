@@ -42,6 +42,55 @@ pub fn capture_frame_zero_copy_buffer() -> Result<Buffer> {
     Ok(Buffer::from(frame.data))
 }
 
+/// Capture a region of the screen with CPU crop in Rust.
+///
+/// Avoids transferring a full 4K frame (~33MB) through N-API to JavaScript
+/// just to crop a small region. The crop happens in Rust with zero allocations
+/// beyond the output buffer.
+///
+/// Returns the cropped pixel data as a Buffer.
+#[napi]
+pub fn capture_region_cropped(x: u32, y: u32, width: u32, height: u32) -> Result<Buffer> {
+    let frame = omnistate_capture::capture_region_gpu(x, y, width, height, None, None)
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(Buffer::from(frame.data))
+}
+
+/// Capture a region and resize to target dimensions for vision model input.
+///
+/// Nearest-neighbor resize happens in Rust, so only the small resized buffer
+/// crosses the N-API boundary instead of the full-frame data.
+///
+/// Returns metadata JSON plus the captured dimensions.
+#[napi]
+pub fn capture_region_resized(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<serde_json::Value> {
+    let frame = omnistate_capture::capture_region_gpu(
+        x,
+        y,
+        width,
+        height,
+        Some(target_width),
+        Some(target_height),
+    )
+    .map_err(|e| Error::from_reason(e.to_string()))?;
+
+    Ok(serde_json::json!({
+        "width": frame.width,
+        "height": frame.height,
+        "bytesPerRow": frame.bytes_per_row,
+        "pixelFormat": format!("{:?}", frame.pixel_format),
+        "dataLength": frame.data.len(),
+        "captureMethod": "region-gpu-crop",
+    }))
+}
+
 /// Capture a frame with custom configuration.
 ///
 /// Options:

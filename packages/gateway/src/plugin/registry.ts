@@ -12,6 +12,8 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { PermissionGuard, type PluginManifestV2, type PluginPermission } from "./permission.js";
+import { PluginSandbox } from "./sandbox.js";
 
 export type PluginCategory =
   | "deep"
@@ -38,6 +40,8 @@ export interface LoadedPlugin {
   manifest: PluginManifest;
   module: unknown;
   status: "active" | "error" | "disabled";
+  sandbox?: PluginSandbox;
+  guard?: PermissionGuard;
 }
 
 export class PluginRegistry {
@@ -73,8 +77,40 @@ export class PluginRegistry {
           continue;
         }
 
-        // Load the plugin entry point
+        // Resolve permissions and sandbox mode (V2 manifest support)
+        const manifestV2 = manifest as Partial<PluginManifestV2>;
+        const permissions: PluginPermission[] = manifestV2.permissions ?? ["system:read"];
+        const sandboxMode = manifestV2.sandbox;
+        const timeoutMs = manifestV2.timeout;
+
+        const guard = new PermissionGuard(manifest.id, permissions);
+        const useSandbox = sandboxMode === "worker_thread";
+
         const entryPoint = resolve(this.pluginDir, dir, "index.js");
+
+        if (useSandbox && existsSync(entryPoint)) {
+          const sandbox = new PluginSandbox(manifest.id, timeoutMs);
+          try {
+            await sandbox.load(entryPoint);
+          } catch {
+            this.plugins.set(manifest.id, {
+              manifest,
+              module: null,
+              status: "error",
+            });
+            continue;
+          }
+          this.plugins.set(manifest.id, {
+            manifest,
+            module: null,
+            status: "active",
+            sandbox,
+            guard,
+          });
+          continue;
+        }
+
+        // Direct load (backward compat or sandbox: "none")
         let mod: unknown = null;
         if (existsSync(entryPoint)) {
           try {
@@ -82,7 +118,7 @@ export class PluginRegistry {
             if (typeof (mod as any).activate === "function") {
               await (mod as any).activate();
             }
-          } catch (loadErr) {
+          } catch {
             this.plugins.set(manifest.id, {
               manifest,
               module: null,
@@ -96,6 +132,7 @@ export class PluginRegistry {
           manifest,
           module: mod,
           status: "active",
+          guard,
         });
       } catch {
         // Invalid manifest, skip
@@ -125,5 +162,10 @@ export class PluginRegistry {
   /** Get all registered capabilities across all active plugins. */
   capabilities(): string[] {
     return this.active().flatMap((p) => p.manifest.capabilities);
+  }
+
+  /** Get the PermissionGuard for a loaded plugin, if any. */
+  getGuard(pluginId: string): PermissionGuard | undefined {
+    return this.plugins.get(pluginId)?.guard;
   }
 }

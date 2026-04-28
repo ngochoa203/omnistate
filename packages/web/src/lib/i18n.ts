@@ -16,6 +16,7 @@ export interface CopyShape {
     screenTree: string;
     triggers: string;
     memory: string;
+    events: string;
     approvals: string;
   };
   status: {
@@ -134,6 +135,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "Screen Tree",
       triggers: "Triggers",
       memory: "Memory Pal",
+      events: "Events",
       approvals: "Approvals",
     },
     status: {
@@ -251,6 +253,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "Cây màn hình",
       triggers: "Trigger tự động",
       memory: "Kho ghi nhớ",
+      events: "Sự kiện",
       approvals: "Phê duyệt",
     },
     status: {
@@ -368,6 +371,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "スクリーンツリー",
       triggers: "トリガー",
       memory: "メモリーパル",
+      events: "イベント",
       approvals: "承認センター",
     },
     status: {
@@ -485,6 +489,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "화면 트리",
       triggers: "트리거",
       memory: "메모리 팔",
+      events: "이벤트",
       approvals: "승인 센터",
     },
     status: {
@@ -602,6 +607,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "屏幕树",
       triggers: "触发器",
       memory: "记忆助手",
+      events: "事件",
       approvals: "审批中心",
     },
     status: {
@@ -719,6 +725,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "Arbre d'écran",
       triggers: "Déclencheurs",
       memory: "Mémoire",
+      events: "Événements",
       approvals: "Approbations",
     },
     status: {
@@ -836,6 +843,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "Bildschirmbaum",
       triggers: "Auslöser",
       memory: "Gedächtnis",
+      events: "Ereignisse",
       approvals: "Genehmigungen",
     },
     status: {
@@ -953,6 +961,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "Árbol de pantalla",
       triggers: "Disparadores",
       memory: "Memoria",
+      events: "Eventos",
       approvals: "Aprobaciones",
     },
     status: {
@@ -1070,6 +1079,7 @@ const COPY: Record<AppLanguage, CopyShape> = {
       screenTree: "โครงสร้างหน้าจอ",
       triggers: "ทริกเกอร์",
       memory: "คลังความจำ",
+      events: "กิจกรรม",
       approvals: "การอนุมัติ",
     },
     status: {

@@ -59,3 +59,16 @@ coverage/
 
 # Python cache (extra)
 .pytest_cache/
+
+# Playwright
+playwright-report/
+
+# Vendor (use local clone, not tracked)
+packages/gateway/vendor/
+
+# Python virtual envs
+.venv-voice/
+
+# macOS app build output
+apps/macos/OmniState/dist/
+apps/macos/OmniState/OmniState/Resources/web-dist/

@@ -471,7 +471,11 @@ export async function transcribeAudio(
     const t0wl = Date.now();
     try {
       const { text, durationMs } = await whisperLocalClient.transcribe(tmpPath, language);
-      logger.info({ wavPath: tmpPath, textLen: text.trim().length, durationMs: Date.now() - t0wl }, "[whisper-local] transcribe done");
+      const transcript = text.replace(/\s+/g, " ").trim();
+      logger.info(
+        { wavPath: tmpPath, textLen: transcript.length, durationMs: Date.now() - t0wl },
+        `[whisper-local] transcribe done: "${transcript}"`
+      );
       return {
         text,
         confidence: 0.9,
@@ -1747,7 +1751,7 @@ export async function getUserProfile(): Promise<UserProfile> {
 export interface GeneratedScript {
   id: string;
   description: string;
-  language: "bash" | "python" | "applescript";
+  language: "bash" | "python" | "applescript" | "jxa";
   code: string;
   generatedAt: string;
   filePath?: string;
@@ -1762,11 +1766,93 @@ export interface ScriptResult {
 }
 
 /**
+ * Execute JXA (JavaScript for Automation) code via osascript.
+ */
+export async function executeJxa(code: string, timeoutMs: number = 10_000): Promise<string> {
+  const tmpPath = join(tmpdir(), `jxa-${randomBytes(6).toString("hex")}.js`);
+  writeFileSync(tmpPath, code, "utf-8");
+  try {
+    const { stdout, stderr } = await execAsync(`osascript -l JavaScript "${tmpPath}"`, { timeout: timeoutMs });
+    return (stdout + stderr).trim();
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Execute plain AppleScript code via osascript.
+ */
+export async function executeAppleScript(code: string, timeoutMs: number = 10_000): Promise<string> {
+  const tmpPath = join(tmpdir(), `applescript-${randomBytes(6).toString("hex")}.applescript`);
+  writeFileSync(tmpPath, code, "utf-8");
+  try {
+    const { stdout, stderr } = await execAsync(`osascript "${tmpPath}"`, { timeout: timeoutMs });
+    return (stdout + stderr).trim();
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
+}
+
+const QUICK_ACTIONS: Record<string, { type: "applescript" | "jxa"; code: string }> = {
+  "dark-mode-on": {
+    type: "applescript",
+    code: `tell application "System Events" to tell appearance preferences to set dark mode to true`,
+  },
+  "dark-mode-off": {
+    type: "applescript",
+    code: `tell application "System Events" to tell appearance preferences to set dark mode to false`,
+  },
+  "dark-mode-toggle": {
+    type: "applescript",
+    code: `tell application "System Events" to tell appearance preferences to set dark mode to not dark mode`,
+  },
+  "volume-up": {
+    type: "applescript",
+    code: `set volume output volume (output volume of (get volume settings)) + 10`,
+  },
+  "volume-down": {
+    type: "applescript",
+    code: `set volume output volume (output volume of (get volume settings)) - 10`,
+  },
+  "volume-mute": {
+    type: "applescript",
+    code: `set volume with output muted`,
+  },
+  "volume-unmute": {
+    type: "applescript",
+    code: `set volume without output muted`,
+  },
+  "do-not-disturb-on": {
+    type: "jxa",
+    code: `Application("System Events").processes["Control Center"].menuBars[0].menuBarItems["Control Center"].click(); delay(0.5); Application("System Events").processes["Control Center"].windows[0].checkBoxes.whose({ name: "Focus" })[0].click();`,
+  },
+  "do-not-disturb-off": {
+    type: "jxa",
+    code: `Application("System Events").processes["Control Center"].menuBars[0].menuBarItems["Control Center"].click(); delay(0.5); Application("System Events").processes["Control Center"].windows[0].checkBoxes.whose({ name: "Focus" })[0].click();`,
+  },
+};
+
+/**
+ * Execute a common system action without requiring LLM generation.
+ * Returns an error string (not a thrown error) for unknown actions.
+ */
+export async function quickSystemAction(action: string): Promise<string> {
+  const entry = QUICK_ACTIONS[action];
+  if (!entry) {
+    return `Unknown quick action: ${action}`;
+  }
+  if (entry.type === "jxa") {
+    return executeJxa(entry.code);
+  }
+  return executeAppleScript(entry.code);
+}
+
+/**
  * UC-D11: Generate a script in the specified language from a natural language description.
  */
 export async function generateScript(
   description: string,
-  language: "bash" | "python" | "applescript" = "bash"
+  language: "bash" | "python" | "applescript" | "jxa" = "bash"
 ): Promise<GeneratedScript> {
   const id = generateId("script");
   const client = getClient();
@@ -1775,10 +1861,14 @@ export async function generateScript(
 
   if (client) {
     try {
+      const systemPrompt =
+        language === "jxa"
+          ? `You are a JXA (JavaScript for Automation) script generator for macOS. Generate a complete, working JXA script that accomplishes the task. Use the JXA API (Application(), SystemEvents, etc.). Output ONLY the script code, no markdown fences, no explanation.`
+          : `You are a ${language} script generator for macOS. Generate a complete, working ${language} script that accomplishes the task. Output ONLY the script code, no markdown fences, no explanation.`;
       const msg = await client.messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 2048,
-        system: `You are a ${language} script generator for macOS. Generate a complete, working ${language} script that accomplishes the task. Output ONLY the script code, no markdown fences, no explanation.`,
+        system: systemPrompt,
         messages: [{ role: "user", content: description }],
       });
       code = msg.content
@@ -1790,8 +1880,12 @@ export async function generateScript(
       throw new Error(`Script generation failed: ${String(err)}`);
     }
   } else {
-    // Heuristic fallback for common bash patterns
-    if (language === "bash") {
+    // Try to map description to a known quick action before falling back to TODO stubs.
+    const actionKey = description.trim().toLowerCase().replace(/\s+/g, "-");
+    if (actionKey in QUICK_ACTIONS) {
+      const entry = QUICK_ACTIONS[actionKey];
+      code = entry.code;
+    } else if (language === "bash") {
       code = `#!/bin/bash\n# ${description}\necho "TODO: implement ${description}"`;
     } else {
       code = `# ${description}\nprint("TODO: implement")`;
@@ -1826,7 +1920,14 @@ export async function executeGeneratedScript(
   }
 
   const tmpDir = ensureDir("scripts/tmp");
-  const ext = script.language === "python" ? ".py" : script.language === "applescript" ? ".applescript" : ".sh";
+  const ext =
+    script.language === "python"
+      ? ".py"
+      : script.language === "applescript"
+      ? ".applescript"
+      : script.language === "jxa"
+      ? ".js"
+      : ".sh";
   const tmpPath = join(tmpDir, `${script.id}${ext}`);
   writeFileSync(tmpPath, script.code, "utf-8");
 
@@ -1838,6 +1939,9 @@ export async function executeGeneratedScript(
         break;
       case "applescript":
         cmd = `osascript "${tmpPath}"`;
+        break;
+      case "jxa":
+        cmd = `osascript -l JavaScript "${tmpPath}"`;
         break;
       default:
         await execAsync(`chmod +x "${tmpPath}"`);

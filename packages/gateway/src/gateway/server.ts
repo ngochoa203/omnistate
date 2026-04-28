@@ -18,18 +18,23 @@ import { classifyIntent, planFromIntent } from "../planner/intent.js";
 import { optimizePlan } from "../planner/optimizer.js";
 import { Orchestrator } from "../executor/orchestrator.js";
 import { HealthMonitor } from "../health/monitor.js";
-import * as HybridAutomation from "../hybrid/automation.js";
 import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, setWhisperLocalModel, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
-import { whisperLocalClient } from "../voice/whisper-local-client.js";
+import { VoiceSessionService } from "../voice/session-service.js";
+import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
-import { synthesize as edgeTtsSynthesize, detectLanguage as edgeTtsDetectLanguage, pickVoice as edgeTtsPickVoice } from "../voice/edge-tts.js";
 import { TriggerEngine } from "../triggers/index.js";
+import { getDb } from "../db/database.js";
+import { EventBus } from "../events/event-bus.js";
+import { OSFirehose } from "../events/os-firehose.js";
+import { RuleEngine } from "../events/rule-engine.js";
+import { EventRepository } from "../events/event-repository.js";
+import { MemoryRepository } from "../memory/memory-repository.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
 import { ApprovalEngine } from "../vision/approval-policy.js";
 import { ClaudeCodeResponder } from "../vision/permission-responder.js";
@@ -38,8 +43,6 @@ import { logger } from "../utils/logger.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
 import { applyRequestId } from "./request-context.js";
 import { register, httpRequestsTotal, httpRequestDurationSeconds, wsConnectionsGauge } from "./metrics.js";
-import { VoiceStreamManager } from "../voice/webrtc-stream.js";
-import { cleanupEnrollSession } from "../voice/enrollment.js";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const bridgeProbeScriptPath = fileURLToPath(new URL("../../scripts/bridge-probe.mjs", import.meta.url));
@@ -139,8 +142,6 @@ interface ConnectedClient {
   userId: string | null;
   /** Set when the connection authenticated via a device JWT (type: "device"). */
   deviceId?: string | null;
-  /** AbortController for in-progress TTS synthesis; used by tts.cancel handler. */
-  ttsAbort?: AbortController;
 }
 
 /**
@@ -151,11 +152,14 @@ interface ConnectedClient {
  */
 export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
-  private gatewayHttpServer: HttpServer | null = null;
   private siriBridgeServer: HttpServer | null = null;
   private wakeManager: WakeManager = new WakeManager();
+  private voiceSessions = new VoiceSessionService((message) => this.broadcast(message));
+  private cancellationRegistry = new CancellationRegistry();
   private triggerEngine: TriggerEngine = new TriggerEngine();
-  private voiceStreamManager: VoiceStreamManager = new VoiceStreamManager();
+  private eventBus: EventBus = new EventBus();
+  private firehose: OSFirehose = new OSFirehose(this.eventBus);
+  private ruleEngine: RuleEngine = new RuleEngine(this.eventBus);
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -171,6 +175,8 @@ export class OmniStateGateway {
     durationMs: number;
   }> = [];
   private claudeMemStore = new ClaudeMemStore();
+  private eventRepository = new EventRepository(getDb());
+  private memoryRepository = new MemoryRepository(getDb());
   private approvalEngine?: ApprovalEngine;
   private claudeCodeResponder?: ClaudeCodeResponder;
 
@@ -211,22 +217,12 @@ export class OmniStateGateway {
       return;
     }
 
-    const httpServer = createServer((req, res) => {
-      this.handleGatewayHttp(req, res).catch((err) =>
-        logger.error({ err }, "[OmniState] Unhandled error in handleGatewayHttp")
-      );
-    });
-    this.gatewayHttpServer = httpServer;
-
-    this.wss = new WebSocketServer({ noServer: true });
-
-    httpServer.on("upgrade", (req, socket, head) => {
-      this.wss!.handleUpgrade(req, socket, head, (ws) => {
-        this.wss!.emit("connection", ws, req);
-      });
+    this.wss = new WebSocketServer({
+      host: this.config.gateway.bind,
+      port: this.config.gateway.port,
     });
 
-    httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    this.wss.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         logger.error(
           `[OmniState] Port ${this.config.gateway.port} is already in use on ${this.config.gateway.bind}.\n` +
@@ -237,19 +233,14 @@ export class OmniStateGateway {
       logger.error(`[OmniState] Gateway server error: ${err.message}`);
     });
 
-    // Keep wss error handler as defense-in-depth
-    this.wss.on("error", (err: NodeJS.ErrnoException) => {
-      logger.error(`[OmniState] WebSocketServer error: ${err.message}`);
+    this.wss.on("listening", () => {
+      logger.info(
+        `[OmniState] Gateway listening on ${this.config.gateway.bind}:${this.config.gateway.port}`
+      );
     });
 
     this.wss.on("connection", (ws, req) => {
       this.handleConnection(ws, req);
-    });
-
-    httpServer.listen(this.config.gateway.port, this.config.gateway.bind, () => {
-      logger.info(
-        `[OmniState] Gateway listening on ${this.config.gateway.bind}:${this.config.gateway.port}`
-      );
     });
 
     this.startSiriBridge();
@@ -257,6 +248,16 @@ export class OmniStateGateway {
     this.triggerEngine.start(async (trigger) => {
       const taskId = `trigger-${trigger.id}-${crypto.randomUUID()}`;
       this.executeTaskPipeline(taskId, trigger.action.goal, trigger.action.layer, undefined).catch((err) => logger.error({ err }, "unhandled promise rejection"));
+    });
+    this.triggerEngine.bridgeToEventBus(this.eventBus);
+    this.firehose.start();
+    this.ruleEngine.start(async (_rule, event) => {
+      logger.info({ eventType: event.type }, "[rule-engine] Rule fired");
+    });
+
+    // Broadcast all events to connected WS clients
+    this.eventBus.onPattern("**", (event) => {
+      this.broadcast({ type: "events.stream", event } as import("./protocol.js").ServerMessage);
     });
 
     // Start Claude Code permission auto-responder if configured and enabled
@@ -279,12 +280,12 @@ export class OmniStateGateway {
     this.clients.clear();
     this.wss?.close();
     this.wss = null;
-    this.gatewayHttpServer?.close();
-    this.gatewayHttpServer = null;
     this.siriBridgeServer?.close();
     this.siriBridgeServer = null;
     this.wakeManager.stop();
     this.triggerEngine.stop();
+    this.firehose.stop();
+    this.ruleEngine.stop();
     if (this.claudeCodeResponder?.isRunning) {
       void this.claudeCodeResponder.stop();
     }
@@ -316,552 +317,6 @@ export class OmniStateGateway {
     );
   }
 
-  private async handleGatewayHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const startMs = Date.now();
-    applyRequestId(req, res);
-    applySecurityHeaders(res);
-    const origin = req.headers["origin"] as string | undefined;
-    const remote = req.socket.remoteAddress ?? "";
-    const isLocalRequest =
-      remote === "127.0.0.1" ||
-      remote === "::1" ||
-      remote.startsWith("::ffff:127.0.0.1");
-
-    const json = (status: number, body: Record<string, unknown>) => {
-      applyCorsHeaders(res, origin);
-      res.statusCode = status;
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(body));
-      const route = new URL(req.url ?? "/", "http://localhost").pathname;
-      httpRequestsTotal.inc({ method: req.method ?? "GET", route, status: String(status) });
-      httpRequestDurationSeconds.observe({ method: req.method ?? "GET", route, status: String(status) }, (Date.now() - startMs) / 1000);
-    };
-
-    const requestPath = (() => {
-      try {
-        return new URL(req.url ?? "", "http://localhost").pathname;
-      } catch {
-        return req.url ?? "";
-      }
-    })();
-
-    if (req.method === "OPTIONS") {
-      applyPreflightHeaders(res, origin);
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    if (req.method === "GET" && requestPath === "/metrics") {
-      const metricsOutput = await register.metrics();
-      applyCorsHeaders(res, origin);
-      res.writeHead(200, { "content-type": register.contentType });
-      res.end(metricsOutput);
-      return;
-    }
-
-    if (req.method === "GET" && (requestPath === "/health" || requestPath === "/healthz")) {
-      const { getTailscaleStatus } = await import("../network/tailscale.js");
-      json(200, {
-        status: "ok",
-        uptime: process.uptime(),
-        connections: this.clients.size,
-        timestamp: new Date().toISOString(),
-        tailscale: getTailscaleStatus(),
-      });
-      return;
-    }
-
-    if (req.method === "GET" && requestPath === "/health/ready") {
-      const checks: Record<string, { ok: boolean; error?: string }> = {};
-      try {
-        const db = (await import("../db/database.js")).getDb();
-        db.prepare("SELECT 1").get();
-        checks["db"] = { ok: true };
-      } catch (err) {
-        checks["db"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-      try {
-        const { loadLlmRuntimeConfig: loadCfg } = await import("../llm/runtime-config.js");
-        const cfg = loadCfg();
-        const baseURL = cfg.providers?.find((p) => p.id === cfg.activeProviderId)?.baseURL ?? "";
-        if (baseURL) {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2000);
-          try {
-            await fetch(baseURL, { method: "HEAD", signal: controller.signal });
-          } finally {
-            clearTimeout(timer);
-          }
-        }
-        checks["llm"] = { ok: true };
-      } catch (err) {
-        checks["llm"] = { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-      const ready = Object.values(checks).every((c) => c.ok);
-      json(ready ? 200 : 503, { ready, checks });
-      return;
-    }
-
-    if (req.method === "GET" && requestPath === "/readyz") {
-      json(200, {
-        ok: true,
-        ready: true,
-        wakeListenerRunning: this.wakeManager.isRunning(),
-      });
-      return;
-    }
-
-    // ── Routine Templates ──────────────────────────────────────────────────
-    if (req.method === "GET" && requestPath === "/api/routines/templates") {
-      const { DAILY_ROUTINES } = await import("../triggers/templates.js");
-      json(200, { templates: DAILY_ROUTINES });
-      return;
-    }
-
-    if (req.method === "POST" && requestPath === "/api/routines/install") {
-      const body = await parseBody(req);
-      const { templateId, userId } = body as { templateId?: string; userId?: string };
-      if (!templateId || !userId) {
-        json(400, { error: { code: "BAD_REQUEST", message: "templateId and userId required" } });
-        return;
-      }
-      const { DAILY_ROUTINES } = await import("../triggers/templates.js");
-      const tpl = DAILY_ROUTINES.find((t) => t.id === templateId);
-      if (!tpl) {
-        json(404, { error: { code: "NOT_FOUND", message: `Template '${templateId}' not found` } });
-        return;
-      }
-      try {
-        const trigger = this.triggerEngine.createTrigger(userId, {
-          name: tpl.trigger.name,
-          description: tpl.trigger.description,
-          condition: tpl.trigger.condition,
-          action: tpl.trigger.action,
-          cooldownMs: tpl.trigger.cooldownMs,
-        });
-        json(201, { ok: true, trigger });
-      } catch (err: any) {
-        json(500, { error: { code: "INTERNAL_ERROR", message: err.message ?? "Failed to install template" } });
-      }
-      return;
-    }
-
-    // ── Memory Pal ─────────────────────────────────────────────────────────
-    if (req.method === "GET" && requestPath === "/api/memory") {
-      const { listAll, toPublicEntry } = await import("../session/memory-pal.js");
-      const urlObj = new URL(req.url ?? "/", "http://localhost");
-      const cat = urlObj.searchParams.get("category") as any ?? undefined;
-      const entries = listAll(cat).map(toPublicEntry);
-      json(200, { entries });
-      return;
-    }
-
-    if (req.method === "GET" && requestPath === "/api/memory/search") {
-      const { searchByKey, toPublicEntry } = await import("../session/memory-pal.js");
-      const urlObj = new URL(req.url ?? "/", "http://localhost");
-      const q = urlObj.searchParams.get("q") ?? "";
-      json(200, { entries: searchByKey(q).map(toPublicEntry) });
-      return;
-    }
-
-    const memItemMatch = requestPath.match(/^\/api\/memory\/([^/]+)$/);
-    if (memItemMatch) {
-      const id = memItemMatch[1];
-      const { getEntry, deleteEntry } = await import("../session/memory-pal.js");
-      if (req.method === "GET") {
-        if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-        const entry = getEntry(id);
-        if (!entry) { json(404, { error: "Not found" }); return; }
-        json(200, { entry });
-        return;
-      }
-      if (req.method === "DELETE") {
-        const ok = deleteEntry(id);
-        json(ok ? 200 : 404, { ok });
-        return;
-      }
-    }
-
-    if (req.method === "POST" && requestPath === "/api/memory") {
-      const body = await parseBody(req);
-      const { addEntry, toPublicEntry } = await import("../session/memory-pal.js");
-      try {
-        const entry = addEntry(body);
-        json(201, { entry: toPublicEntry(entry) });
-      } catch (err: any) {
-        json(400, { error: { code: "VALIDATION_ERROR", message: err.message } });
-      }
-      return;
-    }
-
-    // ── Approval Center ────────────────────────────────────────────────────
-    if (req.method === "GET" && requestPath === "/api/approvals/pending") {
-      const { getPendingApprovals } = await import("../vision/approval-center.js");
-      json(200, { approvals: getPendingApprovals() });
-      return;
-    }
-
-    const approveMatch = requestPath.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
-    if (approveMatch && req.method === "POST") {
-      const id = approveMatch[1];
-      const action = approveMatch[2];
-      const { approveRequest, rejectRequest } = await import("../vision/approval-center.js");
-      if (action === "approve") {
-        const body = await parseBody(req);
-        const permanent = Boolean(body?.permanent);
-        const ok = approveRequest(id, permanent);
-        json(ok ? 200 : 404, { ok });
-      } else {
-        const ok = rejectRequest(id);
-        json(ok ? 200 : 404, { ok });
-      }
-      return;
-    }
-
-    // ── Wake Word: model status & upload (custom "hey mimi" ONNX) ───────────
-    if (req.method === "GET" && requestPath === "/api/wake/status") {
-      const { loadLlmRuntimeConfig } = await import("../llm/runtime-config.js");
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const os = await import("node:os");
-      const cfg = loadLlmRuntimeConfig();
-      const modelDir = path.join(os.homedir(), ".omnistate", "models");
-      let installed = false;
-      let installedPath: string | null = null;
-      try {
-        const files = fs.readdirSync(modelDir).filter((f) => f.endsWith(".onnx"));
-        if (files.length > 0) {
-          installed = true;
-          installedPath = path.join(modelDir, files[0]);
-        }
-      } catch {
-        // dir doesn't exist
-      }
-      json(200, {
-        enabled: cfg.voice?.wake?.enabled ?? false,
-        phrase: cfg.voice?.wake?.phrase,
-        engine: cfg.voice?.wake?.engine,
-        aliases: cfg.voice?.wake?.aliases,
-        threshold: cfg.voice?.wake?.threshold,
-        modelInstalled: installed,
-        modelPath: installedPath,
-        configuredModelPath: cfg.voice?.wake?.modelPath ?? null,
-        trainingGuide: "https://github.com/dscripka/openWakeWord#training-new-models",
-        colabUrl: "https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb",
-      });
-      return;
-    }
-
-    if (req.method === "POST" && requestPath === "/api/wake/upload-model") {
-      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const os = await import("node:os");
-      const modelDir = path.join(os.homedir(), ".omnistate", "models");
-      try { fs.mkdirSync(modelDir, { recursive: true }); } catch {}
-      const filename = (req.headers["x-model-filename"] as string) || "hey_mimi.onnx";
-      // Sanitize: only allow basename with .onnx
-      const safeName = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
-      if (!safeName.endsWith(".onnx")) {
-        json(400, { error: { code: "INVALID_FILENAME", message: "Filename must end with .onnx" } });
-        return;
-      }
-      const target = path.join(modelDir, safeName);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      const MAX = 50 * 1024 * 1024; // 50MB cap
-      try {
-        await new Promise<void>((resolve, reject) => {
-          req.on("data", (c: Buffer) => {
-            total += c.length;
-            if (total > MAX) { reject(new Error("Model file too large (max 50MB)")); return; }
-            chunks.push(c);
-          });
-          req.on("end", () => resolve());
-          req.on("error", reject);
-        });
-        fs.writeFileSync(target, Buffer.concat(chunks));
-        // Persist modelPath into runtime config
-        const { loadLlmRuntimeConfig, saveLlmRuntimeConfig } = await import("../llm/runtime-config.js");
-        const cfg = loadLlmRuntimeConfig();
-        if (cfg.voice?.wake) {
-          (cfg.voice.wake as any).modelPath = target;
-          try { saveLlmRuntimeConfig(cfg); } catch {}
-        }
-        json(201, { ok: true, modelPath: target, sizeBytes: total });
-      } catch (err: any) {
-        json(400, { error: { code: "UPLOAD_FAILED", message: err.message } });
-      }
-      return;
-    }
-
-    // ── Wake Word: 5-sample personal training (no Colab, on-device) ─────────
-    if (req.method === "GET" && requestPath === "/api/wake/personal-status") {
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const os = await import("node:os");
-      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
-      const templatePath = path.join(sampleDir, "personal_template.json");
-      let samples = 0;
-      try {
-        samples = fs.readdirSync(sampleDir).filter((f) => /^sample_\d+\.wav$/.test(f)).length;
-      } catch {}
-      const ready = fs.existsSync(templatePath);
-      json(200, {
-        samplesCollected: samples,
-        samplesRequired: 5,
-        templateReady: ready,
-        templatePath: ready ? templatePath : null,
-      });
-      return;
-    }
-
-    if (req.method === "POST" && requestPath === "/api/wake/personal-sample") {
-      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const os = await import("node:os");
-      const idx = Number(req.headers["x-sample-index"]);
-      if (!Number.isInteger(idx) || idx < 1 || idx > 10) {
-        json(400, { error: { code: "INVALID_INDEX", message: "X-Sample-Index must be 1..10" } });
-        return;
-      }
-      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
-      try { fs.mkdirSync(sampleDir, { recursive: true }); } catch {}
-      const target = path.join(sampleDir, `sample_${idx}.wav`);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      const MAX = 2 * 1024 * 1024; // 2MB per 1.5s WAV
-      try {
-        await new Promise<void>((resolve, reject) => {
-          req.on("data", (c: Buffer) => {
-            total += c.length;
-            if (total > MAX) { reject(new Error("Sample too large (max 2MB)")); return; }
-            chunks.push(c);
-          });
-          req.on("end", () => resolve());
-          req.on("error", reject);
-        });
-        const buf = Buffer.concat(chunks);
-        // Guard: reject if body too small (~1s @ 16kHz mono 16-bit = 32KB)
-        if (buf.length < 32 * 1024) {
-          json(400, { error: { code: "SAMPLE_TOO_QUIET", message: `WAV body too small (${buf.length} bytes < 32KB minimum ~1s recording)` } });
-          return;
-        }
-        // Guard: compute RMS of PCM int16 LE data (skip 44-byte RIFF header)
-        const HEADER_BYTES = 44;
-        const pcmBuf = buf.slice(Math.min(HEADER_BYTES, buf.length));
-        const numSamples = Math.floor(pcmBuf.length / 2);
-        if (numSamples > 0) {
-          let sumSq = 0;
-          for (let i = 0; i < numSamples; i++) {
-            const s = pcmBuf.readInt16LE(i * 2);
-            sumSq += s * s;
-          }
-          const rms = Math.sqrt(sumSq / numSamples);
-          if (rms < 200) {
-            json(400, { error: { code: "SAMPLE_TOO_QUIET", message: `Audio RMS ${rms.toFixed(1)} is below silence threshold (200) — please re-record in a quieter environment or speak closer to the mic` } });
-            return;
-          }
-        }
-        fs.writeFileSync(target, buf);
-        // Write sidecar JSON if x-phrase header present (backward compatible — no failure if absent)
-        const phrase = (req.headers["x-phrase"] as string | undefined)?.trim();
-        if (phrase) {
-          const sidecar = path.join(sampleDir, `sample_${idx}.json`);
-          fs.writeFileSync(sidecar, JSON.stringify({ phrase, savedAt: new Date().toISOString() }));
-        }
-        json(201, { ok: true, samplePath: target, index: idx, sizeBytes: buf.length });
-      } catch (err: any) {
-        json(400, { error: { code: "UPLOAD_FAILED", message: err.message } });
-      }
-      return;
-    }
-
-    if (req.method === "POST" && requestPath === "/api/wake/personal-train") {
-      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-      const path = await import("node:path");
-      const os = await import("node:os");
-      const { spawn } = await import("node:child_process");
-      const sampleDir = path.join(os.homedir(), ".omnistate", "wake-samples");
-      const templatePath = path.join(sampleDir, "personal_template.json");
-      const script = path.join(process.cwd(), "packages/gateway/scripts/train_personal_wake.py");
-      const altScript = path.resolve(process.cwd(), "scripts/train_personal_wake.py");
-      const fs = await import("node:fs");
-      const scriptPath = fs.existsSync(script) ? script : altScript;
-
-      // Resolve python the same way WakeManager does (pyenv-aware).
-      const explicitPy = process.env.OMNISTATE_WAKE_PYTHON?.trim();
-      const pyenvVersion = process.env.PYENV_VERSION?.trim();
-      const pyenvRoot = process.env.PYENV_ROOT?.trim() || `${os.homedir()}/.pyenv`;
-      const pyenvPy =
-        pyenvVersion && fs.existsSync(`${pyenvRoot}/versions/${pyenvVersion}/bin/python3`)
-          ? `${pyenvRoot}/versions/${pyenvVersion}/bin/python3`
-          : null;
-      // Fallback: first versioned pyenv python with librosa installed.
-      let pyenvFallback: string | null = null;
-      try {
-        const versions = fs.readdirSync(`${pyenvRoot}/versions`).sort().reverse();
-        for (const v of versions) {
-          const p = `${pyenvRoot}/versions/${v}/bin/python3`;
-          if (fs.existsSync(p)) { pyenvFallback = p; break; }
-        }
-      } catch {}
-      const python = explicitPy || pyenvPy || pyenvFallback || "python3";
-
-      // Keep socket alive — librosa cold-import + 5 MFCC extractions can take 30–90s.
-      req.socket.setTimeout(0);
-      res.socket?.setTimeout(0);
-      const proc = spawn(python, [
-        scriptPath,
-        "--samples-dir", sampleDir,
-        "--output", templatePath,
-      ], { stdio: ["ignore", "pipe", "pipe"] });
-      let stdout = "";
-      let stderr = "";
-      proc.stdout.on("data", (d) => { stdout += d.toString(); });
-      proc.stderr.on("data", (d) => { stderr += d.toString(); });
-      const watchdog = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, 150_000);
-      const code: number = await new Promise<number>((resolve) =>
-        proc.on("close", (c) => { clearTimeout(watchdog); resolve(c ?? -1); }),
-      );
-      if (code === 0) {
-        // Switch wake engine to "personal" so the listener picks up the new template
-        try {
-          const { loadLlmRuntimeConfig, saveLlmRuntimeConfig } = await import("../llm/runtime-config.js");
-          const cfg = loadLlmRuntimeConfig();
-          if (cfg.voice?.wake) {
-            (cfg.voice.wake as any).engine = "personal";
-            (cfg.voice.wake as any).modelPath = templatePath;
-            saveLlmRuntimeConfig(cfg);
-          }
-        } catch {}
-        json(201, { ok: true, templatePath, log: stdout.split("\n").slice(-10).join("\n") });
-
-        // Background: kick off RTVC voice-clone training using the same wake samples.
-        // This ensures TTS can use the user's trained voice even without a separate enrollment.
-        void (async () => {
-          try {
-            const wavFiles = fs.readdirSync(sampleDir)
-              .filter((f: string) => f.endsWith(".wav"))
-              .sort()
-              .map((f: string) => path.join(sampleDir, f));
-            if (wavFiles.length === 0) return;
-
-            // Concatenate all wake WAVs into a single temp file for the encoder.
-            const concatPath = path.join(sampleDir, "_rtvc_concat.wav");
-            const { execFileSync } = await import("node:child_process");
-            // sox: if available, concat; otherwise just use the first sample.
-            try {
-              execFileSync("sox", [...wavFiles, concatPath], { stdio: "ignore" });
-            } catch {
-              fs.copyFileSync(wavFiles[0], concatPath);
-            }
-
-            const { trainRtvcProfile } = await import("../voice/rtvc.js");
-            const audioBase64 = fs.readFileSync(concatPath).toString("base64");
-            await trainRtvcProfile({
-              profileId: "default",
-              audioBase64,
-              format: "wav",
-            });
-          } catch (rtvcErr) {
-            // Non-fatal — wake training already succeeded.
-            console.warn("[wake/personal-train] Background RTVC training failed:", rtvcErr);
-          }
-        })();
-      } else {
-        // Gather sidecar phrases and per-sample file sizes for diagnostics.
-        let sampleDiagnostics: Array<{ file: string; sizeBytes: number; phrase: string | null }> = [];
-        try {
-          const wavs = fs.readdirSync(sampleDir).filter((f: string) => f.match(/^sample_\d+\.wav$/)).sort();
-          sampleDiagnostics = wavs.map((f: string) => {
-            const fp = path.join(sampleDir, f);
-            const sidecar = path.join(sampleDir, f.replace(/\.wav$/, ".json"));
-            let phrase: string | null = null;
-            try { phrase = JSON.parse(fs.readFileSync(sidecar, "utf8")).phrase ?? null; } catch {}
-            let sizeBytes = 0;
-            try { sizeBytes = fs.statSync(fp).size; } catch {}
-            return { file: f, sizeBytes, phrase };
-          });
-        } catch {}
-        json(500, { error: { code: "TRAIN_FAILED", message: stderr.split("\n").slice(-10).join("\n"), exitCode: code, samples: sampleDiagnostics } });
-      }
-      return;
-    }
-
-    if (req.method === "POST" && requestPath === "/api/stt/verify") {
-      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-      const chunks: Buffer[] = [];
-      await new Promise<void>((resolve, reject) => {
-        req.on("data", (c: Buffer) => chunks.push(c));
-        req.on("end", () => resolve());
-        req.on("error", reject);
-      });
-      let body: { audio?: string; expectedPhrase?: string };
-      try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {
-        json(400, { error: { code: "INVALID_JSON", message: "Body must be JSON {audio: base64, expectedPhrase: string}" } }); return;
-      }
-      const { audio, expectedPhrase } = body;
-      if (typeof audio !== "string" || !audio) {
-        json(400, { error: { code: "MISSING_AUDIO", message: "audio (base64) is required" } }); return;
-      }
-      try {
-        const audioBuffer = Buffer.from(audio, "base64");
-        const result = await HybridAutomation.transcribeAudio(audioBuffer, "whisper-local").catch(
-          () => HybridAutomation.transcribeAudio(audioBuffer, "whisper-cloud"),
-        );
-        const transcript = result.text.trim();
-        let similarity = 0;
-        let accepted = false;
-        if (expectedPhrase && transcript) {
-          // Jaccard token similarity — lightweight, no extra deps.
-          const tokA = new Set(transcript.toLowerCase().split(/\s+/));
-          const tokB = new Set((expectedPhrase as string).toLowerCase().split(/\s+/));
-          const intersection = [...tokA].filter((t) => tokB.has(t)).length;
-          const union = new Set([...tokA, ...tokB]).size;
-          similarity = union > 0 ? intersection / union : 0;
-          accepted = similarity >= 0.5;
-        }
-        json(200, { transcript, similarity: parseFloat(similarity.toFixed(3)), accepted });
-      } catch (err: any) {
-        json(500, { error: { code: "STT_ERROR", message: err.message } });
-      }
-      return;
-    }
-
-    // Wake-event broadcast: Python listener POSTs here when it detects the wake phrase.
-    // We DO NOT execute the phrase as a goal — we just notify connected UI clients
-    // (macOS app) so they can show the listening bubble + open command capture.
-    if (req.method === "POST" && requestPath === "/api/wake/event") {
-      if (!isLocalRequest) { json(403, { error: "Only local requests allowed" }); return; }
-      try {
-        const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
-        const text = Buffer.concat(chunks).toString("utf8") || "{}";
-        const raw = JSON.parse(text || "{}");
-        const phrase = String(raw?.phrase ?? "hey mimi");
-        const score = typeof raw?.score === "number" ? raw.score : 0;
-        const engine = String(raw?.engine ?? "personal");
-        // Cast to any: keeping the protocol type addition out of shared/ for now.
-        this.broadcast({
-          type: "voice.wake",
-          phrase,
-          score,
-          engine,
-          timestamp: Date.now(),
-        } as any);
-        json(200, { ok: true });
-      } catch (err) {
-        json(400, { error: String(err instanceof Error ? err.message : err) });
-      }
-      return;
-    }
-
-    json(404, { error: { code: "NOT_FOUND", message: "Route not found" } });
-  }
-
   private startSiriBridge(): void {
     const runtime = loadLlmRuntimeConfig();
     const siri = runtime.voice?.siri;
@@ -874,8 +329,8 @@ export class OmniStateGateway {
     }
 
     const host = endpoint.hostname || "127.0.0.1";
-    const envPort = Number(process.env.OMNISTATE_SIRI_BRIDGE_PORT);
-    const port = Number.isInteger(envPort) && envPort > 0 ? envPort : Number(endpoint.port || "19801");
+    const portOverride = process.env.OMNISTATE_SIRI_BRIDGE_PORT ? Number(process.env.OMNISTATE_SIRI_BRIDGE_PORT) : NaN;
+    const port = Number.isFinite(portOverride) ? portOverride : Number(endpoint.port || "19801");
     const path = endpoint.pathname && endpoint.pathname !== "/" ? endpoint.pathname : "/siri/command";
 
     const server = createServer((req, res) => {
@@ -1159,35 +614,6 @@ export class OmniStateGateway {
       }
       return;
     }
-    // POST /api/tts/preview — synthesize text to MP3 using Edge TTS
-    if (req.method === "POST" && requestPath === "/api/tts/preview") {
-      if (!isLocalRequest) { jsonResponse(res, 403, { error: "Only local requests are allowed" }); return; }
-      const body = await parseBody(req);
-      const text = String(body?.text ?? "").trim();
-      const voiceOverride = body?.voice ? String(body.voice) : undefined;
-
-      if (!text) {
-        jsonResponse(res, 400, { error: { code: "MISSING_TEXT", message: "Missing text" } });
-        return;
-      }
-      if (text.length > 500) {
-        jsonResponse(res, 400, { error: { code: "TEXT_TOO_LONG", message: "text must be ≤ 500 characters" } });
-        return;
-      }
-
-      try {
-        const lang = edgeTtsDetectLanguage(text);
-        const ttsCfg = loadLlmRuntimeConfig().voice;
-        const voice = voiceOverride ?? edgeTtsPickVoice(lang, ttsCfg);
-        const audioBuf = await edgeTtsSynthesize(text, { voice, lang });
-        applyCorsHeaders(res, origin);
-        applySecurityHeaders(res);
-        jsonResponse(res, 200, { audio: audioBuf.toString("base64"), voice });
-      } catch (err: any) {
-        jsonResponse(res, 500, { error: { code: "TTS_FAILED", message: err?.message ?? String(err) } });
-      }
-      return;
-    }
 
     if (req.method === "GET" && (requestPath === "/api/files/read" || requestPath === "/files/read")) {
       if (!isLocalRequest) {
@@ -1400,6 +826,66 @@ export class OmniStateGateway {
       return;
     }
 
+    // GET /api/events — recent events from event bus
+    if (req.method === "GET" && requestPath === "/api/events") {
+      const urlObj = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      const limitRaw = parseInt(urlObj.searchParams.get("limit") ?? "100", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 100;
+      const type = urlObj.searchParams.get("type") ?? undefined;
+      const events = this.eventBus.getRecent({ limit, type });
+      jsonResponse(res, 200, { events });
+      return;
+    }
+
+    // GET /api/events/rules — list rules
+    if (req.method === "GET" && requestPath === "/api/events/rules") {
+      jsonResponse(res, 200, { rules: this.ruleEngine.listRules() });
+      return;
+    }
+
+    // POST /api/events/rules — add rule
+    if (req.method === "POST" && requestPath === "/api/events/rules") {
+      try {
+        const body = await parseBody(req);
+        const name = String(body?.name ?? "").trim();
+        const eventPattern = String(body?.eventPattern ?? "").trim();
+        if (!name || !eventPattern) {
+          jsonResponse(res, 400, { error: { code: "VALIDATION_ERROR", message: "name and eventPattern are required" } });
+          return;
+        }
+        const rule = this.ruleEngine.addRule({
+          name,
+          eventPattern,
+          condition: body?.condition ? String(body.condition) : undefined,
+          action: body?.action ?? { type: "notify", config: {} },
+          enabled: body?.enabled !== false,
+        });
+        jsonResponse(res, 201, { rule });
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: { code: "BAD_REQUEST", message: err?.message ?? "Bad request" } });
+      }
+      return;
+    }
+
+    // POST /api/events/rules/:id/toggle — toggle rule
+    const toggleMatch = requestPath.match(/^\/api\/events\/rules\/([^/]+)\/toggle$/);
+    if (req.method === "POST" && toggleMatch) {
+      try {
+        const ruleId = toggleMatch[1];
+        const body = await parseBody(req);
+        const enabled = Boolean(body?.enabled ?? true);
+        const rule = this.ruleEngine.toggleRule(ruleId, enabled);
+        if (!rule) {
+          jsonResponse(res, 404, { error: { code: "NOT_FOUND", message: "Rule not found" } });
+          return;
+        }
+        jsonResponse(res, 200, { rule });
+      } catch (err: any) {
+        jsonResponse(res, 400, { error: { code: "BAD_REQUEST", message: err?.message ?? "Bad request" } });
+      }
+      return;
+    }
+
     if (req.method === "GET" && requestPath === "/latency/benchmark") {
       if (!isLocalRequest) {
         json(403, { ok: false, error: "Only local requests are allowed" });
@@ -1425,8 +911,49 @@ export class OmniStateGateway {
       return;
     }
 
+    if (req.method === "POST" && requestPath === "/api/tts/preview") {
+      const rawChunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        req.on("data", (chunk) => rawChunks.push(Buffer.from(chunk)));
+        req.on("end", () => resolve());
+        req.on("aborted", () => reject(new Error("Request aborted")));
+        req.on("error", (err) => reject(err));
+      }).catch((err) => {
+        json(400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      });
+      if (res.writableEnded) return;
+
+      let ttsBody: { text?: string } = {};
+      try {
+        ttsBody = JSON.parse(Buffer.concat(rawChunks).toString("utf-8"));
+      } catch {
+        json(400, { error: { code: "INVALID_JSON", message: "Invalid JSON body" } });
+        return;
+      }
+
+      const text = ttsBody.text;
+      if (!text) {
+        json(400, { error: { code: "MISSING_TEXT", message: "text is required" } });
+        return;
+      }
+      if (text.length > 500) {
+        json(400, { error: { code: "TEXT_TOO_LONG", message: "text exceeds 500 characters" } });
+        return;
+      }
+
+      try {
+        const { synthesize, detectLanguage, pickVoice } = await import("../voice/edge-tts.js");
+        const voiceName = pickVoice(detectLanguage(text));
+        const result = await synthesize(text, { voice: voiceName });
+        json(200, { audio: result.toString("base64"), voice: voiceName });
+      } catch (err) {
+        json(500, { error: { code: "TTS_FAILED", message: err instanceof Error ? err.message : String(err) } });
+      }
+      return;
+    }
+
     if (req.method !== "POST") {
-      json(404, { ok: false, error: "Not found" });
+      json(404, { ok: false, error: { code: "NOT_FOUND", message: "Not found" } });
       return;
     }
 
@@ -1548,7 +1075,7 @@ export class OmniStateGateway {
           if (requestPath === "/voice/enroll") {
             const userId = (body.userId ?? "owner").trim();
             const displayName = (body.displayName ?? userId).trim();
-            const threshold = Math.min(0.95, Math.max(0.5, typeof body.threshold === "number" ? body.threshold : 0.85));
+            const threshold = typeof body.threshold === "number" ? body.threshold : 0.85;
 
             const { stdout } = await execFileAsync(pythonBin, [
               speechbrainScriptPath,
@@ -1641,19 +1168,9 @@ export class OmniStateGateway {
 
     wsConnectionsGauge.inc();
 
-    ws.on("message", (raw, isBinary) => {
-      if (isBinary) {
-        const client = this.clients.get(clientId);
-        const sessionId = (client as any)._activeStreamSession as string | undefined;
-        if (sessionId) {
-          this.voiceStreamManager.handleBinaryFrame(clientId, raw as Buffer, (msg) => {
-            this.safeSend(ws, msg as unknown as ServerMessage);
-          });
-        }
-        return;
-      }
+    ws.on("message", (raw) => {
       try {
-        const msg: ClientMessage = JSON.parse((raw as Buffer).toString());
+        const msg: ClientMessage = JSON.parse(raw.toString());
         this.handleMessage(clientId, ws, msg, remoteIp, isLocalhost).catch((err) => {
           ws.send(
             JSON.stringify({
@@ -1682,9 +1199,6 @@ export class OmniStateGateway {
 
     ws.on("close", () => {
       clearInterval(pingInterval);
-      const userId = this.clients.get(clientId)?.userId;
-      if (userId) cleanupEnrollSession(userId);
-      this.voiceStreamManager.dropSession(clientId);
       this.clients.delete(clientId);
       wsConnectionsGauge.dec();
     });
@@ -1724,7 +1238,10 @@ export class OmniStateGateway {
             "system.dashboard",
             "history.query",
             "runtime.config",
+            "voice.transcribe",
             "voice.stream",
+            "voice.session.cancel",
+            "task.cancel",
             "triggers",
             "fleet",
             "llm.preflight",
@@ -1759,6 +1276,68 @@ export class OmniStateGateway {
           payload: state.payload,
           updatedAt: state.updatedAt,
         } as ServerMessage);
+        break;
+      }
+
+      case "event.ingest": {
+        try {
+          const event = this.eventRepository.ingest(msg);
+          const reply: ServerMessage = { type: "event.ingested", event };
+          this.broadcast(reply);
+          await this.triggerEngine.evaluateEvent(event);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Invalid event ingest request" });
+        }
+        break;
+      }
+
+      case "event.query": {
+        try {
+          const events = this.eventRepository.query(msg);
+          this.safeSend(ws, { type: "event.query.result", events } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Event query failed" });
+        }
+        break;
+      }
+
+      case "event.get": {
+        try {
+          const event = this.eventRepository.get(msg.id);
+          this.safeSend(ws, { type: "event.detail", event } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Event lookup failed" });
+        }
+        break;
+      }
+
+      case "memory.record.upsert": {
+        try {
+          const record = this.memoryRepository.upsert(msg);
+          this.safeSend(ws, { type: "memory.record.saved", record } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Invalid memory record request" });
+        }
+        break;
+      }
+
+      case "memory.record.query": {
+        try {
+          const records = this.memoryRepository.query(msg);
+          this.safeSend(ws, { type: "memory.record.query.result", records } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Memory record query failed" });
+        }
+        break;
+      }
+
+      case "memory.record.delete": {
+        try {
+          const deleted = this.memoryRepository.delete(msg);
+          this.safeSend(ws, { type: "memory.record.deleted", id: msg.id, deleted } as ServerMessage);
+        } catch {
+          this.safeSend(ws, { type: "error", message: "Memory record delete failed" });
+        }
         break;
       }
 
@@ -1851,24 +1430,6 @@ export class OmniStateGateway {
             });
             if (this.taskHistory.length > 100) this.taskHistory.pop();
             incrementSessionUsage();
-
-            // Emit Edge TTS audio if provider is "edge" (default)
-            const ttsRuntime = loadLlmRuntimeConfig();
-            if (llm.text && (ttsRuntime.voice.tts?.provider ?? "edge") === "edge") {
-              edgeTtsSynthesize(llm.text).then((audioBuf) => {
-                this.safeSend(ws, {
-                  type: "voice.tts.chunk",
-                  sessionId: taskId,
-                  seq: 0,
-                  audio: audioBuf.toString("base64"),
-                  mime: "audio/mpeg",
-                  eos: true,
-                } as ServerMessage);
-              }).catch((ttsErr) => {
-                logger.warn({ err: ttsErr }, "[OmniState] Edge TTS synthesis failed");
-              });
-            }
-
             return;
           } catch (err) {
             const fallback = this.fallbackUserFacingOutput(taskGoal, "system-query") ?? "Mình đã nhận câu hỏi, nhưng hiện tại chưa lấy được câu trả lời từ model.";
@@ -1910,74 +1471,83 @@ export class OmniStateGateway {
         break;
       }
 
-      case "voice.wake.enable": {
-        const { enabled } = msg;
-        const savedConfig = setWakeField("enabled", Boolean(enabled));
-        const runtime = loadLlmRuntimeConfig();
-        if (enabled) {
-          this.wakeManager.start({
-            config: savedConfig.voice.wake,
-            endpoint: runtime.voice.siri.endpoint,
-            token: runtime.voice.siri.token,
-          });
-        } else {
-          this.wakeManager.stop();
+      case "voice.transcribe": {
+        const { id, audio } = msg;
+        try {
+          const sessionId = id;
+          this.voiceSessions.start({ sessionId, send: (m) => this.safeSend(ws, m) });
+          this.voiceSessions.appendChunk(sessionId, Buffer.from(audio, "base64"));
+          const result = await this.voiceSessions.finalize(sessionId);
+
+          if (result.text) {
+            this.safeSend(ws, { type: "voice.transcript", id, text: result.text });
+            const voice = loadLlmRuntimeConfig().voice;
+            const shouldAutoExecute = voice.autoExecuteTranscript && !(voice.siri.enabled && voice.siri.mode === "handoff");
+            if (shouldAutoExecute) {
+              const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
+              this.voiceSessions.setTask(sessionId, voiceTaskId);
+              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: result.text });
+              this.executeTaskPipeline(voiceTaskId, result.text, undefined, ws).catch((err) => {
+                this.safeSend(ws, { type: "task.error", taskId: voiceTaskId, error: err instanceof Error ? err.message : String(err) });
+              });
+            }
+          } else {
+            this.safeSend(ws, { type: "voice.error", id, error: "Could not transcribe audio" });
+          }
+        } catch (err: any) {
+          this.safeSend(ws, { type: "voice.error", id, error: err instanceof Error ? err.message : String(err) });
         }
         break;
       }
 
       case "voice.stream.start": {
-        const { sessionId } = msg;
-        // Track the active stream session ID on the client entry for binary frame routing
-        const clientEntry = this.clients.get(clientId);
-        if (clientEntry) (clientEntry as any)._activeStreamSession = sessionId;
+        this.voiceSessions.start({
+          sessionId: msg.sessionId,
+          source: msg.source ?? "voice",
+          send: (m) => this.safeSend(ws, m),
+          autoExecute: msg.autoExecute,
+          includeContext: msg.includeContext,
+        });
+        break;
+      }
 
-        // Single intercept send: forward all stream messages, and on `final`
-        // transcripts auto-execute the task pipeline if configured.
-        const interceptSend = (streamMsg: any) => {
-          this.safeSend(ws, streamMsg as unknown as ServerMessage);
-          if (streamMsg.type === "voice.stream.result" && streamMsg.kind === "final" && streamMsg.text) {
-            const voice = loadLlmRuntimeConfig().voice;
-            const shouldAutoExecute =
-              voice.autoExecuteTranscript &&
-              !(voice.siri.enabled && voice.siri.mode === "handoff");
-            if (shouldAutoExecute) {
-              const voiceTaskId = `voice-${sessionId}-${crypto.randomUUID()}`;
-              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: streamMsg.text });
-              this.executeTaskPipeline(voiceTaskId, streamMsg.text, undefined, ws).catch((err) => {
-                this.safeSend(ws, {
-                  type: "task.error",
-                  taskId: voiceTaskId,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            }
-          }
-        };
-        this.voiceStreamManager.handleControlMessage(
-          clientId,
-          { type: "voice.stream.start", sessionId, mimeType: "audio/pcm", sampleRate: msg.sampleRate ?? 16000 },
-          interceptSend,
-          this.clients.get(clientId)?.userId ?? undefined,
-        );
+      case "voice.stream.chunk": {
+        try {
+          this.voiceSessions.appendChunk(msg.sessionId, Buffer.from(msg.audio, "base64"));
+        } catch (err) {
+          this.safeSend(ws, { type: "voice.stream.error", sessionId: msg.sessionId, error: err instanceof Error ? err.message : String(err) });
+        }
         break;
       }
 
       case "voice.stream.stop": {
-        const { sessionId } = msg;
-        const clientEntry = this.clients.get(clientId);
-        if (clientEntry) delete (clientEntry as any)._activeStreamSession;
-        this.voiceStreamManager.handleControlMessage(
-          clientId,
-          { type: "voice.stream.stop", sessionId },
-          (streamMsg) => this.safeSend(ws, streamMsg as unknown as ServerMessage),
-        );
+        try {
+          const result = await this.voiceSessions.finalize(msg.sessionId, { autoExecute: msg.autoExecute, includeContext: msg.includeContext });
+          const session = this.voiceSessions.get(msg.sessionId);
+          const shouldAutoExecute = msg.autoExecute ?? session?.autoExecute ?? loadLlmRuntimeConfig().voice.autoExecuteTranscript;
+          if (result.text && shouldAutoExecute) {
+            const voiceTaskId = `voice-${msg.sessionId}-${crypto.randomUUID()}`;
+            this.voiceSessions.setTask(msg.sessionId, voiceTaskId);
+            this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: result.text });
+            this.executeTaskPipeline(voiceTaskId, result.text, undefined, ws).catch((err) => {
+              this.safeSend(ws, { type: "task.error", taskId: voiceTaskId, error: err instanceof Error ? err.message : String(err) });
+            });
+          }
+        } catch (err) {
+          this.safeSend(ws, { type: "voice.stream.error", sessionId: msg.sessionId, error: err instanceof Error ? err.message : String(err) });
+        }
         break;
       }
 
-      case "tts.cancel": {
-        const client = this.clients.get(clientId);
-        client?.ttsAbort?.abort();
+      case "voice.session.cancel": {
+        const taskId = this.voiceSessions.cancel(msg.sessionId);
+        if (taskId) this.cancellationRegistry.cancel(taskId);
+        break;
+      }
+
+      case "task.cancel": {
+        this.cancellationRegistry.cancel(msg.taskId);
+        this.safeSend(ws, { type: "task.cancelled", taskId: msg.taskId, reason: "requested" });
         break;
       }
 
@@ -2083,7 +1653,6 @@ export class OmniStateGateway {
           this.monitor.runCheck().then((report) => {
             const reply: ServerMessage = {
               type: "health.report",
-              status: report.overall,
               overall: report.overall,
               timestamp: report.timestamp,
               sensors: report.sensors as Record<string, { status: string; value: number; unit: string; message?: string }>,
@@ -2094,14 +1663,7 @@ export class OmniStateGateway {
             this.safeSend(ws, { type: "error", message: "Health check failed" });
           });
         } else {
-          this.safeSend(ws, {
-            type: "health.report",
-            status: "unknown",
-            overall: "unknown",
-            timestamp: new Date().toISOString(),
-            sensors: {},
-            alerts: [],
-          } as ServerMessage);
+          this.safeSend(ws, { type: "error", message: "Health monitor not available" });
         }
         break;
       }
@@ -2155,11 +1717,6 @@ export class OmniStateGateway {
               handled = true;
               config = updateActiveProviderField("apiKey", String(msg.value));
               break;
-            case "voice.whisperLocalModel":
-              handled = true;
-              config = setWhisperLocalModel(String(msg.value) as import("../llm/runtime-config.js").WhisperLocalModel);
-              whisperLocalClient.setModel(config.voice.whisperLocalModel);
-              break;
             case "voice.lowLatency":
               handled = true;
               config = setVoiceField("lowLatency", Boolean(msg.value));
@@ -2171,15 +1728,6 @@ export class OmniStateGateway {
             case "voice.wake.enabled":
               handled = true;
               config = setWakeField("enabled", Boolean(msg.value));
-              if (Boolean(msg.value)) {
-                this.wakeManager.start({
-                  config: config.voice.wake,
-                  endpoint: config.voice.siri.endpoint,
-                  token: config.voice.siri.token,
-                });
-              } else {
-                this.wakeManager.stop();
-              }
               break;
             case "voice.wake.phrase":
               handled = true;
@@ -2451,24 +1999,52 @@ export class OmniStateGateway {
         break;
       }
 
-      case "tools.list": {
-        const { TOOLS: toolDefs } = await import("../llm/tools.js");
-        const { intentRegistry: registry } = await import("../intents/index.js");
-        const tools = toolDefs.map((t: { name: string; description: string }) => ({
-          name: t.name,
-          description: t.description,
-          group: t.name.split(".")[0] ?? "other",
+      case "events.query": {
+        const events = this.eventBus.getRecent({
+          type: (msg as import("./protocol.js").EventsQueryMessage).eventType,
+          limit: (msg as import("./protocol.js").EventsQueryMessage).limit,
+          since: (msg as import("./protocol.js").EventsQueryMessage).since,
+        });
+        this.safeSend(ws, { type: "events.list", events } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.list": {
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id,
+          name: r.name,
+          eventPattern: r.eventPattern,
+          condition: r.condition,
+          action: r.action,
+          enabled: r.enabled,
         }));
-        const allKeys = [...(registry as any).handlers.keys()] as string[];
-        const skills = allKeys.map((k: string) => ({
-          name: k,
-          group: k.split(".")[0] ?? "other",
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.add": {
+        const addMsg = msg as import("./protocol.js").EventRuleAddMessage;
+        this.ruleEngine.addRule({
+          name: addMsg.name,
+          eventPattern: addMsg.eventPattern,
+          condition: addMsg.condition,
+          action: addMsg.action as import("../events/rule-engine.js").EventRule["action"],
+          enabled: true,
+        });
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id, name: r.name, eventPattern: r.eventPattern, condition: r.condition, action: r.action, enabled: r.enabled,
         }));
-        this.safeSend(ws, {
-          type: "tools.report",
-          tools,
-          skills,
-        } as unknown as ServerMessage);
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
+        break;
+      }
+
+      case "events.rules.toggle": {
+        const toggleMsg = msg as import("./protocol.js").EventRuleToggleMessage;
+        this.ruleEngine.toggleRule(toggleMsg.ruleId, toggleMsg.enabled);
+        const rules = this.ruleEngine.listRules().map((r) => ({
+          id: r.id, name: r.name, eventPattern: r.eventPattern, condition: r.condition, action: r.action, enabled: r.enabled,
+        }));
+        this.safeSend(ws, { type: "events.rules.result", rules } as import("./protocol.js").ServerMessage);
         break;
       }
 
@@ -2494,16 +2070,22 @@ export class OmniStateGateway {
     ws?: WebSocket
   ): Promise<void> {
     const startMs = Date.now();
+    this.cancellationRegistry.create(taskId);
 
-    // 1. Classify intent
-    const intent = await classifyIntent(goal);
+    try {
+      this.cancellationRegistry.throwIfCancelled(taskId);
 
-    // 2. Build plan from intent
-    let plan = await planFromIntent(intent);
-    plan = { ...plan, taskId };
+      // 1. Classify intent
+      const intent = await classifyIntent(goal);
+      this.cancellationRegistry.throwIfCancelled(taskId);
 
-    // 3. Optimize plan
-    plan = optimizePlan(plan);
+      // 2. Build plan from intent
+      let plan = await planFromIntent(intent);
+      plan = { ...plan, taskId };
+      this.cancellationRegistry.throwIfCancelled(taskId);
+
+      // 3. Optimize plan
+      plan = optimizePlan(plan);
 
     // 4. Execute plan — stream step updates
     const totalSteps = plan.nodes.length;
@@ -2511,6 +2093,7 @@ export class OmniStateGateway {
     const allStepData: Record<string, unknown>[] = [];
 
     for (const node of plan.nodes) {
+      this.cancellationRegistry.throwIfCancelled(taskId);
       stepNum++;
       const resolvedLayer = node.layer === "auto" ? "deep" : node.layer;
 
@@ -2526,6 +2109,7 @@ export class OmniStateGateway {
       // Execute via orchestrator (single-node plan for streaming)
       const singlePlan = { ...plan, nodes: [node] };
       const result = await this.orchestrator.executePlan(singlePlan);
+      this.cancellationRegistry.throwIfCancelled(taskId);
       const stepData = result.stepResults?.[0]?.data ?? {};
 
       if (result.status === "failed") {
@@ -2612,6 +2196,15 @@ export class OmniStateGateway {
     if (this.taskHistory.length > 100) this.taskHistory.pop();
 
     incrementSessionUsage();
+    } catch (err) {
+      if (err instanceof TaskCancelledError) {
+        this.safeSend(ws, { type: "task.cancelled", taskId, reason: "cancelled" } as ServerMessage);
+        return;
+      }
+      throw err;
+    } finally {
+      this.cancellationRegistry.complete(taskId);
+    }
   }
 
   private extractUserFacingTexts(stepData: Record<string, unknown>): string[] {

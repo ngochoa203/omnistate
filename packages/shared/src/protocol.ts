@@ -5,6 +5,12 @@ export type ClientRole = "cli" | "ui" | "remote" | "fleet-agent";
 
 /** Messages sent from client to gateway. */
 export type ClientMessage =
+  | { type: "event.ingest"; id?: string; source: string; kind: string; severity?: EventSeverity; title: string; body?: string; tags?: string[]; metadata?: Record<string, unknown>; occurredAt?: string }
+  | { type: "event.query"; source?: string; kind?: string; severity?: EventSeverity; tagsAny?: string[]; text?: string; before?: string; limit?: number }
+  | { type: "event.get"; id: string }
+  | { type: "memory.record.upsert"; id?: string; scope?: MemoryRecord["scope"]; conversationId?: string; title: string; content: string; tags?: string[]; metadata?: Record<string, unknown> }
+  | { type: "memory.record.query"; scope?: MemoryRecord["scope"]; conversationId?: string; tagsAny?: string[]; text?: string; before?: string; limit?: number }
+  | { type: "memory.record.delete"; id: string }
   | ConnectMessage
   | TaskMessage
   | ClaudeMemQueryMessage
@@ -19,6 +25,11 @@ export type ClientMessage =
   | StatusQueryMessage
   | AdminShutdownMessage
   | VoiceTranscribeMessage
+  | VoiceStreamStartMessage
+  | VoiceStreamChunkMessage
+  | VoiceStreamStopMessage
+  | VoiceSessionCancelMessage
+  | TaskCancelMessage
   | VibeVoiceStartMessage
   | VibeVoiceChunkMessage
   | VibeVoiceEndMessage
@@ -27,17 +38,7 @@ export type ClientMessage =
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage
-  | VoiceEnrollStartMessage
-  | VoiceEnrollSampleMessage
-  | VoiceEnrollFinalizeMessage
-  | VoiceEnrollCancelMessage
-  | VoiceWakeEnableMessage;
-
-export interface VoiceWakeEnableMessage {
-  type: "voice.wake.enable";
-  enabled: boolean;
-}
+  | PermissionStopMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -123,6 +124,36 @@ export interface OpenClawTaskMessage {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+export type EventSeverity = "debug" | "info" | "warning" | "error" | "critical";
+
+export interface EventRecord {
+  id: string;
+  source: string;
+  kind: string;
+  severity: EventSeverity;
+  title: string;
+  body: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface MemoryRecord {
+  id: string;
+  scope: "global" | "conversation" | "user";
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HistoryQueryMessage {
   type: "history.query";
   limit?: number;
@@ -204,6 +235,41 @@ export interface VoiceTranscribeMessage {
   format?: string;
 }
 
+export type VoiceState = "idle" | "wake-listening" | "wake-detected" | "recording" | "transcribing" | "thinking" | "executing" | "speaking" | "interrupted" | "error";
+
+export interface VoiceStreamStartMessage {
+  type: "voice.stream.start";
+  sessionId: string;
+  source?: "voice" | "wake" | "siri-handoff";
+  mimeType?: string;
+  sampleRate?: number;
+  autoExecute?: boolean;
+  includeContext?: boolean;
+}
+
+export interface VoiceStreamChunkMessage {
+  type: "voice.stream.chunk";
+  sessionId: string;
+  audio: string;
+}
+
+export interface VoiceStreamStopMessage {
+  type: "voice.stream.stop";
+  sessionId: string;
+  autoExecute?: boolean;
+  includeContext?: boolean;
+}
+
+export interface VoiceSessionCancelMessage {
+  type: "voice.session.cancel";
+  sessionId: string;
+}
+
+export interface TaskCancelMessage {
+  type: "task.cancel";
+  taskId: string;
+}
+
 export interface VibeVoiceStartMessage {
   type: "vibevoice.start";
   sessionId: string;
@@ -255,34 +321,16 @@ export interface PermissionStopMessage {
   type: "permission.stop";
 }
 
-// ── Voice Enrollment (client → gateway) ──────────────────────────────────────
-
-export interface VoiceEnrollStartMessage {
-  type: "voice.enroll.start";
-  userId: string;
-}
-
-export interface VoiceEnrollSampleMessage {
-  type: "voice.enroll.sample";
-  audio: string;
-  format: string;
-  phraseIndex: number;
-}
-
-export interface VoiceEnrollFinalizeMessage {
-  type: "voice.enroll.finalize";
-  userId: string;
-}
-
-export interface VoiceEnrollCancelMessage {
-  type: "voice.enroll.cancel";
-  userId: string;
-}
-
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
 export type ServerMessage =
+  | { type: "event.ingested"; event: EventRecord }
+  | { type: "event.query.result"; events: EventRecord[] }
+  | { type: "event.detail"; event: EventRecord | null }
+  | { type: "memory.record.saved"; record: MemoryRecord }
+  | { type: "memory.record.query.result"; records: MemoryRecord[] }
+  | { type: "memory.record.deleted"; id: string; deleted: boolean }
   | ConnectedMessage
   | ClaudeMemStateMessage
   | ClaudeMemAckMessage
@@ -303,26 +351,19 @@ export type ServerMessage =
   | StatusReplyMessage
   | VoiceTranscriptMessage
   | VoiceErrorMessage
+  | VoiceStateMessage
+  | VoiceTranscriptPartialMessage
+  | VoiceTranscriptFinalMessage
+  | VoiceContextMessage
+  | VoiceStreamErrorMessage
+  | TaskCancelledMessage
   | VibeVoicePartialMessage
   | VibeVoiceTranscriptMessage
   | VibeVoiceErrorMessage
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage
-  | VoiceEnrollReadyMessage
-  | VoiceEnrollProgressMessage
-  | VoiceEnrollDoneMessage
-  | VoiceEnrollErrorMessage
-  | VoiceTtsAudioMessage
-  | VoiceSpeakerMismatchMessage
-  | TtsEndMessage;
-
-export interface TtsEndMessage {
-  type: "tts.end";
-  taskId?: string;
-  timestamp: string;
-}
+  | PermissionStatusMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -459,6 +500,48 @@ export interface VoiceErrorMessage {
   error: string;
 }
 
+export interface VoiceStateMessage {
+  type: "voice.state";
+  sessionId?: string;
+  state: VoiceState;
+  source?: string;
+  taskId?: string;
+  error?: string;
+}
+
+export interface VoiceTranscriptPartialMessage {
+  type: "voice.transcript.partial";
+  sessionId: string;
+  text: string;
+  provider?: string;
+}
+
+export interface VoiceTranscriptFinalMessage {
+  type: "voice.transcript.final";
+  sessionId: string;
+  text: string;
+  provider?: string;
+  taskId?: string;
+}
+
+export interface VoiceContextMessage {
+  type: "voice.context";
+  sessionId: string;
+  context: unknown;
+}
+
+export interface VoiceStreamErrorMessage {
+  type: "voice.stream.error";
+  sessionId: string;
+  error: string;
+}
+
+export interface TaskCancelledMessage {
+  type: "task.cancelled";
+  taskId: string;
+  reason?: string;
+}
+
 export interface VibeVoicePartialMessage {
   type: "vibevoice.partial";
   sessionId: string;
@@ -515,53 +598,6 @@ export interface PermissionStatusMessage {
   type: "permission.status";
   /** Whether the auto-responder is currently polling. */
   running: boolean;
-}
-
-// ── Voice Enrollment (gateway → client) ──────────────────────────────────────
-
-export interface VoiceEnrollReadyMessage {
-  type: "voice.enroll.ready";
-  phraseIndex: number;
-  prompt: string;
-}
-
-export interface VoiceEnrollProgressMessage {
-  type: "voice.enroll.progress";
-  accepted: boolean;
-  phraseIndex: number;
-  reason?: string;
-}
-
-export interface VoiceEnrollDoneMessage {
-  type: "voice.enroll.done";
-  userId: string;
-  sampleCount: number;
-}
-
-export interface VoiceEnrollErrorMessage {
-  type: "voice.enroll.error";
-  code: string;
-  message: string;
-}
-
-export interface VoiceTtsAudioMessage {
-  type: "voice.tts.audio";
-  taskId?: string;
-  audio: string;       // base64-encoded MP3
-  format: "mp3";
-  lang: "vi" | "en";
-  voice?: string;      // TTS voice identifier (e.g. "vi-VN-HoaiMyNeural")
-  text?: string;       // spoken text for subtitle/transcript display
-}
-
-// ── Voice Speaker Verification (gateway → client) ─────────────────────────────
-
-export interface VoiceSpeakerMismatchMessage {
-  type: "voice.speaker.mismatch";
-  sessionId: string;
-  userId: string;
-  score: number;
-  threshold: number;
 }
 
 // ─── Shared supporting types ─────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from "./protocol";
+import type { ClientMessage, EventRecord, EventSeverity, MemoryRecord, ServerMessage } from "./protocol";
 import type { ClaudeMemPayload } from "./protocol";
 import type { TaskAttachment } from "./protocol";
 import { useAuthStore } from "./auth-store";
@@ -127,15 +127,7 @@ export class GatewayClient {
       | "voice.siri.mode"
       | "voice.siri.shortcutName"
       | "voice.siri.endpoint"
-      | "voice.siri.token"
-      | "tts.provider"
-      | "tts.voiceVi"
-      | "tts.voiceEn"
-      | "speakerVerification.enabled"
-      | "speakerVerification.threshold"
-      | "speakerVerification.onMismatch"
-      | "voice.sttProvider"
-      | "voice.whisperLocalModel",
+      | "voice.siri.token",
     value: string | boolean | number,
   ): void {
     this.send({ type: "runtime.config.set", key, value } as ClientMessage);
@@ -164,11 +156,34 @@ export class GatewayClient {
 
   sendVoice(audioBase64: string, id?: string): void {
     const msgId = id || `voice-${Date.now()}`;
-    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64, language: "vi" } as ClientMessage);
+    this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64 } as ClientMessage);
   }
 
-  enableWakeListener(enabled: boolean): void {
-    this.send({ type: "voice.wake.enable", enabled } as unknown as ClientMessage);
+  startVoiceStream(options: { sessionId?: string; mimeType?: string; sampleRate?: number } = {}): string {
+    const sessionId = options.sessionId || `voice-${Date.now()}`;
+    this.send({
+      type: "voice.stream.start",
+      sessionId,
+      mimeType: options.mimeType,
+      sampleRate: options.sampleRate,
+    } as unknown as ClientMessage);
+    return sessionId;
+  }
+
+  sendVoiceChunk(sessionId: string, base64Chunk: string, seq: number): void {
+    this.send({ type: "voice.stream.chunk", sessionId, chunk: base64Chunk, seq } as unknown as ClientMessage);
+  }
+
+  stopVoiceStream(sessionId: string, reason?: string): void {
+    this.send({ type: "voice.stream.stop", sessionId, reason } as unknown as ClientMessage);
+  }
+
+  cancelVoiceSession(sessionId: string, reason?: string): void {
+    this.send({ type: "voice.session.cancel", sessionId, reason } as unknown as ClientMessage);
+  }
+
+  cancelTask(taskId: string, reason?: string): void {
+    this.send({ type: "task.cancel", taskId, reason } as unknown as ClientMessage);
   }
 
   requestSystemDashboard(id?: string): void {
@@ -176,8 +191,68 @@ export class GatewayClient {
     this.send({ type: "system.dashboard", id: msgId } as ClientMessage);
   }
 
-  requestToolsList(): void {
-    this.send({ type: "tools.list" } as any);
+  // Events API
+  ingestEvent(event: {
+    id?: string;
+    source: string;
+    kind: string;
+    severity?: EventSeverity;
+    title: string;
+    body?: string;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+    occurredAt?: string;
+  }): void {
+    this.send({ type: "event.ingest", ...event } as ClientMessage);
+  }
+
+  queryEvents(opts?: { source?: string; kind?: string; severity?: EventSeverity; tagsAny?: string[]; text?: string; before?: string; limit?: number }): void {
+    this.send({ type: "event.query", ...opts } as ClientMessage);
+  }
+
+  getEvent(id: string): void {
+    this.send({ type: "event.get", id } as ClientMessage);
+  }
+
+  upsertMemoryRecord(record: {
+    id?: string;
+    scope?: MemoryRecord["scope"];
+    conversationId?: string;
+    title: string;
+    content: string;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  }): void {
+    this.send({ type: "memory.record.upsert", ...record } as ClientMessage);
+  }
+
+  queryMemoryRecords(opts?: { scope?: MemoryRecord["scope"]; conversationId?: string; tagsAny?: string[]; text?: string; before?: string; limit?: number }): void {
+    this.send({ type: "memory.record.query", ...opts } as ClientMessage);
+  }
+
+  deleteMemoryRecord(id: string): void {
+    this.send({ type: "memory.record.delete", id } as ClientMessage);
+  }
+
+  queryEventRules(): void {
+    this.send({ type: "events.rules.list" } as unknown as ClientMessage);
+  }
+
+  addEventRule(rule: { name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> } }): void {
+    this.send({ type: "events.rules.add", ...rule } as unknown as ClientMessage);
+  }
+
+  toggleEventRule(ruleId: string, enabled: boolean): void {
+    this.send({ type: "events.rules.toggle", ruleId, enabled } as unknown as ClientMessage);
+  }
+
+  // Memory API
+  queryEpisodes(query?: string, limit?: number): void {
+    this.send({ type: "memory.episodes.query", query, limit } as unknown as ClientMessage);
+  }
+
+  queryKGEntities(query?: { type?: string; name?: string }): void {
+    this.send({ type: "memory.kg.query", ...query } as unknown as ClientMessage);
   }
 
   on(event: string, handler: EventHandler): () => void {

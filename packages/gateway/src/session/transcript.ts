@@ -9,16 +9,18 @@ import type { TranscriptEntry } from "../types/session.js";
  */
 export class TranscriptWriter {
   private filePath: string;
+  private traceId?: string;
 
-  constructor(transcriptDir: string, sessionId: string) {
+  constructor(transcriptDir: string, sessionId: string, traceId?: string) {
     this.filePath = `${transcriptDir}/${sessionId}.jsonl`;
+    this.traceId = traceId;
     const dir = dirname(this.filePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
   /** Append a single transcript entry. */
   write(entry: TranscriptEntry): void {
-    const line = JSON.stringify(entry) + "\n";
+    const line = JSON.stringify({ ...entry, ...(this.traceId ? { traceId: this.traceId } : {}) }) + "\n";
     appendFileSync(this.filePath, line);
   }
 

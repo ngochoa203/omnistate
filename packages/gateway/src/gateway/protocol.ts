@@ -7,6 +7,12 @@ export type ClientMessage =
   | TaskMessage
   | ClaudeMemQueryMessage
   | ClaudeMemSyncMessage
+  | EventIngestMessage
+  | EventQueryMessage
+  | EventGetMessage
+  | MemoryRecordUpsertMessage
+  | MemoryRecordQueryMessage
+  | MemoryRecordDeleteMessage
   | HistoryQueryMessage
   | HealthQueryMessage
   | LlmPreflightQueryMessage
@@ -15,9 +21,12 @@ export type ClientMessage =
   | RuntimeConfigUpsertProviderMessage
   | StatusQueryMessage
   | AdminShutdownMessage
+  | VoiceTranscribeMessage
   | VoiceStreamStartMessage
+  | VoiceStreamChunkMessage
   | VoiceStreamStopMessage
-  | TtsCancelMessage
+  | VoiceSessionCancelMessage
+  | TaskCancelMessage
   | VoiceEnrollMessage
   | VoiceVerifyMessage
   | SystemDashboardMessage
@@ -31,17 +40,10 @@ export type ClientMessage =
   | PermissionHistoryMessage
   | PermissionStartMessage
   | PermissionStopMessage
-  | VoiceWakeEnableMessage
-  | ToolsListMessage;
-
-export interface ToolsListMessage {
-  type: "tools.list";
-}
-
-export interface VoiceWakeEnableMessage {
-  type: "voice.wake.enable";
-  enabled: boolean;
-}
+  | EventsQueryMessage
+  | EventRulesListMessage
+  | EventRuleAddMessage
+  | EventRuleToggleMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -92,6 +94,93 @@ export interface ClaudeMemQueryMessage {
 export interface ClaudeMemSyncMessage {
   type: "claude.mem.sync";
   payload: ClaudeMemPayload;
+}
+
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+export type EventSeverity = "debug" | "info" | "warning" | "error" | "critical";
+
+export interface EventRecord {
+  id: string;
+  source: string;
+  kind: string;
+  severity: EventSeverity;
+  title: string;
+  body: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface EventIngestMessage {
+  type: "event.ingest";
+  id?: string;
+  source: string;
+  kind: string;
+  severity?: EventSeverity;
+  title: string;
+  body?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  occurredAt?: string;
+}
+
+export interface EventQueryMessage {
+  type: "event.query";
+  source?: string;
+  kind?: string;
+  severity?: EventSeverity;
+  tagsAny?: string[];
+  text?: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface EventGetMessage {
+  type: "event.get";
+  id: string;
+}
+
+// ── Durable Memory Records ───────────────────────────────────────────────────
+
+export interface MemoryRecord {
+  id: string;
+  scope: "global" | "conversation" | "user";
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryRecordUpsertMessage {
+  type: "memory.record.upsert";
+  id?: string;
+  scope?: MemoryRecord["scope"];
+  conversationId?: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryRecordQueryMessage {
+  type: "memory.record.query";
+  scope?: MemoryRecord["scope"];
+  conversationId?: string;
+  tagsAny?: string[];
+  text?: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface MemoryRecordDeleteMessage {
+  type: "memory.record.delete";
+  id: string;
 }
 
 export interface HistoryQueryMessage {
@@ -156,25 +245,31 @@ export interface AdminShutdownMessage {
   type: "admin.shutdown";
 }
 
-/** Begin a streaming voice session. Binary WS frames carrying PCM16 will be associated with this sessionId. */
+export interface VoiceTranscribeMessage {
+  type: "voice.transcribe";
+  id: string;
+  /** Base64-encoded audio data. */
+  audio: string;
+  /** Audio format hint (e.g. "wav", "mp3"). Defaults to "wav". */
+  format?: string;
+}
+
+export type VoiceState = "idle" | "wake-listening" | "wake-detected" | "recording" | "transcribing" | "thinking" | "executing" | "speaking" | "interrupted" | "error";
+
 export interface VoiceStreamStartMessage {
   type: "voice.stream.start";
   sessionId: string;
-  sampleRate: 16000;
-  codec: "pcm16";
+  source?: "voice" | "wake" | "siri-handoff";
+  mimeType?: string;
+  sampleRate?: number;
+  autoExecute?: boolean;
+  includeContext?: boolean;
 }
 
-/** End a streaming voice session; triggers final STT processing. */
-export interface VoiceStreamStopMessage {
-  type: "voice.stream.stop";
-  sessionId: string;
-}
-
-/** Cancel in-progress TTS playback for a session. */
-export interface TtsCancelMessage {
-  type: "tts.cancel";
-  sessionId: string;
-}
+export interface VoiceStreamChunkMessage { type: "voice.stream.chunk"; sessionId: string; audio: string; }
+export interface VoiceStreamStopMessage { type: "voice.stream.stop"; sessionId: string; autoExecute?: boolean; includeContext?: boolean; }
+export interface VoiceSessionCancelMessage { type: "voice.session.cancel"; sessionId: string; }
+export interface TaskCancelMessage { type: "task.cancel"; taskId: string; }
 
 export interface VoiceEnrollMessage {
   type: "voice.enroll";
@@ -215,6 +310,12 @@ export type ServerMessage =
   | StatusReplyMessage
   | VoiceTranscriptMessage
   | VoiceErrorMessage
+  | VoiceStateMessage
+  | VoiceTranscriptPartialMessage
+  | VoiceTranscriptFinalMessage
+  | VoiceContextMessage
+  | VoiceStreamErrorMessage
+  | TaskCancelledMessage
   | VoiceEnrollResultMessage
   | VoiceEnrollErrorMessage
   | VoiceVerifyResultMessage
@@ -223,8 +324,15 @@ export type ServerMessage =
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
   | PermissionStatusMessage
-  | VoiceTtsChunkMessage
-  | ToolsReportMessage;
+  | EventIngestedMessage
+  | EventQueryResultMessage
+  | EventDetailMessage
+  | MemoryRecordSavedMessage
+  | MemoryRecordQueryResultMessage
+  | MemoryRecordDeletedMessage
+  | EventsListMessage
+  | EventRulesListResultMessage
+  | EventBusStreamMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -271,18 +379,7 @@ export interface TaskVerifyMessage {
 export interface TaskCompleteMessage {
   type: "task.complete";
   taskId: string;
-  result: {
-    /** Primary output text (backward-compatible). */
-    output?: string;
-    /** Spoken response text for voice clients. Mirrors output when set from StructuredResponse. */
-    speak?: string;
-    /** Structured UI payload for rich clients. */
-    ui?: Record<string, unknown>;
-    /** Suggested follow-up prompts. */
-    followup?: string[];
-    /** Arbitrary additional data from the handler. */
-    [key: string]: unknown;
-  };
+  result: Record<string, unknown>;
 }
 
 export interface TaskErrorMessage {
@@ -362,18 +459,22 @@ export interface StatusReplyMessage {
 
 export interface VoiceTranscriptMessage {
   type: "voice.transcript";
-  sessionId: string;
-  kind: "partial" | "final";
+  id: string;
   text: string;
-  t0: number;
-  t1: number;
 }
 
 export interface VoiceErrorMessage {
   type: "voice.error";
-  sessionId: string;
+  id: string;
   error: string;
 }
+
+export interface VoiceStateMessage { type: "voice.state"; sessionId?: string; state: VoiceState; source?: string; taskId?: string; error?: string; }
+export interface VoiceTranscriptPartialMessage { type: "voice.transcript.partial"; sessionId: string; text: string; provider?: string; }
+export interface VoiceTranscriptFinalMessage { type: "voice.transcript.final"; sessionId: string; text: string; provider?: string; taskId?: string; }
+export interface VoiceContextMessage { type: "voice.context"; sessionId: string; context: unknown; }
+export interface VoiceStreamErrorMessage { type: "voice.stream.error"; sessionId: string; error: string; }
+export interface TaskCancelledMessage { type: "task.cancelled"; taskId: string; reason?: string; }
 
 export interface VoiceEnrollResultMessage {
   type: "voice.enroll.result";
@@ -492,18 +593,46 @@ export interface PermissionStatusMessage {
   running: boolean;
 }
 
-/** Streaming TTS audio chunk from server to client (coordinates with TTS agent). */
-export interface VoiceTtsChunkMessage {
-  type: "voice.tts.chunk";
-  sessionId: string;
-  seq: number;
-  audio: string;  // base64-encoded audio
-  mime: string;
-  eos: boolean;
+export interface EventIngestedMessage {
+  type: "event.ingested";
+  event: EventRecord;
 }
 
-export interface ToolsReportMessage {
-  type: "tools.report";
-  tools: Array<{ name: string; description: string; group: string }>;
-  skills: Array<{ name: string; group: string }>;
+export interface EventQueryResultMessage {
+  type: "event.query.result";
+  events: EventRecord[];
 }
+
+export interface EventDetailMessage {
+  type: "event.detail";
+  event: EventRecord | null;
+}
+
+export interface MemoryRecordSavedMessage {
+  type: "memory.record.saved";
+  record: MemoryRecord;
+}
+
+export interface MemoryRecordQueryResultMessage {
+  type: "memory.record.query.result";
+  records: MemoryRecord[];
+}
+
+export interface MemoryRecordDeletedMessage {
+  type: "memory.record.deleted";
+  id: string;
+  deleted: boolean;
+}
+
+// ─── Event Bus Messages ───────────────────────────────────────────────────────
+
+// Client → gateway
+export interface EventsQueryMessage { type: "events.query"; limit?: number; since?: number; eventType?: string }
+export interface EventRulesListMessage { type: "events.rules.list" }
+export interface EventRuleAddMessage { type: "events.rules.add"; name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> } }
+export interface EventRuleToggleMessage { type: "events.rules.toggle"; ruleId: string; enabled: boolean }
+
+// Gateway → client
+export interface EventsListMessage { type: "events.list"; events: Array<{ id: string; type: string; source: string; payload: Record<string, unknown>; timestamp: number }> }
+export interface EventRulesListResultMessage { type: "events.rules.result"; rules: Array<{ id: string; name: string; eventPattern: string; condition?: string; action: { type: string; config: Record<string, unknown> }; enabled: boolean }> }
+export interface EventBusStreamMessage { type: "events.stream"; event: { id: string; type: string; source: string; payload: Record<string, unknown>; timestamp: number } }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { buildMemoryEntry, summarizeMemory } from "./session-memory";
-import type { ClaudeMemPayload } from "./protocol";
+import type { ClaudeMemPayload, EventRecord, MemoryRecord } from "./protocol";
 import { storageGetItem, storageSetItem } from "./native-storage";
 import type { AppLanguage } from "@omnistate/shared";
 
@@ -93,6 +93,13 @@ interface ChatStore {
     message: string;
     at: number;
   };
+  events: EventRecord[];
+  eventsLoading: boolean;
+  eventsError: string | null;
+  selectedEvent: EventRecord | null;
+  memoryRecords: MemoryRecord[];
+  memoryRecordsLoading: boolean;
+  memoryRecordsError: string | null;
   setAppLanguage: (lang: AppLanguage) => void;
   createConversation: (name?: string) => string;
   switchConversation: (id: string) => void;
@@ -117,6 +124,16 @@ interface ChatStore {
   setLlmPreflight: (info: ChatStore["llmPreflight"]) => void;
   setRuntimeConfig: (config: ChatStore["runtimeConfig"]) => void;
   setRuntimeConfigAck: (ack: ChatStore["runtimeConfigAck"]) => void;
+  setEventsLoading: (loading: boolean) => void;
+  setEventsError: (error: string | null) => void;
+  setEvents: (events: EventRecord[]) => void;
+  upsertEvent: (event: EventRecord) => void;
+  setSelectedEvent: (event: EventRecord | null) => void;
+  setMemoryRecordsLoading: (loading: boolean) => void;
+  setMemoryRecordsError: (error: string | null) => void;
+  setMemoryRecords: (records: MemoryRecord[]) => void;
+  upsertMemoryRecordLocal: (record: MemoryRecord) => void;
+  removeMemoryRecord: (id: string) => void;
 }
 
 let _id = 0;
@@ -312,6 +329,13 @@ export const useChatStore = create<ChatStore>((set) => ({
   llmPreflight: null,
   runtimeConfig: null,
   runtimeConfigAck: null,
+  events: [],
+  eventsLoading: false,
+  eventsError: null,
+  selectedEvent: null,
+  memoryRecords: [],
+  memoryRecordsLoading: false,
+  memoryRecordsError: null,
 
   setAppLanguage: (appLanguage) => {
     if (typeof window !== "undefined") {
@@ -629,6 +653,27 @@ export const useChatStore = create<ChatStore>((set) => ({
   setLlmPreflight: (llmPreflight) => set({ llmPreflight }),
   setRuntimeConfig: (runtimeConfig) => set({ runtimeConfig }),
   setRuntimeConfigAck: (runtimeConfigAck) => set({ runtimeConfigAck }),
+  setEventsLoading: (eventsLoading) => set({ eventsLoading }),
+  setEventsError: (eventsError) => set({ eventsError }),
+  setEvents: (events) => set({ events, eventsLoading: false, eventsError: null }),
+  upsertEvent: (event) => set((s) => ({
+    events: [event, ...s.events.filter((e) => e.id !== event.id)].slice(0, 100),
+    eventsLoading: false,
+    eventsError: null,
+  })),
+  setSelectedEvent: (selectedEvent) => set({ selectedEvent, eventsLoading: false }),
+  setMemoryRecordsLoading: (memoryRecordsLoading) => set({ memoryRecordsLoading }),
+  setMemoryRecordsError: (memoryRecordsError) => set({ memoryRecordsError }),
+  setMemoryRecords: (memoryRecords) => set({ memoryRecords, memoryRecordsLoading: false, memoryRecordsError: null }),
+  upsertMemoryRecordLocal: (record) => set((s) => ({
+    memoryRecords: [record, ...s.memoryRecords.filter((r) => r.id !== record.id)],
+    memoryRecordsLoading: false,
+    memoryRecordsError: null,
+  })),
+  removeMemoryRecord: (id) => set((s) => ({
+    memoryRecords: s.memoryRecords.filter((r) => r.id !== id),
+    memoryRecordsLoading: false,
+  })),
 }));
 
 if (typeof window !== "undefined") {

@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
-const rtvcTtsScriptPath = fileURLToPath(new URL("../../scripts/rtvc_tts.py", import.meta.url));
-const rtvcTrainScriptPath = fileURLToPath(new URL("../../scripts/rtvc_train.py", import.meta.url));
+const rtvcTtsScriptPath = resolve(process.cwd(), "scripts/voice/rtvc_tts.py");
+const rtvcTrainScriptPath = resolve(process.cwd(), "scripts/voice/rtvc_train.py");
 const bundledRtvcRepoDir = fileURLToPath(new URL("../../vendor/Real-Time-Voice-Cloning", import.meta.url));
 
 function getRepoDir(): string {

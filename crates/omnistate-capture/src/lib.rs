@@ -119,3 +119,28 @@ pub fn capture_frame(config: &CaptureConfig) -> OmniResult<CapturedFrame> {
 pub fn capture_frame_default() -> OmniResult<CapturedFrame> {
     capture_frame(&CaptureConfig::default())
 }
+
+/// Capture a region of the screen with optional resize.
+///
+/// Crops the raw pixel buffer in Rust, avoiding transferring the full frame
+/// to JavaScript. Optionally resizes to `target_width`/`target_height` using
+/// nearest-neighbor scaling (suitable for vision model input).
+pub fn capture_region_gpu(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    target_width: Option<u32>,
+    target_height: Option<u32>,
+) -> OmniResult<CapturedFrame> {
+    #[cfg(target_os = "macos")]
+    return macos::capture_region_gpu(x, y, width, height, target_width, target_height);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (x, y, width, height, target_width, target_height);
+        Err(omnistate_core::error::OmniError::CaptureError(
+            "capture_region_gpu is only supported on macOS".into(),
+        ))
+    }
+}
