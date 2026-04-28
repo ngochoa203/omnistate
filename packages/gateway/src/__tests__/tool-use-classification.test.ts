@@ -82,9 +82,9 @@ describe("Tool Use Classification", () => {
     const intent = await classifyIntent("xyzzy launch Finder application");
     // If LLM was called, _parsedCommand should be present
     if (mockStream.mock.calls.length > 0) {
-      expect(intent._parsedCommand).toBeDefined();
-      expect(intent._parsedCommand?.intent_type).toBe("app-launch");
-      expect(intent._parsedCommand?.target_app).toBe("Finder");
+      expect((intent as any)._parsedCommand).toBeDefined();
+      expect((intent as any)._parsedCommand?.intent_type).toBe("app-launch");
+      expect((intent as any)._parsedCommand?.target_app).toBe("Finder");
     } else {
       // pre-LLM rules caught it — still a valid intent
       expect(intent.type).toBeDefined();
@@ -136,7 +136,7 @@ describe("Tool Use Classification", () => {
     }));
 
     const intent = await classifyIntent("xyzzy123 open the Notes application please");
-    if (mockStream.mock.calls.length > 0 && intent._parsedCommand) {
+    if (mockStream.mock.calls.length > 0 && (intent as any)._parsedCommand) {
       // target_app should be promoted to entities.app
       expect(intent.entities.app).toBeDefined();
       expect(intent.entities.app.value).toBe("Notes");
