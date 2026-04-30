@@ -845,6 +845,49 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "ui-interaction",
       confidence: 0.95,
     },
+    // ── Vietnamese audio/media commands ──
+    // NOTE: \b word boundary does NOT work with Vietnamese Unicode chars — use start-of-string anchor or no boundary
+    {
+      // "tắt nhạc", "phát nhạc", "dừng nhạc", "tua nhạc", "next bài" etc.
+      // Uses (?:^|\s) instead of \b for Vietnamese-first words
+      pattern: /(?:^|\s)(?:tắt\s*(?:nhạc|âm\s*thanh|tiếng)|phát\s*(?:nhạc|bài|video|clip)|dừng\s*(?:nhạc|phát)|tua\s*(?:nhạc|bài)|bài\s*(?:tiếp|kế\s*tiếp)|âm\s*lượng\s*(?:tối\s*đa|tối\s*thiểu|lên|xuống))(?:\s|$)/i,
+      type: "audio-management",
+      confidence: 0.95,
+    },
+    {
+      // "tăng/giảm âm lượng" — volume control (must be audio-management not display-audio)
+      pattern: /(?:tăng|giảm|chỉnh)\s*(?:âm\s*lượng|tiếng)|(?:âm\s*lượng|volume)\s*(?:tăng|giảm|lên|xuống|\d+%?)/i,
+      type: "audio-management",
+      confidence: 0.96,
+    },
+    {
+      // English volume: "volume up/down", "increase/decrease volume", "raise/lower volume"
+      pattern: /\b(?:volume\s+(?:up|down)|(?:increase|decrease|raise|lower|set|mute|unmute)\s+(?:volume|sound|audio))\b/i,
+      type: "audio-management",
+      confidence: 0.96,
+    },
+    // ── Vietnamese close/tab commands ──
+    {
+      // "đóng tất cả tab", "đóng tab này", "đóng cửa sổ", "tắt ứng dụng X"
+      // No \b — Vietnamese words don't work with ASCII word boundaries
+      pattern: /(?:đóng\s*(?:tất\s*cả\s*)?tab|đóng\s*(?:tab|cửa\s*sổ|window)|tắt\s*(?:ứng\s*dụng|app\b))/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    // ── Vietnamese alarm/reminder commands ──
+    {
+      // "đặt báo thức X giờ", "set alarm 7am", "tạo nhắc nhở"
+      pattern: /(?:đặt\s*(?:báo\s*thức|hẹn\s*giờ|nhắc\s*nhở)|tạo\s*(?:báo\s*thức|nhắc\s*nhở)|\bset\s*(?:alarm|timer|reminder)\b)/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    // ── Vietnamese notes/notes-app commands ──
+    {
+      // "ghi chú: X", "tạo ghi chú", "thêm vào notes", "mở notes"
+      pattern: /(?:ghi\s*chú|tạo\s*(?:ghi\s*chú|note)|thêm\s*(?:vào\s*)?notes?|\bcreate\s*note\b|\badd\s*note\b|\btake\s*note\b)/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
   ];
 
   for (const rule of preLlmRules) {
