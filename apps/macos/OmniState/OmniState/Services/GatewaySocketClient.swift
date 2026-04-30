@@ -143,6 +143,7 @@ final class GatewaySocketClient: ObservableObject {
     @Published var isConnected = false
     @Published var messages: [NativeChatMessage] = []
     @Published var currentTaskId: String?
+    @Published var taskExecutionPhase: String = "idle"
     @Published var historyEntries: [NativeHistoryEntry] = []
     @Published var runtimeProvider = ""
     @Published var runtimeModel = ""
@@ -160,6 +161,7 @@ final class GatewaySocketClient: ObservableObject {
     @Published var voiceWakePhrase = ""
     @Published var voiceWakeCooldownMs = 1200
     @Published var voiceWakeCommandWindowSec = 16
+    @Published var voiceChunkMs = 200
     @Published var voiceSiriEnabled = false
     @Published var voiceSiriMode = "hybrid"
     @Published var voiceSiriShortcutName = ""
@@ -172,6 +174,9 @@ final class GatewaySocketClient: ObservableObject {
     @Published var sessionMemoryByConversation: [String: NativeSessionMemoryState] = [:]
     @Published var lastClaudeMemSyncMessage = ""
     @Published var activeConversationIdForLatestMessage: String?
+    /// Set by the `voice.transcript` handler when the gateway Whisper returns a result.
+    /// Both `VoiceCaptureService` (bubble display) and any observer can read this.
+    @Published var lastTranscript: String?
 
     // Real health data
     @Published var healthReport: NativeHealthReport?
@@ -345,7 +350,14 @@ final class GatewaySocketClient: ObservableObject {
 
     /// Sends `voice.wake.enabled = true` via runtime.config.set, guarded by onboarding flag.
     func enableWakeIfOnboarded() {
-        guard UserDefaults.standard.bool(forKey: "omnistate.wakeOnboarding.completed") else { return }
+        // Also enable if already explicitly toggled on in settings
+        if !UserDefaults.standard.bool(forKey: "omnistate.wakeOnboarding.completed") {
+            // Don't silently fail — check if already enabled by previous toggle
+            let wasEnabled = UserDefaults.standard.object(forKey: "voice.wake.userToggled") as? Bool
+            if wasEnabled != true {
+                return
+            }
+        }
         setRuntimeConfig(key: "voice.wake.enabled", value: true)
     }
 
@@ -474,6 +486,7 @@ final class GatewaySocketClient: ObservableObject {
 
         case "task.accepted":
             currentTaskId = json["taskId"] as? String
+            taskExecutionPhase = "executing"
             if let taskId = currentTaskId, let conversationId = pendingConversationId {
                 taskConversationMap[taskId] = conversationId
                 activeConversationIdForLatestMessage = conversationId
@@ -505,6 +518,11 @@ final class GatewaySocketClient: ObservableObject {
             let layer = json["layer"] as? String ?? ""
             let icon = status == "completed" ? "✓" : status == "failed" ? "✗" : "▸"
             messages.append(NativeChatMessage(role: "assistant", text: "\(icon) Step \(step) [\(layer)] \(status)"))
+            if status == "failed" {
+                taskExecutionPhase = "idle"
+            } else {
+                taskExecutionPhase = "executing"
+            }
 
         case "task.complete":
             if let taskId = json["taskId"] as? String,
@@ -517,6 +535,7 @@ final class GatewaySocketClient: ObservableObject {
                 taskConversationMap.removeValue(forKey: currentTaskId)
             }
             currentTaskId = nil
+            taskExecutionPhase = "idle"
             if let result = json["result"] {
                 let reply = userFacingReplyText(from: result)
                 let mode = replyModeMarker(from: result)
@@ -538,6 +557,7 @@ final class GatewaySocketClient: ObservableObject {
                 taskConversationMap.removeValue(forKey: currentTaskId)
             }
             currentTaskId = nil
+            taskExecutionPhase = "idle"
             let error = json["error"] as? String ?? "Unknown error"
             messages.append(NativeChatMessage(role: "system", text: "❌ Task error: \(error)"))
 
@@ -584,6 +604,14 @@ final class GatewaySocketClient: ObservableObject {
             lastClaudeMemSyncMessage = ok ? "Synced: \(message)" : "Sync failed: \(message)"
 
         case "voice.transcript", "vibevoice.partial":
+            let id = json["id"] as? String
+            let text = json["text"] as? String
+            if let t = text {
+                lastTranscript = t
+                // Surface gateway Whisper result in the listening bubble
+                VoiceCaptureService.shared.transcript = t
+            }
+            fputs("[voice.transcript] id=\(id ?? "nil") text=\(text ?? "nil")\n", stderr)
             ListeningBubbleController.shared.keepAlive()
 
         case "assistant.message":
@@ -792,6 +820,7 @@ final class GatewaySocketClient: ObservableObject {
         if let voice = config["voice"] as? [String: Any] {
             voiceLowLatency = (voice["lowLatency"] as? Bool) ?? voiceLowLatency
             voiceAutoExecute = (voice["autoExecuteTranscript"] as? Bool) ?? voiceAutoExecute
+            voiceChunkMs = (voice["chunkMs"] as? Int) ?? voiceChunkMs
 
             if let wake = voice["wake"] as? [String: Any] {
                 voiceWakeEnabled = (wake["enabled"] as? Bool) ?? voiceWakeEnabled

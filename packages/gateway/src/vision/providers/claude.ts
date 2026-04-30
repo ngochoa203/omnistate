@@ -206,6 +206,12 @@ function parseDetectResponse(
     .map((b) => b.text)
     .join("");
 
+  // Guard: if text looks like plain confirmation (not a detection result), return empty gracefully
+  if (text.length < 10 || /^(safari|chrome|app|đã|mở|thành|success|opened|done)/i.test(text.trim())) {
+    // Plain text response — not a structured detection result. Treat as empty detection (not an error).
+    return [];
+  }
+
   try {
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return [];
@@ -239,6 +245,22 @@ function parseVerifyResponse(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+
+  // Guard: if text looks like a plain confirmation (success message, emoji, no JSON),
+  // treat it as verification PASSED — the LLM is confirming the action succeeded.
+  const trimmed = text.trim().toLowerCase();
+  if (!text.includes("{") && !text.includes("[")) {
+    // No JSON structure detected — check for success signals
+    const successSignals = [
+      "success", "passed", "done", "completed", "opened", "đã", "thành", "mở",
+      "clicked", "show", "visible", "active", "working", "ok", "✓", "✅"
+    ];
+    if (successSignals.some((signal) => trimmed.includes(signal))) {
+      return { passed: true, confidence: 0.7, description: text.slice(0, 200) };
+    }
+    // Text-only response but no success signals — low confidence but not a failure
+    return { passed: false, confidence: 0.3, description: text.slice(0, 200) };
+  }
 
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);

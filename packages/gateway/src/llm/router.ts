@@ -154,6 +154,8 @@ async function* callOpenAICompatibleStream(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
 
+  const hasTools = opts.tools && opts.tools.length > 0;
+
   const body: Record<string, unknown> = {
     model: provider.model,
     messages: [
@@ -163,10 +165,14 @@ async function* callOpenAICompatibleStream(
     max_tokens: req.maxTokens,
     temperature: 0,
     stream: true,
+    // Ask model to return valid JSON when no tools are in use (supported by most
+    // OpenAI-compatible providers including MiniMax). Avoids plain-text responses
+    // that cause "Invalid JSON from LLM" errors.
+    ...(!hasTools ? { response_format: { type: "json_object" } } : {}),
   };
 
-  if (opts.tools && opts.tools.length > 0) {
-    body.tools = toOpenAITools(opts.tools);
+  if (hasTools) {
+    body.tools = toOpenAITools(opts.tools!);
     if (opts.toolChoice?.type === "tool") {
       body.tool_choice = { type: "function", function: { name: opts.toolChoice.name } };
     } else {

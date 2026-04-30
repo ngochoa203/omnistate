@@ -129,33 +129,23 @@ function defaultSession(): SessionMeta {
 }
 
 function defaultConfig(): LlmRuntimeConfig {
-  const anthropicProvider: LlmProviderConfig = {
-    id: "anthropic",
-    kind: "anthropic",
-    baseURL: process.env.ANTHROPIC_BASE_URL ?? "https://chat.trollllm.xyz",
-    apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-    model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4.5",
-    models: ["claude-haiku-4.5", "claude-sonnet-4.6", "claude-opus-4.6"],
-    enabled: true,
-  };
-
-  const router9Provider: LlmProviderConfig = {
-    id: "router9",
+  const minimaxProvider: LlmProviderConfig = {
+    id: "minimax",
     kind: "openai-compatible",
-    baseURL: process.env.OMNISTATE_ROUTER9_BASE_URL ?? "http://localhost:20128/v1",
-    apiKey: process.env.OMNISTATE_ROUTER9_API_KEY ?? "",
-    model: process.env.OMNISTATE_ROUTER9_MODEL ?? "cx/gpt-5.4",
-    models: ["cx/gpt-5.4", "kr/deepseek-3.2"],
+    baseURL: process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1",
+    apiKey: process.env.MINIMAX_API_KEY ?? "",
+    model: process.env.MINIMAX_MODEL ?? "MiniMax-M2.7",
+    models: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
     enabled: true,
   };
 
   const session = defaultSession();
 
   return {
-    activeProviderId: anthropicProvider.apiKey ? "anthropic" : "router9",
-    activeModel: anthropicProvider.apiKey ? anthropicProvider.model : router9Provider.model,
-    fallbackProviderIds: ["router9"],
-    providers: [anthropicProvider, router9Provider],
+    activeProviderId: "minimax",
+    activeModel: minimaxProvider.model,
+    fallbackProviderIds: [],
+    providers: [minimaxProvider],
     fastPathThreshold: 0.92,
     tokenBudget: {
       compactPrompt: true,
@@ -456,6 +446,20 @@ export function upsertProvider(provider: LlmProviderConfig): LlmRuntimeConfig {
   }
   if (!conf.fallbackProviderIds.includes("router9") && provider.id === "router9") {
     conf.fallbackProviderIds.push("router9");
+  }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function deleteProvider(providerId: string): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  conf.providers = conf.providers.filter((p) => p.id !== providerId);
+  conf.fallbackProviderIds = conf.fallbackProviderIds.filter((id) => id !== providerId);
+  if (conf.activeProviderId === providerId) {
+    conf.activeProviderId = conf.providers.find((p) => p.enabled && p.apiKey)?.id ?? conf.activeProviderId;
+    if (!conf.providers.find((p) => p.id === conf.activeProviderId)) {
+      conf.activeProviderId = conf.providers[0]?.id ?? "anthropic";
+    }
   }
   saveLlmRuntimeConfig(conf);
   return conf;

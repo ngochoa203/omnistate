@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getClient } from "../hooks/useGateway";
 import { useChatStore } from "../lib/chat-store";
+import { fetchWithFallback, buildEndpointCandidates } from "../lib/api-fetch";
 import { VoiceSettings } from "./VoiceSettings";
 
 type RuntimeProvider = {
@@ -36,6 +37,12 @@ export function ConfigPage() {
   const [newProviderEnabled, setNewProviderEnabled] = useState(true);
   const [activateNewProvider, setActivateNewProvider] = useState(true);
   const [fallbackNewProvider, setFallbackNewProvider] = useState(false);
+  const [screenTreeOpen, setScreenTreeOpen] = useState(false);
+  const [screenTreeData, setScreenTreeData] = useState<any | null>(null);
+  const [screenTreeError, setScreenTreeError] = useState<string | null>(null);
+  const [latencyOpen, setLatencyOpen] = useState(false);
+  const [latencyData, setLatencyData] = useState<any | null>(null);
+  const [latencyError, setLatencyError] = useState<string | null>(null);
 
   const activeProvider = useMemo(() => {
     const cfg = runtimeConfig as { activeProviderId?: string; providers?: RuntimeProvider[] } | null;
@@ -47,8 +54,7 @@ export function ConfigPage() {
     const cfg = runtimeConfig as { providers?: RuntimeProvider[] } | null;
     if (Array.isArray(cfg?.providers) && cfg.providers.length > 0) return cfg.providers;
     return [
-      { id: "anthropic", kind: "anthropic", baseURL: "https://chat.trollllm.xyz", model: "claude-haiku-4.5", enabled: true },
-      { id: "router9", kind: "openai-compatible", baseURL: "http://localhost:20128/v1", model: "cx/gpt-5.4", enabled: true },
+      { id: "minimax", kind: "openai-compatible", baseURL: "https://api.minimax.chat/v1", model: "MiniMax-Text-01", enabled: true },
     ];
   }, [runtimeConfig]);
 
@@ -62,18 +68,8 @@ export function ConfigPage() {
       return modelsFromProvider;
     }
     const base = selectedProvider?.model;
-    if (providerId === "anthropic") {
-      return [
-        "claude-haiku-4.5",
-        "claude-sonnet-4.6",
-        "claude-opus-4.6",
-      ];
-    }
-    if (providerId === "router9") {
-      return [
-        "cx/gpt-5.4",
-        "kr/deepseek-3.2",
-      ];
+    if (providerId === "minimax") {
+      return ["MiniMax-Text-01", "abab6.5s-chat"];
     }
     return base ? [base] : [];
   }, [provider, providers]);
@@ -245,6 +241,13 @@ export function ConfigPage() {
     setActionMessage(appLanguage === "vi" ? "Đã nhận realtime config mới." : "Received latest realtime config.");
   }, [runtimeConfig, actionState, appLanguage]);
 
+  useEffect(() => {
+    if (actionState !== "idle") {
+      const timer = setTimeout(() => setActionState("idle"), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [actionState]);
+
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "24px" }}>
       <div style={{ maxWidth: 920, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -348,25 +351,142 @@ export function ConfigPage() {
                     onClick={() => changeProvider(p.id)}
                     style={{
                       textAlign: "left",
-                      justifyContent: "space-between",
-                      display: "flex",
-                      alignItems: "center",
                       padding: "8px 10px",
                       borderColor: provider === p.id ? "rgba(99,102,241,0.5)" : undefined,
                       background: provider === p.id ? "rgba(99,102,241,0.12)" : undefined,
                     }}
                   >
-                    <span style={{ fontSize: "0.76rem", color: "var(--color-text-secondary)", fontFamily: "monospace" }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.76rem", color: "var(--color-text-secondary)", fontFamily: "monospace" }}>
                       {p.id} · {p.kind ?? "-"} · {p.model ?? "-"}
-                    </span>
-                    <span style={{ fontSize: "0.72rem", color: p.enabled === false ? "#ef4444" : "#22c55e" }}>
-                      {p.enabled === false ? (appLanguage === "vi" ? "Tắt" : "Off") : (appLanguage === "vi" ? "Bật" : "On")}
+                      <span style={{ fontSize: "0.72rem", color: p.enabled === false ? "#ef4444" : "#22c55e" }}>
+                        {p.enabled === false ? (appLanguage === "vi" ? "Tắt" : "Off") : (appLanguage === "vi" ? "Bật" : "On")}
+                      </span>
+                      {p.id !== "anthropic" && p.id !== "router9" && (
+                        <button
+                          title={appLanguage === "vi" ? "Xóa nhà cung cấp" : "Delete provider"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            getClient().deleteRuntimeProvider(p.id);
+                            setTimeout(() => getClient().requestRuntimeConfig(), 300);
+                          }}
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 4px", color: "#ef4444", fontSize: "0.7rem" }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                          </svg>
+                        </button>
+                      )}
                     </span>
                   </button>
                 ))}
               </div>
             </div>
           )}
+
+          <div style={{ marginTop: 10 }}>
+            <button
+              onClick={() => {
+                if (!screenTreeOpen) {
+                  fetchWithFallback(buildEndpointCandidates("/screen/tree?mode=hierarchy"))
+                    .then(({ data }) => { setScreenTreeData(data); setScreenTreeError(null); })
+                    .catch((e) => { setScreenTreeError((e as Error).message ?? String(e)); setScreenTreeData(null); })
+                    .finally(() => setScreenTreeOpen(true));
+                } else {
+                  setScreenTreeOpen(false);
+                }
+              }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)", fontSize: "0.78rem", padding: 0 }}
+            >
+              Screen Tree {screenTreeOpen ? "▲" : "▼"}
+            </button>
+            {screenTreeOpen && (
+              <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 10, background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)", fontSize: "0.76rem" }}>
+                {screenTreeError ? (
+                  screenTreeError.includes("ACCESSIBILITY_NOT_TRUSTED") ? (
+                    <div style={{ color: "#f59e0b" }}>{appLanguage === "vi" ? "Cần quyền truy cập accessibility" : "Accessibility permission required"}</div>
+                  ) : (
+                    <div style={{ color: "#ef4444" }}>{screenTreeError}</div>
+                  )
+                ) : screenTreeData ? (() => {
+                    const elements = (screenTreeData as any)?.elements ?? [];
+                    const roles: Record<string, number> = {};
+                    elements.forEach((el: any) => {
+                      const role = el.role ?? el.kind ?? "unknown";
+                      roles[role] = (roles[role] ?? 0) + 1;
+                    });
+                    const roleSummary = Object.entries(roles).map(([r, c]) => `${r}: ${c}`).join(", ");
+                    return (
+                      <>
+                        <div style={{ color: "#22c55e", marginBottom: 4 }}>
+                          {elements.length} {appLanguage === "vi" ? "phần tử" : "elements"}
+                          {roleSummary ? ` · ${roleSummary}` : ""}
+                        </div>
+                        {(screenTreeData as any)?.error === "ACCESSIBILITY_NOT_TRUSTED" && (
+                          <div style={{ color: "#f59e0b", fontSize: "0.72rem", marginTop: 4 }}>
+                            {appLanguage === "vi" ? "Cần quyền truy cập accessibility" : "Accessibility permission required"}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })() : (
+                    <div style={{ color: "var(--color-text-muted)" }}>{appLanguage === "vi" ? "Đang tải..." : "Loading..."}</div>
+                  )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <button
+              onClick={() => {
+                if (!latencyOpen) {
+                  fetchWithFallback(buildEndpointCandidates("/latency/benchmark?profile=full"))
+                    .then(({ data }) => { setLatencyData(data); setLatencyError(null); })
+                    .catch((e) => { setLatencyError((e as Error).message ?? String(e)); setLatencyData(null); })
+                    .finally(() => setLatencyOpen(true));
+                } else {
+                  setLatencyOpen(false);
+                }
+              }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-muted)", fontSize: "0.78rem", padding: 0 }}
+            >
+              Latency Benchmark {latencyOpen ? "▲" : "▼"}
+            </button>
+            {latencyOpen && (
+              <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 10, background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)", fontSize: "0.76rem" }}>
+                {latencyError ? (
+                  latencyError.includes("SCREEN_CAPTURE_FAILED") ? (
+                    <div style={{ color: "#f59e0b" }}>{appLanguage === "vi" ? "Screen capture thất bại" : "Screen capture failed"}</div>
+                  ) : (
+                    <div style={{ color: "#ef4444" }}>{latencyError}</div>
+                  )
+                ) : latencyData ? (() => {
+                    const metrics = (latencyData as any)?.metrics ?? {};
+                    const p50 = metrics.p50 ?? metrics["50th_percentile"] ?? 0;
+                    const p95 = metrics.p95 ?? metrics["95th_percentile"] ?? 0;
+                    const max = metrics.max ?? metrics["max"] ?? 0;
+                    const sloPass = p95 < 50;
+                    return (
+                      <div>
+                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+                          <span>p50: <strong>{p50}ms</strong></span>
+                          <span>p95: <strong>{p95}ms</strong></span>
+                          <span>max: <strong>{max}ms</strong></span>
+                        </div>
+                        <div style={{ color: sloPass ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
+                          SLO: {sloPass ? (appLanguage === "vi" ? "PASS" : "PASS") : (appLanguage === "vi" ? "FAIL" : "FAIL")}
+                          {appLanguage === "vi" ? ` (p95 ${p95}ms ${p95 < 50 ? "<" : ">="} 50ms)` : ` (p95 ${p95}ms ${p95 < 50 ? "<" : ">="} 50ms)`}
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <div style={{ color: "var(--color-text-muted)" }}>{appLanguage === "vi" ? "Đang tải..." : "Loading..."}</div>
+                  )}
+              </div>
+            )}
+          </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button className="btn-ghost" onClick={() => setShowAddProvider((v) => !v)}>

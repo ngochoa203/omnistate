@@ -2,7 +2,21 @@ import type { IntentHandler } from "./types.js";
 
 export const systemInfo: IntentHandler = async (_args, ctx) => {
   const info = ctx.layers.deep.getSystemInfo();
-  return { speak: "System info retrieved.", data: { info } };
+  const parts: string[] = [];
+  if (info && typeof info === 'object') {
+    const i = info as unknown as Record<string, unknown>;
+    if (typeof i.cpuModel === 'string') {
+      parts.push(`CPU: ${i.cpuModel}${typeof i.cpuCores === 'number' ? ` (${i.cpuCores} cores)` : ''}`);
+    }
+    if (typeof i.totalMemoryMB === 'number' && typeof i.freeMemoryMB === 'number') {
+      const usedMB = Math.max(0, i.totalMemoryMB - i.freeMemoryMB);
+      parts.push(`RAM: ${usedMB}MB used of ${i.totalMemoryMB}MB`);
+    }
+    if (typeof i.platform === 'string') parts.push(`Platform: ${i.platform}`);
+    if (typeof i.hostname === 'string') parts.push(`Host: ${i.hostname}`);
+  }
+  const speak = parts.length > 0 ? parts.join(' | ') : 'System info retrieved.';
+  return { speak, data: { info } };
 };
 
 export const systemLock: IntentHandler = async (_args, ctx) => {
@@ -124,91 +138,91 @@ export const defaultsDelete: IntentHandler = async (args, ctx) => {
 };
 
 export const timezoneGet: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const timezone = await deepSystem.getTimezone();
   return { speak: "Timezone retrieved.", data: { timezone } };
 };
 
 export const timezoneSet: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.setTimezone(args.tz as string);
   return { speak: "Timezone set.", data: { success } };
 };
 
 export const localeGet: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const locale = await deepSystem.getLocale();
   return { speak: "Locale retrieved.", data: { locale } };
 };
 
 export const localeSet: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.setLocale(args.locale as string);
   return { speak: "Locale set.", data: { success } };
 };
 
 export const powerBattery: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const info = await deepSystem.getBatteryInfo();
   return { speak: "Battery info retrieved.", data: { info } };
 };
 
 export const powerSleep: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.sleep();
   return { speak: "Going to sleep.", data: { success } };
 };
 
 export const powerShutdown: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.shutdown(args.delay as number | undefined);
   return { speak: "Shutting down.", data: { success } };
 };
 
 export const powerRestart: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.restart(args.delay as number | undefined);
   return { speak: "Restarting.", data: { success } };
 };
 
 export const powerScheduleWake: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.scheduleWake(new Date(args.date as string).toISOString());
   return { speak: "Wake scheduled.", data: { success } };
 };
 
 export const startupList: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const items = await deepSystem.listStartupItems();
   return { speak: "Startup items listed.", data: { items } };
 };
 
 export const startupAdd: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.addStartupItem(args.config);
   return { speak: "Startup item added.", data: { success } };
 };
 
 export const startupRemove: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.removeStartupItem(args.name as string);
   return { speak: "Startup item removed.", data: { success } };
 };
 
 export const loginItems: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const items = await deepSystem.listLoginItems();
   return { speak: "Login items listed.", data: { items } };
 };
 
 export const loginAdd: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.addLoginItem(args.appPath as string);
   return { speak: "Login item added.", data: { success } };
 };
 
 export const loginRemove: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.removeLoginItem(args.appName as string);
   return { speak: "Login item removed.", data: { success } };
 };

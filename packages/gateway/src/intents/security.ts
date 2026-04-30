@@ -138,3 +138,52 @@ export const securityAudit: IntentHandler = async (_args, ctx) => {
     },
   };
 };
+
+// ── WiFi Deep Scanning ────────────────────────────────────────────────────────
+
+export const wifiDeepScan: IntentHandler = async (_args, ctx) => {
+  const networks = await ctx.layers.deepOS!.deepWiFiScan();
+  return {
+    speak: `Deep WiFi scan: ${networks.length} network${networks.length !== 1 ? "s" : ""} found.`,
+    data: { networks },
+  };
+};
+
+export const wifiSignal: IntentHandler = async (_args, ctx) => {
+  const rssi = await ctx.layers.deepOS!.getWiFiSignalStrength();
+  return {
+    speak: rssi !== null ? `WiFi signal: ${rssi} dBm.` : "Signal strength unavailable.",
+    data: { rssi },
+  };
+};
+
+export const wifiChannel: IntentHandler = async (args, ctx) => {
+  const success = await ctx.layers.deepOS!.setWiFiChannel(args.channel as number);
+  return {
+    speak: success ? `Channel set to ${args.channel}.` : "Failed to set channel (requires monitor mode).",
+    data: { success, channel: args.channel },
+  };
+};
+
+export const wifiCaptureHandshake: IntentHandler = async (args, ctx) => {
+  const result = await ctx.layers.deepOS!.captureWiFiHandshake(
+    args.bssid as string,
+    args.channel as number,
+    args.outputFile as string,
+    args.durationSec as number | undefined
+  );
+  return {
+    speak: result.success
+      ? `Capture complete via ${result.tool}. File: ${result.file}`
+      : "Capture failed.",
+    data: result,
+  };
+};
+
+export const wifiInstallTools: IntentHandler = async (_args, ctx) => {
+  const success = await ctx.layers.deepOS!.installAircrackSuite();
+  return {
+    speak: success ? "aircrack-ng suite installed via Homebrew." : "Failed to install aircrack-ng.",
+    data: { success },
+  };
+};

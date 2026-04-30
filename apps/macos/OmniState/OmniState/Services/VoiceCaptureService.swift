@@ -31,6 +31,8 @@ final class VoiceCaptureService: ObservableObject {
     private var pcm16Accumulator = Data()
     private var audioConverter: AVAudioConverter?
     private let targetAudioFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+    nonisolated(unsafe) private var inputConsumedLock = NSLock()
+    nonisolated(unsafe) private var inputConsumedFlag = false
 
     private init() {}
 
@@ -134,10 +136,11 @@ final class VoiceCaptureService: ObservableObject {
             if let converter = self?.audioConverter,
                let outFormat = self?.targetAudioFormat,
                let pcmOut = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: AVAudioFrameCount(outFormat.sampleRate * Double(buffer.frameLength) / buffer.format.sampleRate) + 1) {
-                nonisolated(unsafe) var inputConsumed = false
-                let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-                    if inputConsumed { outStatus.pointee = .noDataNow; return nil }
-                    inputConsumed = true
+                let inputBlock: AVAudioConverterInputBlock = { [weak self] _, outStatus in
+                    self?.inputConsumedLock.lock()
+                    defer { self?.inputConsumedLock.unlock() }
+                    if self?.inputConsumedFlag == true { outStatus.pointee = .noDataNow; return nil }
+                    self?.inputConsumedFlag = true
                     outStatus.pointee = .haveData
                     return buffer
                 }
@@ -206,7 +209,7 @@ final class VoiceCaptureService: ObservableObject {
                     let segments = result.bestTranscription.segments
                     if !segments.isEmpty {
                         let avgConfidence = segments.map(\.confidence).reduce(0, +) / Float(segments.count)
-                        if avgConfidence < 0.15 {
+                        if avgConfidence < 0.05 {
                             if result.isFinal {
                                 self?.stopRecording()
                             }

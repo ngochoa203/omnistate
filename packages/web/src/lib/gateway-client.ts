@@ -150,6 +150,13 @@ export class GatewayClient {
     } as ClientMessage);
   }
 
+  deleteRuntimeProvider(providerId: string): void {
+    this.send({
+      type: "runtime.config.deleteProvider",
+      providerId,
+    } as ClientMessage);
+  }
+
   requestHistory(limit: number = 20): void {
     this.send({ type: "history.query", limit } as ClientMessage);
   }

@@ -10,6 +10,8 @@ import * as bridge from "../platform/bridge.js";
 import { DeepOSLayer } from "../layers/deep-os.js";
 import { DeepSystemLayer } from "../layers/deep-system.js";
 import { HardwareLayer } from "../layers/hardware.js";
+import { IOKitLayer } from "../layers/iokit.js";
+import { KernelLayer } from "../layers/kernel.js";
 import { CommunicationLayer } from "../layers/communication.js";
 import { SoftwareLayer } from "../layers/software.js";
 import { BrowserLayer } from "../layers/browser.js";
@@ -153,6 +155,8 @@ export class Orchestrator {
   private deepOS: DeepOSLayer;
   private deepSystem: DeepSystemLayer;
   private hardware: HardwareLayer;
+  private iokit: IOKitLayer;
+  private kernel: KernelLayer;
   private communication: CommunicationLayer;
   private software: SoftwareLayer;
   private browser: BrowserLayer;
@@ -182,6 +186,8 @@ export class Orchestrator {
     this.deepOS = new DeepOSLayer(this.deep);
     this.deepSystem = new DeepSystemLayer(this.deep);
     this.hardware = new HardwareLayer(this.deep);
+    this.iokit = new IOKitLayer();
+    this.kernel = new KernelLayer();
     this.communication = new CommunicationLayer();
     this.software = new SoftwareLayer(this.deep);
     this.browser = new BrowserLayer(this.surface);
@@ -379,9 +385,22 @@ export class Orchestrator {
         browser: this.browser,
         fleet: this.fleet,
         hybrid: this.hybridAuto as unknown as Record<string, unknown>,
-        // expose deepOS for migrated adapters
-        ...(({ deepOS: this.deepOS } as any)),
-      } as any,
+        deepOS: this.deepOS,
+        deepSystem: this.deepSystem,
+        hardware: this.hardware,
+        iokit: this.iokit,
+        kernel: this.kernel,
+        software: this.software,
+        communication: this.communication,
+        developer: this.developer,
+        maintenance: this.maintenance,
+        media: this.media,
+        hybridAuto: this.hybridAuto as unknown as Record<string, unknown>,
+        hybridTools: this.hybridTools as unknown as Record<string, unknown>,
+        health: this.health as unknown as Record<string, unknown>,
+        vision: this.vision as unknown as Record<string, unknown>,
+        bridge: bridge as unknown as Record<string, unknown>,
+      },
     };
   }
 
@@ -1602,9 +1621,7 @@ end tell`);
         setTimeout(() => watcher.stop(), (params.timeoutMs as number) ?? 30000);
         return { success: true, note: "Watching started" };
       }
-      case "system.info": {
-        return this.deep.getSystemInfo() as unknown as Record<string, unknown>;
-      }
+      // Note: "system.info" is handled above (line ~466); no duplicate needed here.
 
       // ── UC4.1: Open URL / Tab management ─────────────────────────────
       case "browser.open": {

@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const repoRoot = resolve(__dirname, "..");
+const repoRoot = resolve(__dirname, "../..");
 
 function log(msg) {
   process.stdout.write(`[run-all] ${msg}\n`);
@@ -82,11 +82,11 @@ async function freePorts(ports) {
   log(`Clearing occupied ports ${ports.join(", ")} (pids: ${[...allPids].join(", ")})`);
   for (const pid of allPids) terminatePid(pid);
 
-  let stubborn = await waitForPortsFree(ports, 1200);
+  let stubborn = await waitForPortsFree(ports, 3000);
   if (stubborn.size > 0) {
     log(`Force-killing stubborn listeners: ${[...stubborn].join(", ")}`);
     for (const pid of stubborn) forceKillPid(pid);
-    stubborn = await waitForPortsFree(ports, 1200);
+    stubborn = await waitForPortsFree(ports, 3000);
   }
 
   if (stubborn.size > 0) {
@@ -175,13 +175,52 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 async function main() {
+  // Kill any existing gateway/OmniState processes before freeing ports.
+  // Strategy: kill by port (lsof) first — reliable regardless of node binary path.
+  // pkill patterns are supplemental for processes not yet bound to ports.
+  try {
+    // 1. Hard-kill anything listening on gateway ports right now (most reliable)
+    execSync(
+      'lsof -nP -t -iTCP:19800 -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true',
+      { stdio: "pipe" }
+    );
+    execSync(
+      'lsof -nP -t -iTCP:19801 -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true',
+      { stdio: "pipe" }
+    );
+    // 2. pkill supplemental — catches processes starting up but not yet listening
+    execSync('pkill -9 -f "omnistate" 2>/dev/null || true', { stdio: "pipe" });
+    execSync('pkill -9 -f "gateway/dist/index" 2>/dev/null || true', { stdio: "pipe" });
+    execSync('pkill -9 -f "packages/gateway/dist/index" 2>/dev/null || true', { stdio: "pipe" });
+    // 3. Wait for OS to release sockets (SIGKILL is instant but socket release takes ~100-300ms)
+    await new Promise((r) => setTimeout(r, 1000));
+  } catch {}
+
+  // freePorts() will SIGTERM → wait → SIGKILL any remaining stragglers on all required ports
   await freePorts([19800, 19801, 5173, 5174, 5175]);
+
+  if (isListening(19800)) {
+    log(
+      "⚠️  Port 19800 still in use after cleanup. If OmniState.app is running, quit it first (Cmd+Q), then retry."
+    );
+    throw new Error("Port 19800 still in use after cleanup");
+  }
 
   const runtimeEnv = { ...process.env };
   const voicePython = resolve(repoRoot, ".venv-voice/bin/python");
   if (!runtimeEnv.OMNISTATE_RTC_PYTHON && existsSync(voicePython)) {
     runtimeEnv.OMNISTATE_RTC_PYTHON = voicePython;
     log(`Using voice python: OMNISTATE_RTC_PYTHON=${voicePython}`);
+    // Verify faster-whisper is installed; install if missing
+    try {
+      execSync(`${voicePython} -c "import faster_whisper"`, { stdio: "pipe" });
+    } catch {
+      log("Installing faster-whisper and voice dependencies...");
+      execSync(`${voicePython} -m pip install -r "${resolve(repoRoot, "scripts/voice/requirements.txt")}"`, {
+        stdio: "inherit",
+        cwd: repoRoot,
+      });
+    }
   }
   if (!runtimeEnv.WHISPER_DEVICE && process.platform === "darwin" && process.arch === "arm64") {
     runtimeEnv.WHISPER_DEVICE = "cpu";
@@ -236,11 +275,25 @@ async function main() {
     },
   );
 
+  let webRetries = 0;
+  const MAX_WEB_RETRIES = 3;
   web.on("exit", (code) => {
     if (code && code !== 0) {
-      log(`Web exited with code ${code}`);
+      webRetries++;
+      if (webRetries < MAX_WEB_RETRIES) {
+        log(`Web process exited with code ${code}. Retrying (${webRetries}/${MAX_WEB_RETRIES})...`);
+        web = spawn("pnpm", ["--dir", "packages/web", "dev", "--port", "5175", "--strictPort"], {
+          cwd: repoRoot,
+          stdio: "inherit",
+          env: runtimeEnv,
+        });
+      } else {
+        log(`Web process failed after ${MAX_WEB_RETRIES} retries. Giving up.`);
+        shutdown();
+      }
+    } else {
+      shutdown();
     }
-    shutdown();
   });
 
   log("Run all ready: web http://localhost:5175 · gateway ws://127.0.0.1:19800");

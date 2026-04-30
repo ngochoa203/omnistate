@@ -97,8 +97,7 @@ export function ChatView() {
     const cfg = runtimeConfig as { providers?: RuntimeProvider[] } | null;
     if (Array.isArray(cfg?.providers) && cfg.providers.length > 0) return cfg.providers;
     return [
-      { id: "anthropic", model: "claude-haiku-4.5", models: ["claude-haiku-4.5", "claude-sonnet-4.6"] },
-      { id: "router9", model: "cx/gpt-5.4", models: ["cx/gpt-5.4", "gh/claude-sonnet-4.6", "gh/gemini-3-flash-preview"] },
+      { id: "minimax", model: "MiniMax-Text-01", models: ["MiniMax-Text-01", "abab6.5s-chat"] },
     ];
   })();
 

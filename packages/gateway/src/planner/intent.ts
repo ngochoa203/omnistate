@@ -62,6 +62,16 @@ const INTENT_TYPES = [
   "display-audio",
   "backup-restore",
   "update-management",
+  // ─── Domain B Extended: Granular hardware/media ────────────────
+  "audio-management",
+  "display-management",
+  "thermal-management",
+  "disk-management",
+  "memory-management",
+  "clipboard-management",
+  "font-locale-management",
+  "printer-management",
+  "user-acl-management",
   // ─── Domain C: Self-Healing ────────────────────────────────────
   "health-check",
   "disk-cleanup",
@@ -78,6 +88,10 @@ const INTENT_TYPES = [
   "compliance-check",
   "resource-forecast",
   "multi-app-orchestration",
+  // ─── Domain E: Deep Hardware & Kernel ────────────────────────────────
+  "iokit-hardware",
+  "kernel-control",
+  "wifi-security",
 ] as const;
 
 type IntentType = (typeof INTENT_TYPES)[number];
@@ -196,6 +210,9 @@ Classify the user's natural-language command into exactly ONE intent type:
 - "compliance-check"    — check encryption, firewall, Gatekeeper, SIP policies
 - "resource-forecast"   — predict disk full, memory exhaustion, resource usage trends
 - "multi-app-orchestration" — transfer data between apps, orchestrate multi-app workflows
+- "iokit-hardware"    — read hardware sensors directly via IOKit: thermals, SMC keys, battery health, GPU info, NVRAM, USB/PCI device tree
+- "kernel-control"    — deep kernel operations: sysctl params, kext load/unload/list, VM statistics, dtrace/dtruss syscall tracing, Spotlight indexing, launchd/launchctl
+- "wifi-security"     — WiFi security & monitoring: packet capture, handshake capture, aircrack-ng, deauth attacks, channel hopping, airport deep scan
 
 Also extract relevant entities of these types: file, app, url, person, text, command.
 
@@ -214,7 +231,7 @@ process-management, service-management, package-management, network-control, os-
 hardware-control, security-management, container-management, display-audio, backup-restore, update-management,
 health-check, disk-cleanup, network-diagnose, security-scan, self-healing, voice-control, script-generation,
 automation-macro, workflow-template, file-organization, debug-assist, compliance-check, resource-forecast,
-multi-app-orchestration.
+multi-app-orchestration, iokit-hardware, kernel-control, wifi-security.
 Schema:
 {"type":"<intent-type>","confidence":0.0,"entities":{"k":{"type":"file|app|url|person|text|command","value":"v"}}}`;
 
@@ -511,6 +528,12 @@ const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:file\s*nặng\s*hơn|larger?\s*than|nặng\s*hơn|>\s*1\s*GB|greater\s*than\s*1\s*GB)\b/i, "disk-cleanup"],
   [/\b(?:đóng\s*tất\s*cả|close\s*all)\b.*\b(?:trừ|except)\b/i, "app-control"],
   [/\b(?:pin|battery)\b.*\b(?:dưới|below|under)\s*\d+%/i, "power-management"],
+  // IOKit hardware deep reads
+  [/\b(?:iokit|smc\s*key|thermal\s*sensor|gpu\s*temp|battery\s*health|nvram|usb\s*tree|pci\s*device|hardware\s*sensor)\b/i, 'iokit-hardware'],
+  // Kernel control
+  [/\b(?:sysctl|kext(?:stat|load|unload)?|kernel\s*extension|vm\s*stat|dtrace|dtruss|syscall\s*trace|spotlight\s*index|launchctl|launchd|purge\s*memory|kernel\s*param)\b/i, 'kernel-control'],
+  // WiFi security
+  [/\b(?:aircrack|airodump|aireplay|handshake\s*capture|wifi\s*(?:monitor|capture|packet|deauth|attack|crack)|packet\s*capture|deauth(?:entication)?|wpa\s*(?:crack|handshake)|channel\s*hop)\b/i, 'wifi-security'],
 ];
 
 // ---------------------------------------------------------------------------
@@ -715,6 +738,20 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
   // even when LLM output drifts or provider/network is unavailable.
   const preLlmRules: Array<{ pattern: RegExp; type: IntentType; confidence: number }> = [
     {
+      // Shell commands: run/execute/bash/sh prefix, or bare unix commands
+      // Must come FIRST to prevent LLM timeout on high-signal shell phrases
+      pattern: /^(?:run|execute|bash|sh)\s+\S/i,
+      type: "shell-command",
+      confidence: 0.97,
+    },
+    {
+      // Bare unix commands at start of string — only when followed by flags/paths (not natural language)
+      // e.g. "ls -la", "git status", "npm install" — NOT "find the largest files..."
+      pattern: /^(?:ls|cat|grep|ps|df|du|top|rm|cp|mv|mkdir|chmod|curl|wget|whoami|pwd|uname|ping|ssh|git|npm|yarn|pnpm|python|node|make|cargo)\s+(?:-|\.|\/|~|\w+\s*-)/i,
+      type: "shell-command",
+      confidence: 0.96,
+    },
+    {
       // Multi-step: comma-separated or sequenced chains (sau đó/rồi/tiếp theo)
       // e.g. "Mở safari, truy cập youtube sau đó mở video đầu tiên"
       // Must come BEFORE app-launch to avoid misclassification.
@@ -886,6 +923,24 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       // "ghi chú: X", "tạo ghi chú", "thêm vào notes", "mở notes"
       pattern: /(?:ghi\s*chú|tạo\s*(?:ghi\s*chú|note)|thêm\s*(?:vào\s*)?notes?|\bcreate\s*note\b|\badd\s*note\b|\btake\s*note\b)/i,
       type: "app-control",
+      confidence: 0.95,
+    },
+    // ── IOKit hardware ──
+    {
+      pattern: /\b(?:đọc\s*(?:nhiệt\s*độ|cảm\s*biến|pin)|smc\s*key|iokit\s*sensor|battery\s*health|nvram\s*(?:read|write|list)|usb\s*tree|pci\s*(?:devices?|tree))\b/i,
+      type: 'iokit-hardware',
+      confidence: 0.92,
+    },
+    // ── Kernel control ──
+    {
+      pattern: /\b(?:sysctl|load\s*kext|unload\s*kext|kext\s*(?:load|unload|stat|list)|vm\s*stat|purge\s*(?:memory|ram|cache)|dtrace|dtruss|syscall\s*trace|mdutil|launchctl\s*(?:list|load|unload|kickstart)|launchd\s*service)\b/i,
+      type: 'kernel-control',
+      confidence: 0.93,
+    },
+    // ── WiFi security ──
+    {
+      pattern: /\b(?:aircrack|airodump|aireplay|capture\s*handshake|wifi\s*(?:monitor\s*mode|packet\s*capture|deauth|crack|attack)|deauth(?:entication)?\s*attack|wpa\s*(?:handshake|crack)|channel\s*hop(?:ping)?|install\s*aircrack)\b/i,
+      type: 'wifi-security',
       confidence: 0.95,
     },
   ];
@@ -4643,6 +4698,16 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           "display-audio": "deep",
           "backup-restore": "deep",
           "update-management": "deep",
+          // Domain B Extended
+          "audio-management": "deep",
+          "display-management": "deep",
+          "thermal-management": "deep",
+          "disk-management": "deep",
+          "memory-management": "deep",
+          "clipboard-management": "deep",
+          "font-locale-management": "deep",
+          "printer-management": "deep",
+          "user-acl-management": "deep",
           // Domain C
           "health-check": "deep",
           "disk-cleanup": "deep",
@@ -4659,6 +4724,10 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           "compliance-check": "deep",
           "resource-forecast": "deep",
           "multi-app-orchestration": "auto",
+          // Domain E: Deep Hardware & Kernel
+          "iokit-hardware": "deep",
+          "kernel-control": "deep",
+          "wifi-security": "deep",
         };
 
         let prevId: string | null = null;

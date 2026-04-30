@@ -38,6 +38,8 @@ export function VoiceSettings() {
   const [svOnMismatch, setSvOnMismatch] = useState<"warn" | "reject" | "silent">("warn");
   const [sttProvider, setSttProvider] = useState<SttProvider>("whisper-local");
   const [whisperModel, setWhisperModel] = useState<WhisperModel>("small");
+  const [vadCalibrating, setVadCalibrating] = useState(false);
+  const [vadCalibrationResult, setVadCalibrationResult] = useState<{ rms: number; suggested: number; message: string } | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
 
   // Load current config on mount / when runtimeConfig changes
@@ -98,6 +100,59 @@ export function VoiceSettings() {
       audio.play();
     } catch (err) {
       console.error("[VoiceSettings] TTS preview failed:", err);
+    }
+  };
+
+  const calibrateVAD = async () => {
+    setVadCalibrating(true);
+    setVadCalibrationResult(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+
+      await new Promise<void>((resolve) => {
+        mediaRecorder.onstop = () => resolve();
+        mediaRecorder.start();
+        setTimeout(() => mediaRecorder.stop(), 3000);
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioContext = new AudioContext();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const channelData = audioBuffer.getChannelData(0);
+
+      let sum = 0;
+      for (let i = 0; i < channelData.length; i++) {
+        sum += channelData[i] * channelData[i];
+      }
+      const rms = Math.sqrt(sum / channelData.length);
+
+      stream.getTracks().forEach((t) => t.stop());
+      audioContext.close();
+
+      let suggested = 400;
+      let message = "VAD looks good";
+      if (rms > 0.01) {
+        suggested = 200;
+        message = "Noisy environment — suggest 200ms threshold";
+      } else if (rms < 0.001) {
+        suggested = 600;
+        message = "Very quiet — suggest 600ms threshold";
+      }
+
+      setVadCalibrationResult({ rms: Math.round(rms * 10000) / 10000, suggested, message });
+    } catch (err) {
+      setVadCalibrationResult({
+        rms: 0,
+        suggested: 400,
+        message: `Microphone error: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setVadCalibrating(false);
     }
   };
 
@@ -257,6 +312,35 @@ export function VoiceSettings() {
           </span>
         </div>
       )}
+
+      {/* VAD Calibration */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", fontWeight: 600 }}>
+          {label("Hiệu chuẩn VAD", "VAD Calibration")}
+        </span>
+        <button
+          className="btn-ghost"
+          onClick={calibrateVAD}
+          disabled={vadCalibrating}
+          style={{ fontSize: "0.78rem", alignSelf: "flex-start" }}
+        >
+          {vadCalibrating ? label("Đang đo...", "Measuring...") : label("Calibrate VAD", "Calibrate VAD")}
+        </button>
+        {vadCalibrationResult && (
+          <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", display: "flex", flexDirection: "column", gap: 6 }}>
+            <span>{vadCalibrationResult.message}</span>
+            {vadCalibrationResult.suggested !== 400 && (
+              <button
+                className="btn-primary"
+                onClick={() => getClient().setRuntimeConfig("vad.silenceThresholdMs", vadCalibrationResult.suggested)}
+                style={{ fontSize: "0.75rem", alignSelf: "flex-start" }}
+              >
+                Apply {vadCalibrationResult.suggested}ms
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <button className="btn-primary" onClick={save} disabled={saveState === "saving"}>

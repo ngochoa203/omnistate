@@ -7,7 +7,7 @@ import { readFile, readdir, stat, writeFile, unlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GatewayConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ClientRole, RuntimeConfigSetMessage, TaskAttachment } from "./protocol.js";
+import type { ClientMessage, ServerMessage, ClientRole, RuntimeConfigSetMessage, TaskAttachment, RuntimeConfigDeleteProviderMessage } from "./protocol.js";
 import { authenticateConnection } from "./auth.js";
 import { createAuthRoutes, parseBody, jsonResponse } from "../http/auth-routes.js";
 import { createVoiceRoutes } from "../http/voice-routes.js";
@@ -21,11 +21,11 @@ import { HealthMonitor } from "../health/monitor.js";
 import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
-import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
+import { incrementSessionUsage, loadLlmRuntimeConfig, saveLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
-import { upsertProvider, addFallbackProvider } from "../llm/runtime-config.js";
+import { upsertProvider, addFallbackProvider, deleteProvider } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
-import { VoiceSessionService } from "../voice/session-service.js";
+import { VoiceStreamManager } from "../voice/webrtc-stream.js";
 import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { TriggerEngine } from "../triggers/index.js";
@@ -154,7 +154,7 @@ export class OmniStateGateway {
   private wss: WebSocketServer | null = null;
   private siriBridgeServer: HttpServer | null = null;
   private wakeManager: WakeManager = new WakeManager();
-  private voiceSessions = new VoiceSessionService((message) => this.broadcast(message));
+  private streamManager = new VoiceStreamManager();
   private cancellationRegistry = new CancellationRegistry();
   private triggerEngine: TriggerEngine = new TriggerEngine();
   private eventBus: EventBus = new EventBus();
@@ -1123,6 +1123,37 @@ export class OmniStateGateway {
         }
       }
 
+      // POST /api/wake/event — wake phrase event from Python wake script
+      if (req.method === "POST" && requestPath === "/api/wake/event") {
+        const bodyText = Buffer.concat(chunks).toString("utf-8");
+        let body: { token?: string; phrase?: string; confidence?: number };
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          json(400, { ok: false, error: "Invalid JSON body" });
+          return;
+        }
+
+        const expectedToken = process.env.OMNISTATE_SIRI_TOKEN ?? siri.token ?? "";
+        if (expectedToken && body.token !== expectedToken) {
+          json(401, { error: "unauthorized" });
+          return;
+        }
+
+        const phrase = (body.phrase ?? "").trim();
+        if (!phrase) {
+          json(400, { ok: false, error: "Missing phrase" });
+          return;
+        }
+
+        const confidence = typeof body.confidence === "number" ? body.confidence : 1;
+
+        this.broadcast({ type: "wake.event", phrase, confidence } as unknown as import("./protocol.js").ServerMessage);
+
+        json(200, { ok: true });
+        return;
+      }
+
       if (requestPath !== expectedPath) {
         json(404, { ok: false, error: "Not found" });
         return;
@@ -1168,8 +1199,14 @@ export class OmniStateGateway {
 
     wsConnectionsGauge.inc();
 
-    ws.on("message", (raw) => {
+    ws.on("message", (raw, isBinary) => {
       try {
+        if (isBinary) {
+          this.streamManager.handleBinaryFrame(clientId, raw as Buffer, (msg) => {
+            if (ws.readyState === 1) ws.send(JSON.stringify(msg));
+          });
+          return;
+        }
         const msg: ClientMessage = JSON.parse(raw.toString());
         this.handleMessage(clientId, ws, msg, remoteIp, isLocalhost).catch((err) => {
           ws.send(
@@ -1199,6 +1236,7 @@ export class OmniStateGateway {
 
     ws.on("close", () => {
       clearInterval(pingInterval);
+      this.streamManager.dropSession(clientId);
       this.clients.delete(clientId);
       wsConnectionsGauge.dec();
     });
@@ -1472,76 +1510,63 @@ export class OmniStateGateway {
       }
 
       case "voice.transcribe": {
-        const { id, audio } = msg;
-        try {
-          const sessionId = id;
-          this.voiceSessions.start({ sessionId, send: (m) => this.safeSend(ws, m) });
-          this.voiceSessions.appendChunk(sessionId, Buffer.from(audio, "base64"));
-          const result = await this.voiceSessions.finalize(sessionId);
-
-          if (result.text) {
-            this.safeSend(ws, { type: "voice.transcript", id, text: result.text });
-            const voice = loadLlmRuntimeConfig().voice;
-            const shouldAutoExecute = voice.autoExecuteTranscript && !(voice.siri.enabled && voice.siri.mode === "handoff");
+        const { id, audio } = msg as { id: string; audio: string };
+        const tempSessionId = `transcribe-${id}-${Date.now()}`;
+        let transcriptText: string | null = null;
+        let resolved = false;
+        const finish = (text: string | null) => {
+          if (resolved) return;
+          resolved = true;
+          const voice = loadLlmRuntimeConfig().voice;
+          const shouldAutoExecute = voice.autoExecuteTranscript && !(voice.siri.enabled && voice.siri.mode === "handoff");
+          if (text) {
+            this.safeSend(ws, { type: "voice.transcript", id, text });
             if (shouldAutoExecute) {
               const voiceTaskId = `voice-${id}-${crypto.randomUUID()}`;
-              this.voiceSessions.setTask(sessionId, voiceTaskId);
-              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: result.text });
-              this.executeTaskPipeline(voiceTaskId, result.text, undefined, ws).catch((err) => {
+              this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: text });
+              this.executeTaskPipeline(voiceTaskId, text, undefined, ws).catch((err) => {
                 this.safeSend(ws, { type: "task.error", taskId: voiceTaskId, error: err instanceof Error ? err.message : String(err) });
               });
             }
           } else {
             this.safeSend(ws, { type: "voice.error", id, error: "Could not transcribe audio" });
           }
-        } catch (err: any) {
-          this.safeSend(ws, { type: "voice.error", id, error: err instanceof Error ? err.message : String(err) });
-        }
+        };
+        // Safety timeout: 30s (covers any utterance + VAD silence delay + Whisper processing)
+        const safetyTimer = setTimeout(() => {
+          if (!resolved) finish(transcriptText);
+        }, 30_000);
+        this.streamManager.handleControlMessage(tempSessionId, {
+          type: "voice.stream.start",
+          sessionId: tempSessionId,
+          source: "voice",
+          autoExecute: false,
+          includeContext: false,
+        } as any, (msg: any) => {
+          if (msg.type === "voice.stream.result" && (msg as any).kind === "final") {
+            clearTimeout(safetyTimer);
+            transcriptText = (msg as any).text || null;
+            finish(transcriptText);
+          }
+        });
+        this.streamManager.handleBinaryFrame(tempSessionId, Buffer.from(audio, "base64"), () => {});
+        this.streamManager.handleControlMessage(tempSessionId, {
+          type: "voice.stream.stop",
+          sessionId: tempSessionId,
+        } as any, () => {});
         break;
       }
 
-      case "voice.stream.start": {
-        this.voiceSessions.start({
-          sessionId: msg.sessionId,
-          source: msg.source ?? "voice",
-          send: (m) => this.safeSend(ws, m),
-          autoExecute: msg.autoExecute,
-          includeContext: msg.includeContext,
+      case "voice.stream.start":
+      case "voice.stream.stop": {
+        this.streamManager.handleControlMessage(clientId, msg as any, (serverMsg) => {
+          this.safeSend(ws, serverMsg as unknown as ServerMessage);
         });
         break;
       }
 
-      case "voice.stream.chunk": {
-        try {
-          this.voiceSessions.appendChunk(msg.sessionId, Buffer.from(msg.audio, "base64"));
-        } catch (err) {
-          this.safeSend(ws, { type: "voice.stream.error", sessionId: msg.sessionId, error: err instanceof Error ? err.message : String(err) });
-        }
-        break;
-      }
-
-      case "voice.stream.stop": {
-        try {
-          const result = await this.voiceSessions.finalize(msg.sessionId, { autoExecute: msg.autoExecute, includeContext: msg.includeContext });
-          const session = this.voiceSessions.get(msg.sessionId);
-          const shouldAutoExecute = msg.autoExecute ?? session?.autoExecute ?? loadLlmRuntimeConfig().voice.autoExecuteTranscript;
-          if (result.text && shouldAutoExecute) {
-            const voiceTaskId = `voice-${msg.sessionId}-${crypto.randomUUID()}`;
-            this.voiceSessions.setTask(msg.sessionId, voiceTaskId);
-            this.safeSend(ws, { type: "task.accepted", taskId: voiceTaskId, goal: result.text });
-            this.executeTaskPipeline(voiceTaskId, result.text, undefined, ws).catch((err) => {
-              this.safeSend(ws, { type: "task.error", taskId: voiceTaskId, error: err instanceof Error ? err.message : String(err) });
-            });
-          }
-        } catch (err) {
-          this.safeSend(ws, { type: "voice.stream.error", sessionId: msg.sessionId, error: err instanceof Error ? err.message : String(err) });
-        }
-        break;
-      }
-
       case "voice.session.cancel": {
-        const taskId = this.voiceSessions.cancel(msg.sessionId);
-        if (taskId) this.cancellationRegistry.cancel(taskId);
+        this.streamManager.dropSession(msg.sessionId);
         break;
       }
 
@@ -1725,10 +1750,23 @@ export class OmniStateGateway {
               handled = true;
               config = setVoiceField("autoExecuteTranscript", Boolean(msg.value));
               break;
-            case "voice.wake.enabled":
+            case "voice.wake.enabled": {
               handled = true;
               config = setWakeField("enabled", Boolean(msg.value));
+              if (this.wakeManager) {
+                const runtime = loadLlmRuntimeConfig();
+                if (Boolean(msg.value)) {
+                  this.wakeManager.start({
+                    config: runtime.voice.wake,
+                    endpoint: runtime.voice.siri.endpoint,
+                    token: runtime.voice.siri.token,
+                  });
+                } else {
+                  this.wakeManager.stop();
+                }
+              }
               break;
+            }
             case "voice.wake.phrase":
               handled = true;
               config = setWakeField("phrase", String(msg.value));
@@ -1761,6 +1799,44 @@ export class OmniStateGateway {
               handled = true;
               config = setSiriField("token", String(msg.value));
               break;
+            case "vad.silenceThresholdMs": {
+              handled = true;
+              const conf = loadLlmRuntimeConfig();
+              const n = Number(msg.value);
+              if (!Number.isNaN(n) && Number.isFinite(n) && n >= 50) {
+                conf.voice.vad.silenceThresholdMs = Math.round(n);
+                saveLlmRuntimeConfig(conf);
+                config = conf;
+              }
+              break;
+            }
+            case "vad.speechThreshold": {
+              handled = true;
+              const conf = loadLlmRuntimeConfig();
+              const n = Number(msg.value);
+              if (!Number.isNaN(n) && Number.isFinite(n) && n >= 0 && n <= 1) {
+                conf.voice.vad.speechThreshold = n;
+                saveLlmRuntimeConfig(conf);
+                config = conf;
+              }
+              break;
+            }
+            case "vad.minSpeechMs": {
+              handled = true;
+              const conf = loadLlmRuntimeConfig();
+              const n = Number(msg.value);
+              if (!Number.isNaN(n) && Number.isFinite(n) && n >= 10) {
+                conf.voice.vad.minSpeechMs = Math.round(n);
+                saveLlmRuntimeConfig(conf);
+                config = conf;
+              }
+              break;
+            }
+            case "provider.delete": {
+              handled = true;
+              config = deleteProvider(String(msg.value));
+              break;
+            }
           }
 
           if (!handled) {
@@ -1851,6 +1927,23 @@ export class OmniStateGateway {
         this.safeSend(ws, {
           type: "runtime.config.report",
           config,
+        } as ServerMessage);
+        break;
+      }
+
+      case "runtime.config.deleteProvider": {
+        const msg_ = msg as RuntimeConfigDeleteProviderMessage;
+        const conf = deleteProvider(msg_.providerId);
+        this.safeSend(ws, {
+          type: "runtime.config.ack",
+          ok: true,
+          key: "provider",
+          message: `Deleted provider ${msg_.providerId}`,
+          config: conf,
+        } as ServerMessage);
+        this.safeSend(ws, {
+          type: "runtime.config.report",
+          config: conf,
         } as ServerMessage);
         break;
       }

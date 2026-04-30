@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Combine
 
 /// Monitors system-wide events: clipboard changes, Downloads folder, app switches.
@@ -19,7 +20,46 @@ final class GlobalEventMonitor: ObservableObject {
     private var downloadsMonitor: DispatchSourceFileSystemObject?
     private var downloadsFileDescriptor: Int32 = -1
 
+    // FOMO mouse tracking
+    private var fomoTimer: Timer?
+    private var lastFomoPosition: CGPoint = .zero
+    private var fomoActive = false
+    private var lastFomoFlash: Date = .distantPast
+
     private init() {}
+
+    // MARK: - FOMO Mouse Tracking (bounding box follows cursor during active task)
+
+    func startFomoTracking() {
+        guard !fomoActive else { return }
+        fomoActive = true
+        lastFomoPosition = NSEvent.mouseLocation
+        fomoTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateFomoPosition()
+            }
+        }
+    }
+
+    func stopFomoTracking() {
+        fomoActive = false
+        fomoTimer?.invalidate()
+        fomoTimer = nil
+        BoundingBoxController.shared.clearAll()
+    }
+
+    private func updateFomoPosition() {
+        guard fomoActive else { return }
+        let pos = NSEvent.mouseLocation
+        // Only flash if mouse moved significantly (avoid spam at same position)
+        let dx = abs(pos.x - lastFomoPosition.x)
+        let dy = abs(pos.y - lastFomoPosition.y)
+        if (dx > 20 || dy > 20) && Date().timeIntervalSince(lastFomoFlash) > 0.3 {
+            lastFomoPosition = pos
+            BoundingBoxController.shared.flashPoint(x: pos.x, y: pos.y, color: .systemGreen, label: "cursor")
+            lastFomoFlash = Date()
+        }
+    }
 
     // MARK: - Start/Stop
 
@@ -32,6 +72,7 @@ final class GlobalEventMonitor: ObservableObject {
 
     func stopMonitoring() {
         isMonitoring = false
+        stopFomoTracking()
         clipboardTimer?.invalidate()
         clipboardTimer = nil
         downloadsMonitor?.cancel()

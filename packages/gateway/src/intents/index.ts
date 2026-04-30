@@ -180,7 +180,21 @@ import {
   wifiScan, wifiDetails, wifiMonitorStart, wifiMonitorStop,
   networkCapture, networkScanHosts, networkScanPorts, networkDns, networkWhois,
   securityTools, securityAudit,
+  wifiDeepScan, wifiSignal, wifiChannel, wifiCaptureHandshake, wifiInstallTools,
 } from "./security.js";
+import {
+  iokitThermals, iokitFans, iokitBatteryHealth, iokitGPU, iokitCPUUsage,
+  iokitMemoryPressure, iokitNVRAMGet, iokitNVRAMSet, iokitNVRAMList,
+  iokitPCIDevices, iokitUSBTree, iokitSMCKeys, iokitSMCRead,
+} from "./iokit.js";
+import {
+  kernelSysctlGet, kernelSysctlSet, kernelSysctlAll, kernelSysctlPrefix,
+  kernelVMStats, kernelSwapUsage, kernelPurgeMemory,
+  kernelListKexts, kernelGetKext, kernelTraceSyscalls, kernelOpenFiles, kernelFDs,
+  kernelSpotlight, kernelMdutilStatus, kernelMdutilControl,
+  kernelSIPStatus, kernelBootArgs,
+  kernelLaunchctlList, kernelLaunchctlLoad, kernelLaunchctlUnload, kernelLaunchctlKickstart,
+} from "./kernel-intents.js";
 
 export { IntentRegistry } from "./types.js";
 export type { StructuredResponse, HandlerContext, HandlerLayers, IntentHandler } from "./types.js";
@@ -934,3 +948,48 @@ intentRegistry.register("workflow.meeting", workflowMeeting);
 intentRegistry.register("workflow.dev", workflowDev);
 intentRegistry.register("generic.execute", genericExecute);
 intentRegistry.register("alarm.set", alarmSet);
+
+// ── IOKit — direct hardware sensor access ─────────────────────────────────────
+intentRegistry.register("iokit.thermals", iokitThermals);
+intentRegistry.register("iokit.fans", iokitFans);
+intentRegistry.register("iokit.battery.health", iokitBatteryHealth);
+intentRegistry.register("iokit.gpu", iokitGPU);
+intentRegistry.register("iokit.cpu.usage", iokitCPUUsage);
+intentRegistry.register("iokit.memory.pressure", iokitMemoryPressure);
+intentRegistry.register("iokit.nvram.get", iokitNVRAMGet);
+intentRegistry.register("iokit.nvram.set", iokitNVRAMSet);
+intentRegistry.register("iokit.nvram.list", iokitNVRAMList);
+intentRegistry.register("iokit.pci.devices", iokitPCIDevices);
+intentRegistry.register("iokit.usb.tree", iokitUSBTree);
+intentRegistry.register("iokit.smc.keys", iokitSMCKeys);
+intentRegistry.register("iokit.smc.read", iokitSMCRead);
+
+// ── Kernel — deep OS kernel control ───────────────────────────────────────────
+intentRegistry.register("kernel.sysctl.get", kernelSysctlGet);
+intentRegistry.register("kernel.sysctl.set", kernelSysctlSet);
+intentRegistry.register("kernel.sysctl.all", kernelSysctlAll);
+intentRegistry.register("kernel.sysctl.prefix", kernelSysctlPrefix);
+intentRegistry.register("kernel.vm.stats", kernelVMStats);
+intentRegistry.register("kernel.swap.usage", kernelSwapUsage);
+intentRegistry.register("kernel.memory.purge", kernelPurgeMemory);
+intentRegistry.register("kernel.kext.list", kernelListKexts);
+intentRegistry.register("kernel.kext.get", kernelGetKext);
+intentRegistry.register("kernel.trace.syscalls", kernelTraceSyscalls);
+intentRegistry.register("kernel.trace.openfiles", kernelOpenFiles);
+intentRegistry.register("kernel.trace.fds", kernelFDs);
+intentRegistry.register("kernel.spotlight.query", kernelSpotlight);
+intentRegistry.register("kernel.mdutil.status", kernelMdutilStatus);
+intentRegistry.register("kernel.mdutil.control", kernelMdutilControl);
+intentRegistry.register("kernel.sip.status", kernelSIPStatus);
+intentRegistry.register("kernel.boot.args", kernelBootArgs);
+intentRegistry.register("kernel.launchctl.list", kernelLaunchctlList);
+intentRegistry.register("kernel.launchctl.load", kernelLaunchctlLoad);
+intentRegistry.register("kernel.launchctl.unload", kernelLaunchctlUnload);
+intentRegistry.register("kernel.launchctl.kickstart", kernelLaunchctlKickstart);
+
+// ── WiFi Deep Control ─────────────────────────────────────────────────────────
+intentRegistry.register("wifi.deep.scan", wifiDeepScan);
+intentRegistry.register("wifi.signal", wifiSignal);
+intentRegistry.register("wifi.channel.set", wifiChannel);
+intentRegistry.register("wifi.capture.handshake", wifiCaptureHandshake);
+intentRegistry.register("wifi.tools.install", wifiInstallTools);

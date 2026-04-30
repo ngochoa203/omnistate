@@ -3,43 +3,43 @@ import type { IntentHandler } from "./types.js";
 // ── Shell ─────────────────────────────────────────────────────────────────────
 
 export const shellType: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const shellType = await deepSystem.getShellType();
   return { speak: "Shell type retrieved.", data: { shellType } };
 };
 
 export const shellConfig: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const config = await deepSystem.getShellConfig();
   return { speak: "Shell config retrieved.", data: { config } };
 };
 
 export const shellAddAlias: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.addAlias(args.name as string, args.command as string);
   return { speak: "Alias added.", data: { success } };
 };
 
 export const shellRemoveAlias: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.removeAlias(args.name as string);
   return { speak: "Alias removed.", data: { success } };
 };
 
 export const shellAliases: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const aliases = await deepSystem.listAliases();
   return { speak: "Aliases listed.", data: { aliases } };
 };
 
 export const shellAddToPath: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.addToPath(args.dir as string);
   return { speak: "Path updated.", data: { success } };
 };
 
 export const shellHistory: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const history = await deepSystem.getShellHistory(args.limit as number | undefined);
   return { speak: "Shell history retrieved.", data: { history } };
 };
@@ -113,20 +113,20 @@ export const gitBranch: IntentHandler = async (args, ctx) => {
 // ── Docker ────────────────────────────────────────────────────────────────────
 
 export const dockerPs: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const containers = await deepSystem.listContainers();
   return { speak: "Containers listed.", data: { success: true, containers } };
 };
 
 export const dockerStart: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const name = String(args.name ?? args.container ?? "");
   const success = await deepSystem.startContainer(name);
   return { speak: `Container ${name} started.`, data: { success, name, action: "started" } };
 };
 
 export const dockerStop: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const name = String(args.name ?? args.container ?? "");
   const success = await deepSystem.stopContainer(name);
   return { speak: `Container ${name} stopped.`, data: { success, name, action: "stopped" } };
@@ -141,7 +141,7 @@ export const dockerCompose: IntentHandler = async (args, ctx) => {
 };
 
 export const dockerStatus: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const running = await deepSystem.isDockerRunning();
   return { speak: running ? "Docker is running." : "Docker is not running.", data: { running } };
 };
@@ -149,43 +149,43 @@ export const dockerStatus: IntentHandler = async (_args, ctx) => {
 // ── Container ─────────────────────────────────────────────────────────────────
 
 export const containerList: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const containers = await deepSystem.listContainers(args.all as boolean | undefined);
   return { speak: "Containers listed.", data: { containers } };
 };
 
 export const containerStart: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.startContainer(args.id as string);
   return { speak: "Container started.", data: { success } };
 };
 
 export const containerStop: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.stopContainer(args.id as string);
   return { speak: "Container stopped.", data: { success } };
 };
 
 export const containerRemove: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.removeContainer(args.id as string);
   return { speak: "Container removed.", data: { success } };
 };
 
 export const containerLogs: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const logs = await deepSystem.getContainerLogs(args.id as string, args.tail as number | undefined);
   return { speak: "Container logs retrieved.", data: { logs } };
 };
 
 export const containerImages: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const images = await deepSystem.listImages();
   return { speak: "Images listed.", data: { images } };
 };
 
 export const containerPull: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.pullImage(args.name as string);
   return { speak: "Image pulled.", data: { success } };
 };
@@ -193,19 +193,19 @@ export const containerPull: IntentHandler = async (args, ctx) => {
 // ── VM ────────────────────────────────────────────────────────────────────────
 
 export const vmList: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const vms = await deepSystem.listVMs();
   return { speak: "VMs listed.", data: { vms } };
 };
 
 export const vmStart: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.startVM(args.name as string);
   return { speak: "VM started.", data: { success } };
 };
 
 export const vmStop: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.stopVM(args.name as string);
   return { speak: "VM stopped.", data: { success } };
 };
@@ -213,109 +213,109 @@ export const vmStop: IntentHandler = async (args, ctx) => {
 // ── Developer layer ───────────────────────────────────────────────────────────
 
 export const devOpenTerminal: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   await developer.openTerminal(args);
   return { speak: "Terminal opened.", data: { success: true } };
 };
 
 export const devRunCommand: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.runCommand(args.command as string, args);
   return { speak: "Command executed.", data: result };
 };
 
 export const devRunCommandAsync: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.runCommandAsync(args.command as string, args);
   return { speak: "Command started.", data: result };
 };
 
 export const devGetRunningShells: IntentHandler = async (_args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const shells = await developer.getRunningShells();
   return { speak: "Running shells retrieved.", data: { shells } };
 };
 
 export const devGetShellHistory: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const history = await developer.getShellHistory((args.shell as "zsh" | "bash" | undefined) ?? "zsh", args.limit as number | undefined);
   return { speak: "Shell history retrieved.", data: { history } };
 };
 
 export const devGetEnvironment: IntentHandler = async (_args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const env = await developer.getEnvironment();
   return { speak: "Environment retrieved.", data: { env } };
 };
 
 export const devGitStatus: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const status = await developer.gitStatus(args.repoPath as string | undefined);
   return { speak: "Git status retrieved.", data: status };
 };
 
 export const devGitLog: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const log = await developer.gitLog(args.repoPath as string | undefined, args.limit as number | undefined);
   return { speak: "Git log retrieved.", data: { log } };
 };
 
 export const devGitDiff: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const diff = await developer.gitDiff(args.repoPath as string | undefined, args.staged as boolean | undefined);
   return { speak: "Git diff retrieved.", data: { diff } };
 };
 
 export const devGitBranches: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const branches = await developer.gitBranches(args.repoPath as string | undefined);
   return { speak: "Git branches retrieved.", data: { branches } };
 };
 
 export const devGitCommit: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.gitCommit(args.message as string, args.repoPath as string | undefined);
   return { speak: "Committed.", data: result };
 };
 
 export const devGitPush: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.gitPush(args.repoPath as string | undefined, args.remote as string | undefined, args.branch as string | undefined);
   return { speak: "Pushed.", data: result };
 };
 
 export const devGitPull: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.gitPull(args.repoPath as string | undefined, args.remote as string | undefined);
   return { speak: "Pulled.", data: result };
 };
 
 export const devGitClone: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.gitClone(args.url as string, args.destination as string | undefined);
   return { speak: "Repository cloned.", data: result };
 };
 
 export const devOpenInEditor: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   await developer.openInEditor(args.path as string, args.editor);
   return { speak: "Opened in editor.", data: { success: true } };
 };
 
 export const devOpenProject: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   await developer.openProject(args.path as string, args.editor);
   return { speak: "Project opened.", data: { success: true } };
 };
 
 export const devGetOpenEditors: IntentHandler = async (_args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const editors = await developer.getOpenEditors();
   return { speak: "Open editors retrieved.", data: { editors } };
 };
 
 export const devSearchInProject: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const results = await developer.searchInProject(
     args.query as string,
     (args.projectPath as string | undefined) ?? process.cwd(),
@@ -325,43 +325,43 @@ export const devSearchInProject: IntentHandler = async (args, ctx) => {
 };
 
 export const devGetProjectStructure: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const structure = await developer.getProjectStructure(args.path as string, args.depth as number | undefined);
   return { speak: "Project structure retrieved.", data: { structure } };
 };
 
 export const devDockerPs: IntentHandler = async (_args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const containers = await developer.dockerPs();
   return { speak: "Containers listed.", data: { containers } };
 };
 
 export const devDockerImages: IntentHandler = async (_args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const images = await developer.dockerImages();
   return { speak: "Images listed.", data: { images } };
 };
 
 export const devDockerRun: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.dockerRun(args);
   return { speak: "Container started.", data: result };
 };
 
 export const devDockerStop: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   await developer.dockerStop(args.containerId as string);
   return { speak: "Container stopped.", data: { success: true } };
 };
 
 export const devDockerLogs: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const logs = await developer.dockerLogs(args.containerId as string, args.lines as number | undefined);
   return { speak: "Container logs retrieved.", data: { logs } };
 };
 
 export const devDockerCompose: IntentHandler = async (args, ctx) => {
-  const developer = (ctx.layers as any).developer;
+  const developer = ctx.layers.developer as any;
   const result = await developer.dockerCompose(args.action, args.projectPath as string | undefined);
   return { speak: "Docker Compose operation complete.", data: result };
 };

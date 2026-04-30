@@ -354,8 +354,18 @@ struct ContentView: View {
     @State private var innovationAutopilotRunning = false
     @State private var innovationAutoExpanded = false
     @State private var innovationLastExecutedTitle = ""
+    @State private var providerDeleteConfirmation: String?
+    @State private var providerDeleteMessage = ""
+    @State private var configProviderTimeoutMs: Double = 30000
+    @State private var configPreflightTimeoutMs: Double = 10000
+    @State private var latencyData: LatencyResult?
+    @State private var latencyLoading = false
 
     private static let sharedSpeechSynthesizer = AVSpeechSynthesizer()
+
+    // MARK: - Screen Tree Models
+
+    // (Moved to ScreenTreeView.swift)
 
     private var selectedSessionIndex: Int? {
         guard let selectedConversationID else { return nil }
@@ -786,6 +796,13 @@ struct ContentView: View {
         .onChange(of: socketClient.sessionMemoryByConversation) { mergeMemoryFromBackend($0) }
         .onChange(of: socketClient.sharedMemorySummary) { sharedMemorySummary = $0 }
         .onChange(of: socketClient.messages.count) { _ in captureLatestSocketMessage() }
+        .onChange(of: socketClient.taskExecutionPhase) { phase in
+            if phase == "executing" {
+                GlobalEventMonitor.shared.startFomoTracking()
+            } else {
+                GlobalEventMonitor.shared.stopFomoTracking()
+            }
+        }
         .onChange(of: socketClient.wakeDetectedAt) { _ in handleExternalWakeEvent() }
         .onChange(of: voiceCaptureService.transcript) { _ in handleVoiceTranscriptChange() }
         .onChange(of: voiceCaptureService.isRecording) { recording in
@@ -1077,7 +1094,7 @@ struct ContentView: View {
             case .health: healthView
             case .machine: machineInfoView
             case .config: configView
-            case .screenTree: screenTreeView
+            case .screenTree: ScreenTreePageView()
             case .triggers: triggersView
             case .settings: settingsView
             }
@@ -2048,7 +2065,7 @@ struct ContentView: View {
         try? AttributedString(
             markdown: text,
             options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .full,
+                interpretedSyntax: .inlineOnly,
                 failurePolicy: .returnPartiallyParsedIfPossible
             )
         )
@@ -2371,6 +2388,7 @@ struct ContentView: View {
             Button(tx("Dùng wake phrase 'mimi'", "Use wake phrase 'mimi'")) {
                 socketClient.setRuntimeConfig(key: "voice.wake.phrase", value: "mimi")
                 socketClient.setRuntimeConfig(key: "voice.wake.enabled", value: true)
+                UserDefaults.standard.set(true, forKey: "voice.wake.userToggled")
                 socketClient.queryRuntimeConfig()
             }
             .buttonStyle(.bordered)
@@ -2626,6 +2644,57 @@ struct ContentView: View {
 
     // MARK: ========== Config ==========
 
+    private var configProviderPicker: some View {
+        Picker(tx("Provider", "Provider"), selection: $configSelectedProviderId) {
+            ForEach(providerOptions, id: \.id) { option in
+                Text(option.label).tag(option.id)
+            }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: configSelectedProviderId) { value in
+            var matchedProvider: RuntimeProviderOption?
+            for option in providerOptions {
+                if option.id == value {
+                    matchedProvider = option
+                    break
+                }
+            }
+            guard let provider = matchedProvider else { return }
+            if provider.models.contains(configSelectedModel) {
+                return
+            }
+            configSelectedModel = provider.models.first ?? ""
+        }
+    }
+
+    @ViewBuilder
+    private var activeProviderPreflightStatus: some View {
+        if let pf = socketClient.llmPreflight {
+            if pf.ok {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(CyberColor.green).font(.system(size: 13))
+                    Text("Ready").font(.system(size: 12, weight: .semibold)).foregroundColor(CyberColor.green)
+                    Text("—").foregroundColor(CyberColor.textMuted)
+                    Text(pf.message).font(.system(size: 11)).foregroundColor(CyberColor.textSecondary).lineLimit(2)
+                }
+            } else if pf.message.lowercased().contains("key") || pf.message.lowercased().contains("empty") {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(CyberColor.orange).font(.system(size: 13))
+                    Text("No API key").font(.system(size: 12, weight: .semibold)).foregroundColor(CyberColor.orange)
+                    Text("—").foregroundColor(CyberColor.textMuted)
+                    Text(pf.message).font(.system(size: 11)).foregroundColor(CyberColor.textSecondary).lineLimit(2)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(CyberColor.red).font(.system(size: 13))
+                    Text("Failed").font(.system(size: 12, weight: .semibold)).foregroundColor(CyberColor.red)
+                    Text("—").foregroundColor(CyberColor.textMuted)
+                    Text(pf.message).font(.system(size: 11)).foregroundColor(CyberColor.textSecondary).lineLimit(2)
+                }
+            }
+        }
+    }
+
     private var configView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -2643,26 +2712,7 @@ struct ContentView: View {
                                 .font(.system(size: 12))
                                 .foregroundColor(CyberColor.textMuted)
                         } else {
-                            Picker(tx("Provider", "Provider"), selection: $configSelectedProviderId) {
-                                ForEach(providerOptions, id: \.id) { option in
-                                    Text(option.label).tag(option.id)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .onChange(of: configSelectedProviderId) { value in
-                                var matchedProvider: RuntimeProviderOption?
-                                for option in providerOptions {
-                                    if option.id == value {
-                                        matchedProvider = option
-                                        break
-                                    }
-                                }
-                                guard let provider = matchedProvider else { return }
-                                if provider.models.contains(configSelectedModel) {
-                                    return
-                                }
-                                configSelectedModel = provider.models.first ?? ""
-                            }
+                            configProviderPicker
 
                             if !configModelOptions.isEmpty {
                                 Picker(tx("Model", "Model"), selection: $configSelectedModel) {
@@ -2717,12 +2767,7 @@ struct ContentView: View {
                             Text(socketClient.runtimeModel.isEmpty ? "default" : socketClient.runtimeModel)
                                 .font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundColor(CyberColor.textPrimary)
                         }
-                        if let pf = socketClient.llmPreflight {
-                            HStack(spacing: 6) {
-                                Circle().fill(pf.ok ? CyberColor.green : CyberColor.red).frame(width: 6, height: 6).shadow(color: (pf.ok ? CyberColor.green : CyberColor.red).opacity(0.5), radius: 4)
-                                Text(pf.message).font(.system(size: 11, weight: .medium)).foregroundColor(CyberColor.textSecondary)
-                            }
-                        }
+                        activeProviderPreflightStatus
                         HStack(spacing: 8) {
                             Button(tx("Check API", "Check API")) { socketClient.queryLlmPreflight() }
                             Button(tx("Refresh Config", "Refresh Config")) { socketClient.queryRuntimeConfig() }
@@ -2979,7 +3024,51 @@ struct ContentView: View {
                     }
                 }
 
-                stagedSection(7) {
+                // Timeout config
+                GlowCard(glow: CyberColor.orange.opacity(0.2)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Advanced: Timeouts", "Advanced: Timeouts"))
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(tx("Provider timeout", "Provider timeout"))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Spacer()
+                                Text("\(Int(configProviderTimeoutMs))ms")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(CyberColor.cyan)
+                            }
+                            Stepper("", value: $configProviderTimeoutMs, in: 5000...120000, step: 5000)
+                                .labelsHidden()
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(tx("Preflight timeout", "Preflight timeout"))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Spacer()
+                                Text("\(Int(configPreflightTimeoutMs))ms")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(CyberColor.cyan)
+                            }
+                            Stepper("", value: $configPreflightTimeoutMs, in: 3000...60000, step: 3000)
+                                .labelsHidden()
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(tx("Apply timeouts", "Apply timeouts")) {
+                                socketClient.setRuntimeConfig(key: "provider.timeoutMs", value: Int(configProviderTimeoutMs))
+                                socketClient.setRuntimeConfig(key: "preflight.timeoutMs", value: Int(configPreflightTimeoutMs))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CyberColor.orange.opacity(0.8))
+                        }
+                    }
+                }
+
+                stagedSection(8) {
                     GlowCard(glow: CyberColor.orange.opacity(0.18)) {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel(text: tx("Runtime Settings", "Runtime Settings"))
@@ -3021,6 +3110,103 @@ struct ContentView: View {
                         }
                     }
                 }
+
+                stagedSection(8) {
+                    GlowCard(glow: CyberColor.green.opacity(0.2)) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SectionLabel(text: tx("Độ trễ & Hiệu năng", "Latency & Performance"))
+
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tx("Low Latency", "Low Latency")).font(.system(size: 11, weight: .medium)).foregroundColor(CyberColor.textMuted)
+                                    Toggle("", isOn: Binding(get: { socketClient.voiceLowLatency }, set: { v in
+                                        socketClient.setRuntimeConfig(key: "voice.lowLatency", value: v)
+                                        socketClient.queryRuntimeConfig()
+                                    })).toggleStyle(.switch)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tx("Chunk (ms)", "Chunk (ms)")).font(.system(size: 11, weight: .medium)).foregroundColor(CyberColor.textMuted)
+                                    Stepper("", value: Binding(get: { socketClient.voiceChunkMs }, set: { v in
+                                        socketClient.setRuntimeConfig(key: "voice.chunkMs", value: v)
+                                        socketClient.queryRuntimeConfig()
+                                    }), in: 100...500, step: 50)
+                                    Text("\(socketClient.voiceChunkMs) ms").font(.system(size: 11, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tx("Cooldown", "Cooldown")).font(.system(size: 11, weight: .medium)).foregroundColor(CyberColor.textMuted)
+                                    Text("\(socketClient.voiceWakeCooldownMs) ms").font(.system(size: 11, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(tx("Cmd Window", "Cmd Window")).font(.system(size: 11, weight: .medium)).foregroundColor(CyberColor.textMuted)
+                                    Text("\(socketClient.voiceWakeCommandWindowSec) s").font(.system(size: 11, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
+                                }
+                            }
+
+                            Divider().padding(.vertical, 2)
+
+                            HStack(spacing: 8) {
+                                Button(tx("Chạy benchmark latency", "Run latency benchmark")) {
+                                    fetchLatency()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(CyberColor.green.opacity(0.8))
+
+                                if latencyLoading {
+                                    ProgressView().scaleEffect(0.7)
+                                }
+                            }
+
+                            if latencyLoading {
+                                Text(tx("Đang benchmark...", "Benchmarking...")).font(.system(size: 11)).foregroundColor(CyberColor.textMuted)
+                            } else if let lat = latencyData {
+                                HStack(spacing: 0) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("p50").font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(CyberColor.textMuted)
+                                        Text(String(format: "%.1f ms", lat.p50)).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundColor(CyberColor.cyan)
+                                    }.frame(minWidth: 60)
+                                    Divider().frame(height: 30)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("p95").font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(CyberColor.textMuted)
+                                        Text(String(format: "%.1f ms", lat.p95)).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundColor(lat.p95 < 50 ? CyberColor.green : CyberColor.orange)
+                                    }.frame(minWidth: 60)
+                                    Divider().frame(height: 30)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("max").font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(CyberColor.textMuted)
+                                        Text(String(format: "%.1f ms", lat.max)).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundColor(CyberColor.textPrimary)
+                                    }.frame(minWidth: 60)
+                                    Spacer()
+                                    if lat.passUnder50msP95 {
+                                        CyberBadge(text: "PASS", color: CyberColor.green)
+                                    } else {
+                                        CyberBadge(text: "FAIL", color: CyberColor.red)
+                                    }
+                                }
+
+                                if let frame = lat.frame {
+                                    HStack(spacing: 8) {
+                                        CyberBadge(text: tx("Frame", "Frame"), color: CyberColor.blue)
+                                        Text(String(format: "p50 %.1f  p95 %.1f  max %.1f", frame.p50, frame.p95, frame.max))
+                                            .font(.system(size: 10, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
+                                        Text(String(format: "✓ %.0f%%", frame.under50Rate * 100))
+                                            .font(.system(size: 10, weight: .medium)).foregroundColor(CyberColor.green)
+                                    }
+                                }
+                                if let tree = lat.tree {
+                                    HStack(spacing: 8) {
+                                        CyberBadge(text: tx("Tree", "Tree"), color: CyberColor.purple)
+                                        Text(String(format: "p50 %.1f  p95 %.1f  max %.1f", tree.p50, tree.p95, tree.max))
+                                            .font(.system(size: 10, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
+                                        Text(String(format: "✓ %.0f%%", tree.under50Rate * 100))
+                                            .font(.system(size: 10, weight: .medium)).foregroundColor(CyberColor.green)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .padding(pagePadding)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3045,80 +3231,41 @@ struct ContentView: View {
                 }
             }
         }
+        .alert("Delete Provider?", isPresented: Binding(
+            get: { providerDeleteConfirmation != nil },
+            set: { if !$0 { providerDeleteConfirmation = nil } }
+        )) {
+            Button(role: .destructive) {
+                if let id = providerDeleteConfirmation {
+                    deleteProviderById(id)
+                }
+            } label: { Text(tx("Xoá", "Delete")) }
+            Button(role: .cancel) { providerDeleteConfirmation = nil } label: { Text(tx("Huỷ", "Cancel")) }
+        } message: {
+            Text(providerDeleteMessage)
+        }
     }
 
-    // MARK: ========== Screen Tree (Session & Memory) ==========
+    // MARK: ========== Screen Tree ==========
+    // (Moved to ScreenTreeView.swift — ScreenTreePageView replaces screenTreeView)
 
-    private var screenTreeView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HeroSection(icon: "brain.head.profile", iconColor: CyberColor.purple, title: "Session & Memory", subtitle: tx("Quản lý phiên và bộ nhớ chia sẻ", "Manage sessions and shared memory"))
-
-                GlowCard(glow: CyberColor.purple.opacity(0.2)) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(text: tx("Session Overview", "Session Overview"))
-                        HStack(spacing: 8) {
-                            CyberBadge(text: tx("Local sessions: \(sessions.count)", "Local sessions: \(sessions.count)"), color: CyberColor.cyan)
-                            CyberBadge(text: tx("Runtime sessions: \(socketClient.runtimeSessions.count)", "Runtime sessions: \(socketClient.runtimeSessions.count)"), color: CyberColor.purple)
-                            CyberBadge(text: tx("Shared logs: \(sharedMemorySummary.isEmpty ? 0 : 1)", "Shared logs: \(sharedMemorySummary.isEmpty ? 0 : 1)"), color: CyberColor.blue)
-                            Spacer()
-                            Button(tx("Clear all sessions", "Clear all sessions")) {
-                                clearAllSessions()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                        Text(tx("Tip: dùng Sync để đẩy toàn bộ state lên backend trước khi đổi model/provider.", "Tip: use Sync to push full state to backend before switching model/provider."))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(CyberColor.textMuted)
-                    }
-                }
-
-                GlowCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(text: "Runtime Sessions")
-                        if socketClient.runtimeSessions.isEmpty {
-                            Text(tx("Chưa có session", "No sessions")).foregroundColor(CyberColor.textMuted)
-                        } else {
-                            ForEach(socketClient.runtimeSessions) { session in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(session.name).font(.system(size: 13, weight: .semibold)).foregroundColor(CyberColor.textPrimary)
-                                        Text("id: \(session.id.prefix(12))... • msgs: \(session.messageCount)")
-                                            .font(.system(size: 11, design: .monospaced)).foregroundColor(CyberColor.textMuted)
-                                    }
-                                    Spacer()
-                                    if session.id == socketClient.runtimeCurrentSessionId {
-                                        CyberBadge(text: "current", color: CyberColor.cyan)
-                                    }
-                                }
-                                .padding(.vertical, 3)
-                            }
-                        }
-                        Button(tx("Refresh sessions", "Refresh sessions")) {
-                            socketClient.queryRuntimeConfig()
-                            socketClient.queryClaudeMem()
-                        }
-                        .buttonStyle(.bordered).tint(CyberColor.cyan.opacity(0.7))
-                    }
-                }
-
-                GlowCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(text: "Shared Memory")
-                        TextField(tx("Shared summary", "Shared summary"), text: $sharedMemorySummary, axis: .vertical)
-                            .lineLimit(3...8).textFieldStyle(.roundedBorder)
-                        HStack(spacing: 10) {
-                            Button(tx("Pull", "Pull")) { socketClient.queryClaudeMem() }
-                            Button(tx("Sync", "Sync")) { syncAllMemoryToBackend() }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-
+    private func fetchLatency() {
+        latencyLoading = true
+        guard let url = URL(string: "http://localhost:21425/latency/benchmark?profile=full") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            guard let data = data else {
+                DispatchQueue.main.async { self.latencyLoading = false }
+                return
             }
-            .padding(pagePadding)
-        }
+            DispatchQueue.main.async {
+                self.latencyLoading = false
+                if let result = try? JSONDecoder().decode(LatencyResult.self, from: data) {
+                    self.latencyData = result
+                }
+            }
+        }.resume()
     }
 
     // MARK: ========== Triggers ==========
@@ -3191,6 +3338,7 @@ struct ContentView: View {
                         HStack(spacing: 8) {
                             Button(tx("Bắt đầu lắng nghe", "Start listening")) {
                                 socketClient.setRuntimeConfig(key: "voice.wake.enabled", value: true)
+                                UserDefaults.standard.set(true, forKey: "voice.wake.userToggled")
                                 socketClient.queryRuntimeConfig()
                                 socketClient.sendTask(goal: "Enable wake-word listener and verify it is active", conversationId: selectedConversationID)
                             }
@@ -3602,51 +3750,78 @@ struct ContentView: View {
     private func providerOptionCard(_ provider: RuntimeProviderOption) -> some View {
         let isActive = provider.id == socketClient.runtimeProvider
         let modelsLabel = provider.models.joined(separator: ", ")
-        let statusText = provider.enabled ? "✅ Enabled" : "❌ Disabled"
+        let statusText = provider.enabled ? "Enabled" : "Disabled"
         let statusColor = provider.enabled ? CyberColor.green : CyberColor.red
+        let hasApiKey = !(provider.apiKey ?? "").isEmpty
 
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(provider.label)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(isActive ? CyberColor.cyan : CyberColor.textPrimary)
-                if isActive {
-                    CyberBadge(text: "ACTIVE", color: CyberColor.cyan)
-                }
-                Spacer()
-                if !isActive {
-                    Button(tx("Chuyển sang", "Switch")) {
-                        socketClient.setRuntimeConfig(key: "provider", value: provider.id)
-                        socketClient.queryRuntimeConfig()
+            HStack(alignment: .top) {
+                // Left column: name, model, status
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(provider.label)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundColor(isActive ? CyberColor.cyan : CyberColor.textPrimary)
+                        if isActive {
+                            CyberBadge(text: "ACTIVE", color: CyberColor.cyan)
+                        } else {
+                            CyberBadge(text: statusText, color: statusColor)
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(CyberColor.cyan.opacity(0.7))
+                    if !provider.models.isEmpty {
+                        Text(modelsLabel)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(CyberColor.textMuted)
+                            .lineLimit(1)
+                    }
+                    if let k = provider.kind {
+                        Text(k)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(CyberColor.textMuted)
+                    }
+                }
+
+                Spacer()
+
+                // Right column: base URL, api key status, actions
+                VStack(alignment: .trailing, spacing: 5) {
+                    if let url = provider.baseURL, !url.isEmpty {
+                        Text(url)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(CyberColor.textMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 160)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: hasApiKey ? "key.fill" : "key")
+                            .font(.system(size: 9))
+                            .foregroundColor(hasApiKey ? CyberColor.green : CyberColor.textMuted)
+                        Text(hasApiKey ? "key" : "no key")
+                            .font(.system(size: 9))
+                            .foregroundColor(hasApiKey ? CyberColor.green : CyberColor.textMuted)
+                    }
+                    HStack(spacing: 6) {
+                        if !isActive {
+                            Button(tx("Switch", "Switch")) {
+                                socketClient.setRuntimeConfig(key: "provider", value: provider.id)
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(CyberColor.cyan.opacity(0.7))
+                        }
+                        Button(role: .destructive) {
+                            providerDeleteConfirmation = provider.id
+                            providerDeleteMessage = tx("Bạn có chắc muốn xoá provider \"\(provider.label)\"? Hành động này không thể hoàn tác.", "Are you sure you want to delete provider \"\(provider.label)\"? This cannot be undone.")
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
             }
-
-            HStack(spacing: 16) {
-                if let k = provider.kind {
-                    let kindLabel = "Kind: \(k)"
-                    Text(kindLabel)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(CyberColor.textMuted)
-                }
-                if let url = provider.baseURL {
-                    Text(verbatim: url)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(CyberColor.textMuted)
-                        .lineLimit(1)
-                }
-            }
-
-            if !provider.models.isEmpty {
-                Text("Models: \(modelsLabel)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(CyberColor.textSecondary)
-            }
-
-            CyberBadge(text: statusText, color: statusColor)
         }
         .padding(10)
         .background(isActive ? CyberColor.cyan.opacity(0.05) : CyberColor.glassBg)
@@ -4272,6 +4447,10 @@ struct ContentView: View {
         if selectedConversationID == id {
             selectedConversationID = sessions.first?.id
         }
+    }
+
+    private func deleteProviderById(_ id: String) {
+        socketClient.setRuntimeConfig(key: "provider.delete", value: id)
     }
 
     private func clearAllSessions() {

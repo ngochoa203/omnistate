@@ -124,7 +124,7 @@ export class WakeManager {
       const keywordPath = process.env.OMNISTATE_PORCUPINE_KEYWORD_PATH?.trim() ?? "";
       const porcupineEndpoint = options.endpoint.includes("/api/wake/event")
         ? options.endpoint
-        : "http://127.0.0.1:19800/api/wake/event";
+        : "http://127.0.0.1:19801/api/wake/event";
       const porcupineArgs = [
         scriptPath,
         "--access-key", accessKey,
@@ -170,7 +170,7 @@ export class WakeManager {
     // (e.g. "hey mimi" → Safari search). The /api/wake/event handler broadcasts to WS clients.
     const personalEndpoint = options.endpoint.includes("/api/wake/event")
       ? options.endpoint
-      : "http://127.0.0.1:19800/api/wake/event";
+      : "http://127.0.0.1:19801/api/wake/event";
 
     const baseArgs =
       resolvedEngine === "personal"
