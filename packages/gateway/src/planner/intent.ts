@@ -98,6 +98,11 @@ function formatLlmError(err: unknown): string {
   const status = anyErr.status;
   const apiMessage = anyErr.error?.message || anyErr.message || "Unknown LLM API error";
 
+  // "Invalid JSON from LLM" is not an API/network error — propagate it as-is
+  if (anyErr.message?.startsWith("Invalid JSON from LLM:")) {
+    return anyErr.message;
+  }
+
   if (status === 402 || /insufficient_credits/i.test(apiMessage)) {
     return "LLM API error: Insufficient credits. Please top up your account and retry.";
   }
@@ -111,21 +116,43 @@ function formatLlmError(err: unknown): string {
 function parseLlmJson<T>(rawInput: string): T {
   const raw = rawInput.trim();
 
-  // Common model output: fenced JSON block
-  const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  // Common model output: fenced JSON block (handles both inline and multiline)
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   const unfenced = fenced ? fenced[1].trim() : raw;
 
   try {
     return JSON.parse(unfenced) as T;
   } catch {
-    // Fallback: extract first JSON object from mixed text
+    // Fallback 1: extract first JSON object {...} from mixed text
     const firstBrace = unfenced.indexOf("{");
     const lastBrace = unfenced.lastIndexOf("}");
     if (firstBrace >= 0 && lastBrace > firstBrace) {
-      const slice = unfenced.slice(firstBrace, lastBrace + 1);
-      return JSON.parse(slice) as T;
+      try {
+        return JSON.parse(unfenced.slice(firstBrace, lastBrace + 1)) as T;
+      } catch {
+        // continue to next fallback
+      }
     }
-    throw new Error(`Invalid JSON from LLM: ${raw.slice(0, 160)}`);
+
+    // Fallback 2: extract first JSON array [...] from mixed text
+    const firstBracket = unfenced.indexOf("[");
+    const lastBracket = unfenced.lastIndexOf("]");
+    if (firstBracket >= 0 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(unfenced.slice(firstBracket, lastBracket + 1)) as T;
+      } catch {
+        // continue to error
+      }
+    }
+
+    // Sanitize preview: strip markdown bold, emojis, newlines for cleaner error
+    const preview = raw
+      .replace(/\*\*([^*]*)\*\*/g, "$1")
+      .replace(/[^\x20-\x7EÀ-ɏ]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+    throw new Error(`Invalid JSON from LLM: ${preview}`);
   }
 }
 
@@ -343,10 +370,52 @@ const QUICK_INTENT_MAP: Record<string, { type: string; confidence: number }> = {
   "table": { type: "ui-interaction", confidence: 0.90 },
   "accessibility": { type: "ui-interaction", confidence: 0.90 },
   "language": { type: "ui-interaction", confidence: 0.90 },
+
+  // Developer tools
+  "ssh": { type: "shell-command", confidence: 0.95 },
+  "pip": { type: "package-management", confidence: 0.95 },
+  "pip3": { type: "package-management", confidence: 0.95 },
+  "git commit": { type: "shell-command", confidence: 0.95 },
+  "git push": { type: "shell-command", confidence: 0.95 },
+  "git pull": { type: "shell-command", confidence: 0.95 },
+  "curl": { type: "shell-command", confidence: 0.90 },
+
+  // Utilities
+  "weather": { type: "system-query", confidence: 0.95 },
+  "thời tiết": { type: "system-query", confidence: 0.95 },
+  "tỷ giá": { type: "system-query", confidence: 0.95 },
+  "exchange rate": { type: "system-query", confidence: 0.95 },
+  "bản đồ": { type: "ui-interaction", confidence: 0.90 },
+  "maps": { type: "ui-interaction", confidence: 0.90 },
+  "stopwatch": { type: "app-control", confidence: 0.90 },
+  "bấm giờ": { type: "app-control", confidence: 0.90 },
+  "báo thức": { type: "app-control", confidence: 0.90 },
+  "alarm": { type: "app-control", confidence: 0.90 },
+  "wallpaper": { type: "os-config", confidence: 0.90 },
+  "hình nền": { type: "os-config", confidence: 0.90 },
+  "airdrop": { type: "os-config", confidence: 0.90 },
+  "eject": { type: "file-operation", confidence: 0.90 },
+  'zalo': { type: 'app-launch', confidence: 0.95 },
+  'telegram': { type: 'app-launch', confidence: 0.95 },
+  'slack': { type: 'app-launch', confidence: 0.95 },
+  'zoom': { type: 'app-launch', confidence: 0.95 },
+  'figma': { type: 'app-launch', confidence: 0.95 },
+  'notion': { type: 'app-launch', confidence: 0.95 },
+  'spotify': { type: 'app-launch', confidence: 0.95 },
+  'discord': { type: 'app-launch', confidence: 0.95 },
+  'whatsapp': { type: 'app-launch', confidence: 0.95 },
+  'messenger': { type: 'app-launch', confidence: 0.95 },
 };
 
 // Regex patterns for common phrases
 const PHRASE_PATTERNS: Array<[RegExp, string]> = [
+  // ── Vietnamese browser + video/navigation commands ──
+  [/\b(?:mở|xem|tìm|phát)\s+(?:video|bài\s*hát|bài|clip)\s+(?:đầu\s*tiên|mới\s*nhất|đầu)\b/i, "app-control"],
+  [/\b(?:video\s*đầu\s*tiên|first\s*video|kết\s*quả\s*đầu\s*tiên|first\s*result)\b/i, "app-control"],
+  [/\b(?:truy\s*cập|vào\s*trang|vào\s*web|mở\s*trang)\s+(?:youtube|google|facebook|tiktok|instagram|[\w-]+\.(?:com|vn|org|net))\b/i, "app-control"],
+  [/\b(?:mở|open)\s+.+\s+(?:trên|bằng|qua|trong)\s+(?:safari|chrome|firefox|brave|arc|edge|trình\s*duyệt)\b/i, "app-control"],
+  [/\b(?:mở|open|launch).+(?:safari|chrome|firefox).+(?:youtube|google|trang|web)\b/i, "multi-step"],
+  // ── Message/chat ──
   [/\b(?:message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n)\b.*\b(?:zalo|telegram|discord|slack|messages|imessage)\b/i, "app-control"],
   [/\b(?:send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i, "app-control"],
   [/\b(?:calendar|schedule|meeting|appointment|event|lịch|lịch\s*hẹn|cuộc\s*họp)\b/i, "app-control"],
@@ -387,6 +456,61 @@ const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:git\s+status|git\s+add|git\s+commit|git\s+push|git\s+pull|checkout\s+branch|create\s+branch|merge\s+branch|rebase\s+branch|stash\b|commit\s+changes?)\b/i, "shell-command"],
   [/\b(?:organize\s*(?:desktop|workspace|downloads|files)|cleanup\s*(?:desktop|workspace)|sắp\s*xếp\s*(?:màn\s*hình|desktop|thư\s*mục|workspace)|dọn\s*dẹp\s*(?:desktop|workspace))\b/i, "file-organization"],
   [/\b(?:analy[sz]e\s*(?:error|logs?)|summari[sz]e\s*(?:error|logs?)|debug\s*log|crash\s*log|stack\s*trace|log\s*error\s*analysis|phân\s*tích\s*log\s*lỗi|t[oó]m\s*tắt\s*lỗi)\b/i, "debug-assist"],
+
+  // Group 2: Zalo/Telegram/Chat extras
+  [/\b(?:gửi\s*file|send\s*file|đính\s*kèm|attach\s*file)\b.*\b(?:zalo|telegram|slack|messages)\b/i, "app-control"],
+  [/\b(?:zalo|telegram|messages)\b.*\b(?:gửi\s*file|send\s*file|attach)\b/i, "app-control"],
+  [/\b(?:nhắn|nhắn\s*tin|gửi\s*tin\s*nhắn|gửi\s*message)\b/i, "app-control"],
+  [/\b(?:sticker|nhãn\s*dán)\b.*\b(?:gửi|send)\b/i, "app-control"],
+  [/\b(?:tự\s*động\s*trả\s*lời|auto\s*reply|trả\s*lời\s*tự\s*động)\b/i, "app-control"],
+  [/\b(?:tìm\s*tin\s*nhắn|search\s*message|find\s*message)\b.*\b(?:zalo|telegram)\b/i, "app-control"],
+  [/\b(?:tải\s*(?:tất\s*cả\s*)?ảnh|download\s*(?:all\s*)?images?|lưu\s*(?:tất\s*cả\s*)?hình)\b.*\b(?:zalo|chat|cuộc\s*trò\s*chuyện)\b/i, "app-control"],
+  [/\b(?:tạo\s*nhóm|create\s*group|new\s*group)\b.*\b(?:zalo|telegram|slack)\b/i, "app-control"],
+  [/\b(?:chụp\s*màn\s*hình|screenshot)\b.*\b(?:dán|paste)\b.*\b(?:zalo|chat|telegram)\b/i, "app-control"],
+
+  // Group 3: Finder/System extras
+  [/\b(?:rename|đổi\s*tên)\b.*\b(?:\w+\.\w{2,4})\b/i, "file-operation"],
+  [/\b(?:hiển\s*thị|show)\b.*\b(?:file\s*ẩn|hidden\s*file|ẩn)\b/i, "os-config"],
+  [/\b(?:eject|đẩy)\b.*\b(?:usb|ổ\s*cứng|disk|drive)\b/i, "file-operation"],
+  [/\b(?:wallpaper|hình\s*nền|desktop\s*background|ảnh\s*nền)\b/i, "os-config"],
+  [/\b(?:airdrop)\b/i, "os-config"],
+  [/\b(?:dark\s*mode|chế\s*độ\s*tối|light\s*mode|chế\s*độ\s*sáng)\b/i, "os-config"],
+  [/\b(?:night\s*shift|giảm\s*ánh\s*sáng\s*xanh)\b/i, "os-config"],
+  [/\b(?:kiểm\s*tra\s*cập\s*nhật|check\s*updates?|software\s*update|cập\s*nhật\s*macos)\b/i, "update-management"],
+
+  // Group 4: Developer tools extras
+  [/\b(?:docker)\b.*\b(?:log|logs)\b/i, "container-management"],
+  [/\b(?:curl|test\s*endpoint|gọi\s*api)\b.*\b(?:proxy)\b/i, "shell-command"],
+  [/\b(?:ssh)\b.*\b(?:server|admin|user|vào)\b/i, "shell-command"],
+  [/\b(?:pip3?)\b.*\b(?:install|cài)\b/i, "package-management"],
+  [/\b(?:cài\s*(?:đặt\s*)?thư\s*viện|install\s*(?:python\s*)?package)\b/i, "package-management"],
+  [/\b(?:kill|tắt|free)\b.*\b(?:port|cổng|localhost)\b/i, "shell-command"],
+  [/\b(?:tìm|find|search)\b.*\b(?:TODO|FIXME|HACK)\b/i, "shell-command"],
+
+  // Group 5: Utilities extras
+  [/\b(?:thời\s*tiết|weather)\b/i, "system-query"],
+  [/\b(?:tỷ\s*giá|exchange\s*rate)\b/i, "system-query"],
+  [/\b(?:bản\s*đồ|maps?|chỉ\s*đường|directions?|tìm\s*đường)\b/i, "ui-interaction"],
+  [/\b(?:bấm\s*giờ|stopwatch|đồng\s*hồ\s*bấm\s*giờ)\b/i, "app-control"],
+  [/\b(?:đặt\s*báo\s*thức|set\s*alarm)\b/i, "app-control"],
+  [/\b(?:xóa\s*(?:tất\s*cả\s*)?báo\s*thức|delete\s*(?:all\s*)?alarms?)\b/i, "app-control"],
+  [/\b(?:checklist|danh\s*sách\s*(?:mua|việc)|shopping\s*list)\b/i, "app-control"],
+  [/\b(?:dịch|translate)\b.*\b(?:clipboard|bộ\s*nhớ\s*tạm)\b/i, "ui-interaction"],
+
+  // Group 6: Media extras
+  [/\b(?:quay|record)\b.*\b(?:màn\s*hình|screen|desktop)\b/i, "ui-interaction"],
+  [/\b(?:chụp|screenshot)\b.*\b(?:vùng|region|area)\b.*\b(?:clipboard)\b/i, "ui-interaction"],
+  [/\b(?:crop|cắt)\b.*\b(?:ảnh|image|photo)\b/i, "app-control"],
+  [/\b(?:mở\s*thư\s*mục|open\s*folder)\b.*\b(?:video|photo|ảnh|hình)\b/i, "file-operation"],
+
+  // Group 7: Complex tasks
+  [/\b(?:csv|data\.csv)\b.*\b(?:cột|column|email)\b/i, "file-operation"],
+  [/\b(?:tự\s*động|auto|automatically)\b.*\b(?:chuyển|move)\b.*\b(?:downloads?|tải\s*về)\b/i, "multi-step"],
+  [/\b(?:mở\s*tất\s*cả|open\s*all)\b.*\b(?:ứng\s*dụng|apps?)\b/i, "multi-step"],
+  [/\b(?:so\s*sánh|compare|diff)\b.*\b(?:file|tập\s*tin)\b/i, "file-operation"],
+  [/\b(?:file\s*nặng\s*hơn|larger?\s*than|nặng\s*hơn|>\s*1\s*GB|greater\s*than\s*1\s*GB)\b/i, "disk-cleanup"],
+  [/\b(?:đóng\s*tất\s*cả|close\s*all)\b.*\b(?:trừ|except)\b/i, "app-control"],
+  [/\b(?:pin|battery)\b.*\b(?:dưới|below|under)\s*\d+%/i, "power-management"],
 ];
 
 // ---------------------------------------------------------------------------
@@ -514,8 +638,16 @@ const HEURISTIC_RULES: Array<{
     }),
   },
   {
-    // App launch — shorter form "open <AppName>"
-    pattern: /\bopen\s+([A-Z][a-zA-Z\s]+)/,
+    // App launch — "open <AppName>" (case-insensitive, allows lowercase app names like "zalo")
+    pattern: /\bopen\s+([a-zA-Z][a-zA-Z\s]{1,30}?)(?:\s*$|\s+(?:app|application)\b)/i,
+    type: "app-launch",
+    entityExtractor: (m) => ({
+      app: { type: "app", value: m[1]?.trim() ?? m[0] },
+    }),
+  },
+  {
+    // Vietnamese: "mở <AppName>"
+    pattern: /\bm[ởo]\s+([a-zA-Z][a-zA-Z\s]{1,30}?)(?:\s*$|\s+(?:app|ứng dụng)\b)/i,
     type: "app-launch",
     entityExtractor: (m) => ({
       app: { type: "app", value: m[1]?.trim() ?? m[0] },
@@ -582,6 +714,47 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
   // Deterministic high-signal routing to keep critical planner paths stable
   // even when LLM output drifts or provider/network is unavailable.
   const preLlmRules: Array<{ pattern: RegExp; type: IntentType; confidence: number }> = [
+    {
+      // Multi-step: comma-separated or sequenced chains (sau đó/rồi/tiếp theo)
+      // e.g. "Mở safari, truy cập youtube sau đó mở video đầu tiên"
+      // Must come BEFORE app-launch to avoid misclassification.
+      pattern: /^(?:mở|open|launch).+(?:,\s*(?:truy\s*cập|mở|vào|sau\s*đó|rồi|navigate|go\s+to)|sau\s*đó\s+(?:mở|truy|vào|click|nhấp)|rồi\s+(?:mở|truy|vào)|tiếp\s*(?:theo\s*)?(?:mở|truy|vào|click))/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      // "mở/open X trên/bằng/qua/trong Safari/Chrome/Firefox" → app-control (browser + navigate)
+      // e.g. "Mở video đầu tiên của youtube trên Safari"
+      // e.g. "Mở youtube bằng safari"
+      pattern: /^(?:mở|open)\s+.+\s+(?:trên|bằng|qua|trong)\s+(?:safari|chrome|firefox|brave|arc|edge|cốc\s*cốc|trình\s*duyệt)/i,
+      type: "app-control",
+      confidence: 0.96,
+    },
+    {
+      // Vietnamese navigation: "truy cập X" / "vào trang X" / "vào web X"
+      // e.g. "Truy cập youtube" / "Vào trang google"
+      pattern: /^(?:truy\s*cập|vào\s*(?:trang|web|website)?)\s+(?:https?:\/\/|www\.|youtube|google|facebook|tiktok|instagram|twitter|github|[\w-]+\.(?:com|vn|org|net))/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    {
+      // Simple "open/launch/mở <AppName>" with no secondary verbs — always app-launch.
+      // Matches before any LLM call to avoid JSON parse failures on trivial commands.
+      // Excludes "open X on <platform>" patterns (those are app-control for media/browser).
+      // Excludes Vietnamese contextual prepositions: trên, bằng, qua, tại, trong, sau đó, rồi
+      // Excludes commas (compound/multi-step commands).
+      pattern: /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+(?!.*\b(?:trên|bằng|qua|tại|trong|sau\s*đó|rồi|tiếp\s*theo|truy\s*cập|video\s*đầu|kết\s*quả)\b)(?!.*\bon\s+(?:youtube|spotify|netflix|tiktok|soundcloud|apple\s*music)\b)(?!.*,)[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?(?:\s+(?:app|application|ứng\s*dụng))?$/i,
+      type: "app-launch",
+      confidence: 0.97,
+    },
+    {
+      // System info questions — "how long has X been running?", "what is the uptime?",
+      // "how much RAM/CPU/disk?", "what version?", "system info", etc.
+      // These must never fall through to ui-interaction (which would mouse-click something).
+      pattern: /\b(?:how\s+long|how\s+much|how\s+many|what\s+is\s+(?:the\s+)?(?:uptime|cpu|ram|memory|disk|battery|version|os|system)|uptime|system\s+info|sysinfo|hệ\s*thống\s*đã\s*chạy|máy\s*đã\s*bật|đang\s*dùng\s*bao\s*nhiêu|máy\s*chạy\s*được\s*bao\s*lâu)\b/i,
+      type: "system-query",
+      confidence: 0.96,
+    },
     {
       pattern: /\b(?:run|execute)\b.*\b(?:npm|pnpm|yarn|git|python|node|bash|sh|make|cargo)\b/i,
       type: "shell-command",
@@ -676,9 +849,31 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
 
   for (const rule of preLlmRules) {
     if (rule.pattern.test(text)) {
+      // For app-launch rules, extract the app name from the command text
+      let entities: Record<string, Entity> = {};
+      if (rule.type === "app-launch") {
+        const appNameMatch = text.match(
+          /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+([a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?)(?:\s+(?:app|application|ứng\s*dụng))?$/i,
+        );
+        const appName = appNameMatch?.[1]?.trim();
+        if (appName) {
+          entities = { app: { type: "app", value: appName } };
+        }
+      } else if (rule.type === "app-control") {
+        // Extract browser and query from "mở X trên Browser" / "truy cập X" patterns
+        const browserMatch = text.match(/(?:trên|bằng|qua|trong)\s+(safari|chrome|firefox|brave|arc|edge|cốc\s*cốc)/i);
+        const browser = browserMatch?.[1]?.trim();
+        // Extract the target/query part: "mở <query> trên <browser>"
+        const queryMatch = text.match(/^(?:mở|open)\s+(.+?)\s+(?:trên|bằng|qua|trong)\s+/i);
+        // Extract URL/site from "truy cập X" / "vào X"
+        const navMatch = text.match(/^(?:truy\s*cập|vào\s*(?:trang|web|website)?)\s+(.+)/i);
+        const queryRaw = queryMatch?.[1]?.trim() ?? navMatch?.[1]?.trim();
+        if (browser) entities.app = { type: "app", value: browser };
+        if (queryRaw) entities.query = { type: "text", value: queryRaw };
+      }
       return {
         type: rule.type,
-        entities: {},
+        entities,
         confidence: rule.confidence,
         rawText: text,
       };
@@ -752,14 +947,44 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
 // Multi-step decomposition via LLM
 // ---------------------------------------------------------------------------
 
-const DECOMPOSE_SYSTEM_PROMPT = `You are a task planner for a computer-automation assistant.
+const DECOMPOSE_SYSTEM_PROMPT = `You are a task planner for a macOS computer-automation assistant.
 Break the user's complex task into an ordered list of concrete sub-steps.
 Each step must be classifiable as one of: shell-command, app-launch, app-control, file-operation, ui-interaction, system-query.
+
+IMPORTANT: The user may write in Vietnamese. Parse Vietnamese commands correctly:
+- "mở" = open/launch  |  "truy cập" / "vào" = navigate to  |  "tìm" = search/find
+- "nhấp" / "click" = click  |  "cuộn" = scroll  |  "gõ" / "nhập" = type
+- "đóng" / "tắt" = close/quit  |  "sau đó" / "rồi" / "tiếp theo" = then (sequence)
+- "video đầu tiên" = first video  |  "kết quả đầu tiên" = first result
+- "trên" = on (platform)  |  "bằng" = using/with  |  "qua" = via
+
+Semantic parsing rules:
+- Extract: action verb, target object, platform/app, modifier (first/latest/etc.)
+- "mở X trên Y" = navigate to X using browser Y
+- "mở video đầu tiên của youtube trên Safari" = open Safari → go to YouTube → click first video
+
+Tool mapping:
+- app.launch   → launch an application
+- app.activate → bring app to foreground
+- app.script   → run AppleScript (browser navigation, YouTube click, UI automation)
+- shell.exec   → run shell command
+- ui.click     → click UI element
+- ui.type      → type text
+- ui.key       → keyboard shortcut
+
+Example: "Mở safari, truy cập youtube sau đó mở video đầu tiên":
+{
+  "steps": [
+    { "description": "Open Safari browser", "type": "app-launch", "tool": "app.launch" },
+    { "description": "Navigate to https://www.youtube.com in Safari", "type": "app-control", "tool": "app.script" },
+    { "description": "Click the first video on YouTube homepage", "type": "app-control", "tool": "app.script" }
+  ]
+}
 
 Respond with ONLY valid JSON (no markdown, no commentary):
 {
   "steps": [
-    { "description": "<step text>", "type": "<intent-type>", "tool": "<tool.verb>" }
+    { "description": "<step text in English>", "type": "<intent-type>", "tool": "<tool.verb>" }
   ]
 }`;
 
@@ -974,6 +1199,9 @@ const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatch
     pattern: /\bcreate\b.*\breact\b.*\bvite\b/i,
     command: "npm create vite@latest react-vite-app -- --template react",
   },
+  { pattern: /\b(?:check|show|view|get|monitor)\s+(?:the\s+)?(?:cpu|processor)\b(?!\s+usage.*process)/i, command: "top -l 1 -s 0 | grep -E 'CPU usage|Load Avg'" },
+  { pattern: /\b(?:check|show)\s+(?:ram|memory)\s+(?:usage)?\b/i, command: "vm_stat | head -10" },
+  { pattern: /\bcpu\s+(?:and\s+)?memory\b|\bsystem\s+status\b/i, command: "top -l 1 -s 0 | grep -E 'CPU usage|Load Avg'" },
   { pattern: /\blist (?:all )?files?\b/i, command: "ls -la" },
   { pattern: /\blist (?:all )?director(?:y|ies)\b/i, command: "ls -d */" },
   { pattern: /\bdisk ?(?:space|usage)\b/i, command: "df -h /" },
@@ -1068,6 +1296,143 @@ const NL_TO_COMMAND: Array<{ pattern: RegExp; command: string | ((m: RegExpMatch
     },
   },
   { pattern: /\bstash\b/i, command: "git stash push -m 'omnistate-stash'" },
+
+  // ── Developer extras (tasks 51-65) ──
+  {
+    // SSH to server (task 62): "ssh into server with username admin"
+    pattern: /\bssh\b(?:\s+(?:into|to|vào))?\s+(?:server\s+)?(?:with\s+(?:username\s+)?)?([a-zA-Z0-9_.-]+)(?:@([a-zA-Z0-9._-]+))?/i,
+    command: (m) => {
+      const user = (m[1] ?? "admin").replace(/[^a-zA-Z0-9_.-]/g, "");
+      const host = (m[2] ?? "").replace(/[^a-zA-Z0-9._-]/g, "");
+      const target = host ? `${user}@${host}` : user;
+      return `osascript -e 'tell application "Terminal" to do script "ssh ${target}"' && tell application "Terminal" to activate`;
+    },
+  },
+  {
+    // curl with proxy (task 60): "curl endpoint with proxy" / "test API via proxy"
+    pattern: /\b(curl|test\s+endpoint|gọi\s+api)\b.*\b(proxy)\b/i,
+    command: (m) => {
+      const input = m.input ?? "";
+      const urlMatch = input.match(/\bhttps?:\/\/[^\s"']+/i);
+      const url = urlMatch?.[0] ?? "https://httpbin.org/get";
+      return `curl \${HTTPS_PROXY:+-x "$HTTPS_PROXY"} -s -H "Content-Type: application/json" "${url}" 2>&1 | head -200`;
+    },
+  },
+  {
+    // Kill port (task 61): "kill port 8080" / "tắt cổng localhost:8080"
+    pattern: /\b(?:kill|free|release|tắt\s+cổng|giải\s+phóng\s+cổng)\b.*?\b(?:port|cổng|localhost:?)?(\d{4,5})\b/i,
+    command: (m) => {
+      const port = parseInt(m[1] ?? "8080", 10);
+      if (port < 1024 || port > 65535) return "echo 'Invalid port number'";
+      return `lsof -ti:${port} | xargs kill -9 2>/dev/null && echo 'Port ${port} freed' || echo 'Port ${port} is not in use'`;
+    },
+  },
+  {
+    // Find TODO/FIXME in code (task 65)
+    pattern: /\b(?:find|search|tìm)\b.*\b(TODO|FIXME|HACK|BUG)\b/i,
+    command: (m) => {
+      const keyword = (m[1] ?? "TODO").toUpperCase();
+      return `grep -rn "${keyword}" . --include="*.ts" --include="*.js" --include="*.py" --include="*.swift" --include="*.java" --include="*.go" 2>/dev/null | head -30 || echo "No ${keyword} found in current directory"`;
+    },
+  },
+  {
+    // Run shell script (task 54)
+    pattern: /\b(?:run|chạy|execute)\b\s+(?:script\s+)?([a-zA-Z0-9_.-]+\.sh)\b/i,
+    command: (m) => {
+      const script = (m[1] ?? "").replace(/[^a-zA-Z0-9_.-]/g, "");
+      return `bash ~/${script} 2>&1 || bash ./${script} 2>&1 || echo 'Script not found: ${script}'`;
+    },
+  },
+  {
+    // Open file in text editor (task 64)
+    pattern: /\b(?:open|mở)\b.*?\b([\w.-]+\.(?:json|txt|md|yaml|yml|env|config|toml|ini|conf))\b.*\b(?:text\s+editor|editor|trình\s+soạn)\b/i,
+    command: (m) => {
+      const file = (m[1] ?? "").replace(/[^a-zA-Z0-9_.-]/g, "");
+      return `open -t ~/${file} 2>/dev/null || open -t ./${file} 2>/dev/null || echo "File not found: ${file}"`;
+    },
+  },
+  {
+    // Open file in VSCode (task 52/64)
+    pattern: /\b(?:open|mở)\b.*(?:(?:with|using|bằng)\s+(?:vscode|code|visual\s+studio)|in\s+(?:vscode|code))\b/i,
+    command: (m) => {
+      const input = m.input ?? "";
+      const fileMatch = input.match(/\b([\w./~-]+\.[\w]{1,6})\b/);
+      const file = fileMatch?.[1]?.replace(/[^a-zA-Z0-9_./~-]/g, "") ?? ".";
+      return `code "${file}" || open -a "Visual Studio Code" "${file}"`;
+    },
+  },
+  {
+    // Rename file (task 36): "đổi tên file anh_meo_1.jpg thành calico_cat.jpg"
+    pattern: /\b(?:rename|đổi\s+tên)\b\s+(?:file\s+)?([a-zA-Z0-9_\s.-]+?\.\w{2,5})\s+(?:thành|to|as|→)\s+([a-zA-Z0-9_\s.-]+?\.\w{2,5})\b/i,
+    command: (m) => {
+      const src = (m[1] ?? "").trim().replace(/[^a-zA-Z0-9_.@-]/g, "_");
+      const dst = (m[2] ?? "").trim().replace(/[^a-zA-Z0-9_.@-]/g, "_");
+      return `mv ~/"${src}" ~/"${dst}" 2>/dev/null || mv ./"${src}" ./"${dst}" 2>/dev/null || echo 'File not found: ${src}'`;
+    },
+  },
+  {
+    // Delete .tmp / .log files (task 37)
+    pattern: /\b(?:xóa|delete|remove)\b.*?\*?\.(tmp|log|bak|cache|DS_Store)\b/i,
+    command: (m) => {
+      const ext = (m[1] ?? "tmp").replace(/[^a-zA-Z0-9_]/g, "");
+      return `find . -name "*.${ext}" -delete 2>/dev/null && echo "All .${ext} files deleted from current directory"`;
+    },
+  },
+  {
+    // Eject USB (task 44)
+    pattern: /\b(?:eject|đẩy|unmount)\b.*?\b(?:usb|ổ\s+cứng|disk|drive|external)\b/i,
+    command: "diskutil list external && DISK=$(diskutil list external | grep -o 'disk[0-9]*' | head -1); if [ -n \"$DISK\" ]; then diskutil unmountDisk /dev/$DISK && echo \"Ejected /dev/$DISK\"; else echo 'No external disk found'; fi",
+  },
+  {
+    // Auto-move Downloads (task 92): create a launchd watcher
+    pattern: /\b(?:tự\s+động|auto|automatically)\b.*?\b(?:chuyển|move)\b.*?\b(?:downloads?|tải\s+về)\b.*?\b(?:To_Sort|to[\s_]sort)\b/i,
+    command: `mkdir -p ~/To_Sort && cat > /tmp/omnistate-auto-move.sh << 'SHEOF'
+#!/bin/bash
+for f in ~/Downloads/*; do
+  [ -f "$f" ] && mv "$f" ~/To_Sort/ 2>/dev/null
+done
+SHEOF
+chmod +x /tmp/omnistate-auto-move.sh
+cat > /tmp/com.omnistate.automove.plist << 'PEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.omnistate.automove</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/tmp/omnistate-auto-move.sh</string></array>
+  <key>WatchPaths</key><array><string>/Users/$USER/Downloads</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+PEOF
+cp /tmp/com.omnistate.automove.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.omnistate.automove.plist 2>/dev/null && echo 'Auto-move watcher installed for Downloads → To_Sort'`,
+  },
+  {
+    // Open all work apps (task 93)
+    pattern: /\b(?:mở\s+tất\s+cả|open\s+all)\b.*?\b(?:ứng\s+dụng|apps?|công\s+việc|work)\b/i,
+    command: `open -a "Visual Studio Code" && open -a Terminal && open -a Safari && open -a Zalo && echo "Work apps launched: VSCode, Terminal, Safari, Zalo"`,
+  },
+  {
+    // Find large files >1GB (task 99)
+    pattern: /\b(?:file\s+nặng\s+hơn|tìm\s+file\s+lớn|find\s+large\s+files?|nặng\s+hơn|larger?\s+than)\b.*?\b(?:1\s*GB|1\s*gigabyte)\b/i,
+    command: `find ~ -size +1G -not -path "*/Library/*" -not -path "*/.Trash/*" 2>/dev/null | xargs du -sh 2>/dev/null | sort -hr | head -20 || echo "No files larger than 1GB found (outside Library)"`,
+  },
+  {
+    // Check macOS software updates (task 48)
+    pattern: /\b(?:kiểm\s+tra\s+cập\s+nhật|check\s+(?:for\s+)?updates?|software\s+update|cập\s+nhật\s+macos)\b/i,
+    command: "softwareupdate --list 2>&1 | head -30",
+  },
+  {
+    // View disk usage (task 39)
+    pattern: /\b(?:dung\s+lượng|disk\s+space|ổ\s+cứng\s+còn\s+trống|free\s+space|storage\s+left)\b/i,
+    command: "df -h / && echo '---' && du -sh ~/Desktop ~/Downloads ~/Documents ~/Pictures 2>/dev/null | sort -hr | head -10",
+  },
+  {
+    // Ping server (task 55)
+    pattern: /\b(?:ping|kiểm\s+tra\s+kết\s+nối)\b.*\b(?:server|địa\s+chỉ|IP)\b\s+([a-zA-Z0-9._-]+)\b/i,
+    command: (m) => {
+      const host = (m[1] ?? "8.8.8.8").replace(/[^a-zA-Z0-9._-]/g, "");
+      return `ping -c 5 ${host}`;
+    },
+  },
 ];
 
 /**
@@ -1118,7 +1483,7 @@ function extractCoordinatePairs(text: string): Array<{ x: number; y: number }> {
 }
 
 function extractQuotedText(raw: string): string | null {
-  const m = raw.match(/["'“”](.+?)["'“”]/);
+  const m = raw.match(/["'""](.+?)["'""]/);
   if (m?.[1]) return m[1].trim();
 
   const tail = raw.match(/\b(?:type|enter|input|write)\b\s+(.+)/i);
@@ -1169,8 +1534,8 @@ function escapeRegex(text: string): string {
 function normalizeUiPhrase(text: string): string {
   return text
     .toLowerCase()
-    .replace(/\bdo\s+n['’]?t\b/g, "dont")
-    .replace(/\bdon['’]?t\b/g, "dont")
+    .replace(/\bdo\s+n['']?t\b/g, "dont")
+    .replace(/\bdon['']?t\b/g, "dont")
     .normalize("NFD")
     .replace(/\p{M}+/gu, "")
     .replace(/[đ]/g, "d")
@@ -1229,7 +1594,7 @@ function isNegatedUiInstruction(raw: string): boolean {
 function splitUiInteractionSegments(raw: string): string[] {
   const normalized = raw.replace(/\s+/g, " ").trim();
   const quotedChunks: string[] = [];
-  const masked = normalized.replace(/["'“”][^"'“”]*["'“”]/g, (chunk) => {
+  const masked = normalized.replace(/["'""][^"'""]*["'""]/g, (chunk) => {
     const token = `__Q${quotedChunks.length}__`;
     quotedChunks.push(chunk);
     return token;
@@ -1613,6 +1978,18 @@ const KNOWN_APPS = [
   "mail",
   "messages",
   "preview",
+  "whatsapp",
+  "messenger",
+  "line",
+  "android studio",
+  "xcode",
+  "calendar",
+  "reminders",
+  "photos",
+  "maps",
+  "clock",
+  "calculator",
+  "activity monitor",
 ];
 
 /** Extract app name from intent entities or raw text. */
@@ -1685,6 +2062,7 @@ function normalizeAppName(name: string): string {
     "spotify": "Spotify",
     "music": "Music",
     "vscode": "Visual Studio Code",
+    "visual studio code": "Visual Studio Code",
     "terminal": "Terminal",
     "finder": "Finder",
     "slack": "Slack",
@@ -1694,6 +2072,27 @@ function normalizeAppName(name: string): string {
     "messages": "Messages",
     "preview": "Preview",
     "zalo": "Zalo",
+    "telegram": "Telegram",
+    "whatsapp": "WhatsApp",
+    "messenger": "Messenger",
+    "line": "LINE",
+    "android studio": "Android Studio",
+    "xcode": "Xcode",
+    "calendar": "Calendar",
+    "reminders": "Reminders",
+    "photos": "Photos",
+    "maps": "Maps",
+    "clock": "Clock",
+    "calculator": "Calculator",
+    "activity monitor": "Activity Monitor",
+    "facetime": "FaceTime",
+    "imovie": "iMovie",
+    "garage band": "GarageBand",
+    "garageband": "GarageBand",
+    "keynote": "Keynote",
+    "numbers": "Numbers",
+    "pages": "Pages",
+    "contacts": "Contacts",
   };
   return map[name.toLowerCase()] ?? name;
 }
@@ -1910,7 +2309,7 @@ function buildDataEntryWorkflowNodes(intent: Intent): StateNode[] {
 }
 
 function isMessagingIntentText(text: string): boolean {
-  return /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for)\b/i.test(text);
+  return /\b(message|send\s+message|chat\s+with|nh[aắ]n\s*tin|g[iử]i\s*tin\s*nh[aắ]n|message\s+for|nhắn|nhắn\s+tin|gửi\s+message|gửi\s+file|send\s+file|đính\s+kèm)\b/i.test(text);
 }
 
 async function buildMessagingScriptWithLLM(intent: Intent): Promise<string> {
@@ -2136,21 +2535,110 @@ function buildAppControlScript(intent: Intent): string | null {
     ].join("\n");
   }
 
+  // ── Vietnamese navigation: "truy cập X" / "vào trang X" ──
+  // e.g. "Truy cập youtube" → navigate to youtube.com in current browser
+  if (/^(?:truy\s*cập|vào\s*(?:trang|web|website)?)\s+/i.test(text)) {
+    const navTarget = intent.rawText.match(/^(?:truy\s*cập|vào\s*(?:trang|web|website)?)\s+(.+)/i)?.[1]?.trim() ?? "";
+    let navUrl = navTarget;
+    if (!navUrl.startsWith("http")) {
+      // Well-known sites
+      const siteMap: Record<string, string> = {
+        "youtube": "https://www.youtube.com",
+        "google": "https://www.google.com",
+        "facebook": "https://www.facebook.com",
+        "tiktok": "https://www.tiktok.com",
+        "instagram": "https://www.instagram.com",
+        "github": "https://github.com",
+        "gmail": "https://mail.google.com",
+      };
+      const lowerTarget = navUrl.toLowerCase();
+      const known = Object.entries(siteMap).find(([k]) => lowerTarget.includes(k));
+      navUrl = known ? known[1] : `https://${navUrl}`;
+    }
+    const safeNavUrl = escapeAppleScriptString(navUrl);
+    const targetBrowser = app ?? "Safari";
+    if (targetBrowser === "Safari") {
+      return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavUrl}"\nend tell`;
+    }
+    return `tell application "${escapeAppleScriptString(targetBrowser)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeNavUrl}"\nend tell`;
+  }
+
+  // ── "Mở X trên Safari/Chrome" — navigate to X in specified browser ──
+  // e.g. "Mở video đầu tiên của youtube trên Safari"
+  // e.g. "Mở youtube bằng safari"
+  if (/^(?:mở|open)\s+.+\s+(?:trên|bằng|qua|trong)\s+(?:safari|chrome|firefox|brave|arc|edge|cốc\s*cốc|trình\s*duyệt)/i.test(text)) {
+    const browserFromText = text.match(/(?:trên|bằng|qua|trong)\s+(safari|chrome|firefox|brave|arc|edge)/i)?.[1] ?? "Safari";
+    const targetBrowser2 = normalizeAppName(browserFromText);
+    const queryPart = intent.rawText.match(/^(?:mở|open)\s+(.+?)\s+(?:trên|bằng|qua|trong)\s+/i)?.[1]?.trim() ?? "";
+    const queryLower = queryPart.toLowerCase();
+
+    // Check if it's a YouTube request
+    if (/youtube/i.test(queryPart)) {
+      const isFirstVideo = /\b(?:video\s*đầu\s*tiên|đầu\s*tiên|first\s*video|first\s*result)\b/i.test(queryPart);
+      const ytUrl = "https://www.youtube.com";
+      const safeYtUrl = escapeAppleScriptString(ytUrl);
+      if (isFirstVideo && targetBrowser2 === "Safari") {
+        const firstVideoJs = escapeAppleScriptString(
+          'setTimeout(function(){' +
+          'var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link,ytd-compact-video-renderer a#video-title";' +
+          'var l=document.querySelector(sel);' +
+          'if(l){l.click();}' +
+          'else{var links=document.querySelectorAll("a[href*=\\"/watch\\"]");if(links.length>0)links[0].click();}' +
+          '},2000);'
+        );
+        return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeYtUrl}"\ndelay 2.5\ndo JavaScript "${firstVideoJs}" in current tab of front window\nend tell`;
+      }
+      if (targetBrowser2 === "Safari") {
+        return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeYtUrl}"\nend tell`;
+      }
+      return `tell application "${escapeAppleScriptString(targetBrowser2)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeYtUrl}"\nend tell`;
+    }
+
+    // Generic: try to construct a URL from the query
+    const siteMap2: Record<string, string> = {
+      "google": "https://www.google.com",
+      "facebook": "https://www.facebook.com",
+      "tiktok": "https://www.tiktok.com",
+      "instagram": "https://www.instagram.com",
+      "github": "https://github.com",
+    };
+    const knownSite = Object.entries(siteMap2).find(([k]) => queryLower.includes(k));
+    const navigateUrl = knownSite
+      ? knownSite[1]
+      : `https://www.google.com/search?q=${encodeURIComponent(queryPart)}`;
+    const safeNavigateUrl = escapeAppleScriptString(navigateUrl);
+    if (targetBrowser2 === "Safari") {
+      return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavigateUrl}"\nend tell`;
+    }
+    return `tell application "${escapeAppleScriptString(targetBrowser2)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeNavigateUrl}"\nend tell`;
+  }
+
   // ── Browser + YouTube search flow ──
   // Example: "open youtube on safari and play video first in search '...'
   if (isBrowser && /\byoutube\b/i.test(text)) {
-    const searchMatch = intent.rawText.match(/\bsearch\s+["'“”]?(.+?)["'“”]?$/i);
+    const searchMatch = intent.rawText.match(/\bsearch\s+["'""]?(.+?)["'""]?$/i);
     const openOnYoutubeMatch = intent.rawText.match(/\bopen\s+(.+?)\s+on\s+youtube\b/i);
-    const query = searchMatch?.[1]?.trim() ?? openOnYoutubeMatch?.[1]?.trim();
+    // Vietnamese: "mở X trên youtube" / "tìm X trên youtube"
+    const viYoutubeMatch = intent.rawText.match(/\b(?:mở|tìm|xem)\s+(.+?)\s+(?:trên|trong|của)\s+youtube\b/i)
+      ?? intent.rawText.match(/\byoutube\b.*\b(?:tìm|search)\s+(.+?)(?:\s*$)/i);
+    const query = searchMatch?.[1]?.trim() ?? openOnYoutubeMatch?.[1]?.trim() ?? viYoutubeMatch?.[1]?.trim();
     const url = query
       ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
       : "https://www.youtube.com";
     const safeUrl = escapeAppleScriptString(url);
 
     if (app === "Safari") {
-      if (/\b(play|first video|video first)\b/i.test(text) && query) {
-        const js = escapeAppleScriptString("setTimeout(function(){var l=document.querySelector('ytd-video-renderer a#thumbnail, ytd-video-renderer a#video-title'); if(l){l.click();}}, 1000);");
-        return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\ndelay 1.2\ndo JavaScript "${js}" in current tab of front window\nend tell`;
+      // Extended: detect Vietnamese "video đầu tiên" in addition to English
+      if (/\b(play|first video|video first|video\s*đầu\s*tiên|mở\s*video\s*đầu|xem\s*video\s*đầu|đầu\s*tiên)\b/i.test(text)) {
+        const firstVideoJsYT = escapeAppleScriptString(
+          'setTimeout(function(){' +
+          'var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link,ytd-compact-video-renderer a#video-title";' +
+          'var l=document.querySelector(sel);' +
+          'if(l){l.click();}' +
+          'else{var links=document.querySelectorAll("a[href*=\\"/watch\\"]");if(links.length>0)links[0].click();}' +
+          '},2000);'
+        );
+        return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\ndelay 2.5\ndo JavaScript "${firstVideoJsYT}" in current tab of front window\nend tell`;
       }
       return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\nend tell`;
     }
@@ -2233,6 +2721,283 @@ function buildAppControlScript(intent: Intent): string | null {
     return `set volume output volume (${dir})`;
   }
 
+  // ── Incognito/private tab (UC4.x) ──
+  if (/\b(incognito|private|ẩn\s*danh|private\s*tab|tab\s*ẩn\s*danh)\b/i.test(text)) {
+    if (app === "Safari") {
+      return 'tell application "Safari"\nactivate\nend tell\ntell application "System Events" to keystroke "n" using {command down, shift down}';
+    }
+    if (app) {
+      return `tell application "${safeApp}" to activate\ntell application "System Events" to keystroke "n" using {command down, shift down}`;
+    }
+    return 'tell application "System Events" to keystroke "n" using {command down, shift down}';
+  }
+
+  // ── Copy current tab URL to clipboard ──
+  if (/\b(copy|sao\s*chép)\b.*\b(url|link|đường\s*link|địa\s*chỉ)\b/i.test(text)) {
+    if (app === "Safari") {
+      return 'tell application "Safari"\nset theURL to URL of current tab of front window\nend tell\nset the clipboard to theURL\ndisplay notification "URL copied to clipboard" with title "OmniState"';
+    }
+    if (app) {
+      return `tell application "${safeApp}"\nset theURL to URL of active tab of front window\nend tell\nset the clipboard to theURL\ndisplay notification "URL copied to clipboard" with title "OmniState"`;
+    }
+  }
+
+  // ── Find/search in page ──
+  if (/\b(find\s+in\s+page|search\s+in\s+page|tìm\s+(?:trên\s+trang|từ|keyword|text))\b/i.test(text)) {
+    if (app === "Safari") {
+      return 'tell application "Safari" to activate\ntell application "System Events" to keystroke "f" using {command down}';
+    }
+    if (app) {
+      return `tell application "${safeApp}" to activate\ntell application "System Events" to keystroke "f" using {command down}`;
+    }
+  }
+
+  // ── Download first image on page ──
+  if (/\b(download|tải)\b.*\b(first|đầu\s*tiên)\b.*\b(image|ảnh|hình)\b/i.test(text) && isBrowser && app) {
+    const js = escapeAppleScriptString(
+      'var imgs=document.querySelectorAll("img[src]");if(imgs.length>0){var a=document.createElement("a");a.href=imgs[0].src;a.download="image_"+(new Date().getTime());document.body.appendChild(a);a.click();document.body.removeChild(a);}else{alert("No images found on page");}'
+    );
+    if (app === "Safari") {
+      return `tell application "Safari"\nactivate\ndo JavaScript "${js}" in current tab of front window\nend tell`;
+    }
+    return `tell application "${safeApp}"\nactivate\nexecute front window's active tab javascript "${js}"\nend tell`;
+  }
+
+  // ── Open Google Docs/Drive in browser ──
+  if (/\b(google\s*docs?|google\s*drive)\b/i.test(text)) {
+    const isNewDoc = /\b(new|tạo\s*mới|create)\b/i.test(text);
+    const url = isNewDoc ? "https://docs.new" : (/\bdrive\b/i.test(text) ? "https://drive.google.com" : "https://docs.google.com");
+    const targetApp = app ?? "Safari";
+    if (targetApp === "Safari") {
+      return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${url}"\nend tell`;
+    }
+    return `tell application "${escapeAppleScriptString(targetApp)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${url}"\nend tell`;
+  }
+
+  // ── Translate clipboard text in browser ──
+  if (/\b(dịch|translate)\b.*\b(clipboard|bộ\s*nhớ\s*tạm)\b/i.test(text)) {
+    const langMatch = intent.rawText.match(/\b(?:sang|to|into)\s+(?:tiếng\s*)?(\w+)\b/i);
+    const targetLang = langMatch?.[1]?.toLowerCase() ?? "vi";
+    const langCode = ({"vietnamese": "vi", "english": "en", "chinese": "zh-CN", "trung": "zh-CN", "anh": "en", "việt": "vi"} as Record<string, string>)[targetLang] ?? targetLang;
+    return `set clipText to (the clipboard as string)\nset encodedURL to "https://translate.google.com/?sl=auto&tl=${langCode}&text=" & my encodeURL(clipText)\ntell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to encodedURL\nend tell\non encodeURL(str)\n  set theResult to do shell script "python3 -c \\"import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))\\" " & quoted form of str\n  return theResult\nend encodeURL`;
+  }
+
+  // ── Dark mode / Light mode toggle ──
+  if (/\b(dark\s*mode|chế\s*độ\s*tối)\b/i.test(text)) {
+    return 'tell application "System Events" to tell appearance preferences to set dark mode to true\ndisplay notification "Dark mode enabled" with title "OmniState"';
+  }
+  if (/\b(light\s*mode|chế\s*độ\s*sáng)\b/i.test(text)) {
+    return 'tell application "System Events" to tell appearance preferences to set dark mode to false\ndisplay notification "Light mode enabled" with title "OmniState"';
+  }
+
+  // ── Night Shift ──
+  if (/\b(night\s*shift|giảm\s*ánh\s*sáng\s*xanh)\b/i.test(text)) {
+    return 'do shell script "defaults write com.apple.CoreBrightness.plist CBUser-0 -dict-add CBNightShiftEnabled -bool TRUE 2>/dev/null || true"\ntell application "System Preferences"\nactivate\nreveal anchor "displaysDisplayTab" of pane id "com.apple.preference.displays"\nend tell\ndisplay notification "Night Shift: open System Preferences to toggle" with title "OmniState"';
+  }
+
+  // ── Wallpaper change ──
+  if (/\b(wallpaper|hình\s*nền|desktop\s*background|ảnh\s*nền)\b/i.test(text)) {
+    return `do shell script "RAND=$(ls ~/Pictures/*.{jpg,png,jpeg,JPG,PNG} 2>/dev/null | shuf -n1 || ls ~/Desktop/*.{jpg,png,jpeg,JPG,PNG} 2>/dev/null | shuf -n1); if [ -n \\"$RAND\\" ]; then osascript -e \\"tell application \\\\\\\"System Events\\\\\\\" to tell every desktop to set picture to \\\\\\"$RAND\\\\\\"\\"; echo \\"Wallpaper changed to $RAND\\"; else echo \\"No images found. Add images to ~/Pictures\\"; fi"`;
+  }
+
+  // ── Show hidden files in Finder ──
+  if (/\b(show|hiển\s*thị)\b.*\b(hidden\s*file|file\s*ẩn|ẩn)\b/i.test(text)) {
+    return 'do shell script "defaults write com.apple.finder AppleShowAllFiles TRUE && killall Finder"\ndisplay notification "Hidden files are now visible" with title "OmniState"';
+  }
+  if (/\b(hide|ẩn)\b.*\b(hidden\s*file|file\s*ẩn)\b/i.test(text)) {
+    return 'do shell script "defaults write com.apple.finder AppleShowAllFiles FALSE && killall Finder"\ndisplay notification "Hidden files are now hidden" with title "OmniState"';
+  }
+
+  // ── AirDrop mode ──
+  if (/\bairdrop\b/i.test(text)) {
+    const mode = /\b(everyone|mọi\s*người)\b/i.test(text) ? "3" : (/\b(contacts\s*only|chỉ\s*danh\s*bạ)\b/i.test(text) ? "2" : "1");
+    return `do shell script "defaults write com.apple.NetworkBrowser BrowseAllInterfaces ${mode === "3" ? "1" : "0"}"\ntell application "Finder"\nactivate\nopen folder "AirDrop" of (path to desktop folder)\nend tell\ndisplay notification "AirDrop opened — set mode to ${mode === "3" ? "Everyone" : mode === "2" ? "Contacts Only" : "Receiving Off"}" with title "OmniState"`;
+  }
+
+  // ── Zalo file send via UI automation ──
+  if (/\b(zalo)\b/i.test(text) && /\b(gửi\s*file|send\s*file|đính\s*kèm|attach|upload)\b/i.test(text)) {
+    const fileMatch = intent.rawText.match(/\b([\w\s.-]+\.\w{2,5})\b/);
+    const fileName = fileMatch?.[1]?.trim() ?? "";
+    const targetMatch = intent.rawText.match(/\b(?:vào|to|cho|into|tới)\s+(.+?)(?:\s+(?:and|rồi|xong|then)|$)/i);
+    const target = targetMatch?.[1]?.trim() ?? "Cloud của tôi";
+    const safeTarget = escapeAppleScriptString(target);
+    const safeFileName = escapeAppleScriptString(fileName);
+    return [
+      'tell application "Zalo" to activate',
+      'delay 1',
+      'tell application "System Events"',
+      '  tell process "Zalo"',
+      '    -- Search for target contact/group',
+      '    keystroke "f" using {command down}',
+      '    delay 0.5',
+      `    keystroke "${safeTarget}"`,
+      '    delay 0.8',
+      '    key code 36',
+      '    delay 0.8',
+      '    -- Open file attach dialog',
+      '    keystroke "o" using {command down, shift down}',
+      '    delay 1',
+      safeFileName ? `    -- Type filename in open dialog\n    keystroke "${safeFileName}"` : '',
+      '  end tell',
+      'end tell',
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── Zalo screenshot + paste ──
+  if (/\b(chụp\s*màn\s*hình|screenshot)\b.*\b(dán|paste)\b.*\b(zalo|chat|telegram)\b/i.test(text)) {
+    const targetApp = /\btelegram\b/i.test(text) ? "Telegram" : "Zalo";
+    return [
+      'do shell script "screencapture -c"',
+      'delay 0.3',
+      `tell application "${targetApp}" to activate`,
+      'delay 0.5',
+      'tell application "System Events" to keystroke "v" using {command down}',
+      'display notification "Screenshot pasted into ' + targetApp + '" with title "OmniState"',
+    ].join("\n");
+  }
+
+  // ── Zalo DND / status ──
+  if (/\b(do\s*not\s*disturb|không\s*làm\s*phiền|dnd)\b.*\b(zalo|telegram|messages)\b/i.test(text)) {
+    return 'do shell script "defaults write com.apple.notificationcenterui doNotDisturb -boolean true; killall NotificationCenter 2>/dev/null || true"\ndisplay notification "Do Not Disturb enabled" with title "OmniState"';
+  }
+
+  // ── Auto-reply Zalo ──
+  if (/\b(tự\s*động\s*trả\s*lời|auto\s*reply|trả\s*lời\s*tự\s*động)\b.*\b(zalo)\b/i.test(text)) {
+    return `display notification "Auto-reply for Zalo is not natively scriptable. Set up via Zalo settings or use Focus/DND mode." with title "OmniState"\ntell application "Zalo" to activate`;
+  }
+
+  // ── Sticker send ──
+  if (/\b(sticker|nhãn\s*dán)\b.*\b(gửi|send)\b/i.test(text) || /\b(gửi|send)\b.*\b(sticker|nhãn\s*dán)\b/i.test(text)) {
+    if (app) {
+      return `tell application "${safeApp}" to activate\ntell application "System Events"\ntell process "${safeApp}"\nkeystroke "s" using {command down, shift down}\nend tell\nend tell\ndisplay notification "Sticker panel opened" with title "OmniState"`;
+    }
+  }
+
+  // ── Close all apps except specified ──
+  if (/\b(đóng\s*tất\s*cả|close\s*all)\b.*\b(trừ|except)\b/i.test(text)) {
+    const exceptMatch = intent.rawText.match(/\b(?:trừ|except)\b(.+)$/i);
+    const exceptApps = (exceptMatch?.[1] ?? "Terminal Safari")
+      .split(/[\s,&]+/)
+      .filter(Boolean)
+      .map(a => escapeAppleScriptString(normalizeAppName(a)))
+      .map(a => `"${a}"`)
+      .join(", ");
+    return [
+      'set keepApps to {' + exceptApps + ', "Finder"}',
+      'tell application "System Events"',
+      '  set runningApps to name of every process whose background only is false',
+      '  repeat with appName in runningApps',
+      '    if keepApps does not contain appName then',
+      '      try',
+      '        tell application appName to quit',
+      '      end try',
+      '    end if',
+      '  end repeat',
+      'end tell',
+    ].join("\n");
+  }
+
+  // ── Stopwatch in Terminal ──
+  if (/\b(bấm\s*giờ|stopwatch|đồng\s*hồ\s*bấm\s*giờ|start.*count)\b/i.test(text)) {
+    return 'tell application "Terminal"\nactivate\ndo script "echo Starting stopwatch...; START=$(date +%s); while true; do ELAPSED=$(($(date +%s)-START)); printf \"\\r%02d:%02d:%02d\" $((ELAPSED/3600)) $(((ELAPSED%3600)/60)) $((ELAPSED%60)); sleep 1; done"\nend tell';
+  }
+
+  // ── Multiple alarms via Reminders ──
+  if (/\b(đặt\s*báo\s*thức|set\s*alarm)\b/i.test(text)) {
+    const times = [...intent.rawText.matchAll(/\b(\d{1,2})(?:h|:(\d{2}))?\s*(sáng|tối|am|pm)?\b/gi)];
+    if (times.length >= 2) {
+      const lines = times.slice(0, 5).map((m, i) => {
+        let h = parseInt(m[1], 10);
+        const min = m[2] ? parseInt(m[2], 10) : 0;
+        const ampm = m[3]?.toLowerCase();
+        if ((ampm === "pm" || ampm === "tối") && h < 12) h += 12;
+        if ((ampm === "am" || ampm === "sáng") && h === 12) h = 0;
+        return [
+          `set alarm${i} to (current date)`,
+          `set hours of alarm${i} to ${h}`,
+          `set minutes of alarm${i} to ${min}`,
+          `set seconds of alarm${i} to 0`,
+          `set r${i} to make new reminder with properties {name:"OmniState Alarm ${h}:${min.toString().padStart(2,"0")}", due date:alarm${i}}`,
+        ].join("\n");
+      });
+      return ['tell application "Reminders"', 'activate', 'tell list "Reminders"', ...lines, 'end tell', 'end tell'].join("\n");
+    }
+  }
+
+  // ── Delete all alarms ──
+  if (/\b(xóa\s*(?:tất\s*cả\s*)?báo\s*thức|delete\s*(?:all\s*)?alarms?|xóa\s*báo\s*thức)\b/i.test(text)) {
+    return 'tell application "Reminders"\nactivate\ntell list "Reminders"\ndelete (every reminder whose name starts with "OmniState Alarm" or name starts with "Alarm")\nend tell\nend tell\ndisplay notification "All alarms deleted" with title "OmniState"';
+  }
+
+  // ── Shopping checklist via Reminders ──
+  if (/\b(checklist|danh\s*sách\s*(?:mua|việc|cần\s*mua)|shopping\s*list)\b/i.test(text)) {
+    const title = extractQuotedText(intent.rawText) ?? "Shopping List";
+    const safeTitle = escapeAppleScriptString(title);
+    return `tell application "Reminders"\nactivate\nset newList to make new list with properties {name:"${safeTitle}"}\ntell newList\n  make new reminder with properties {name:"Item 1"}\n  make new reminder with properties {name:"Item 2"}\nend tell\nend tell\ndisplay notification "Checklist '${safeTitle}' created in Reminders" with title "OmniState"`;
+  }
+
+  // ── Weather lookup ──
+  if (/\b(thời\s*tiết|weather)\b/i.test(text)) {
+    const cityMatch = intent.rawText.match(/\b(?:tại|at|in|ở)\s+([A-Za-zÀ-ỹ\s]{2,30}?)(?=\s+(?:hôm\s*nay|today|ngày\s*mai|tomorrow)|$)/i);
+    const city = cityMatch?.[1]?.trim() ?? "Ho Chi Minh City";
+    const safeCity = city.replace(/\s+/g, "+");
+    return `do shell script "curl -s 'wttr.in/${safeCity}?format=3' 2>/dev/null || echo 'Could not fetch weather'"\ndisplay notification "Weather fetched for ${city}" with title "OmniState"`;
+  }
+
+  // ── Maps/directions ──
+  if (/\b(bản\s*đồ|maps?|chỉ\s*đường|directions?|tìm\s*đường)\b/i.test(text)) {
+    const destMatch = intent.rawText.match(/\b(?:đến|to|tới|toward|at)\s+([A-Za-zÀ-ỹ\s0-9.,]+?)(?=\s*$)/i);
+    const dest = destMatch?.[1]?.trim() ?? "";
+    if (dest) {
+      return `do shell script "open 'maps://?q=${encodeURIComponent(dest).replace(/'/g, "\\'")}'"`;
+    }
+    return 'tell application "Maps" to activate';
+  }
+
+  // ── Screen recording ──
+  if (/\b(quay|record)\b.*\b(màn\s*hình|screen|desktop)\b/i.test(text)) {
+    return 'tell application "System Events" to keystroke "5" using {command down, shift down}\ndisplay notification "Screen recording controls opened (Cmd+Shift+5)" with title "OmniState"';
+  }
+
+  // ── CSV column extract ──
+  if (/\b(csv|\.csv)\b.*\b(cột|column|email)\b/i.test(text)) {
+    const fileMatch = intent.rawText.match(/\b([\w.-]+\.csv)\b/i);
+    const csvFile = fileMatch?.[1] ?? "data.csv";
+    const colMatch = intent.rawText.match(/\b(?:cột|column)\s+(?:tên\s+)?["']?(\w+)["']?/i);
+    const col = colMatch?.[1] ?? "email";
+    return `do shell script "if [ -f ~/${csvFile} ]; then awk -F',' 'NR==1{for(i=1;i<=NF;i++) if(tolower($i)==\\"${col}\\") col=i} NR>1 && col{print $col}' ~/${csvFile} > ~/Desktop/${col}_export.txt && echo \\"Exported to ~/Desktop/${col}_export.txt\\" || echo \\"Column ${col} not found\\"; else echo \\"File ~/${csvFile} not found\\"; fi"`;
+  }
+
+  // ── Compare two files ──
+  if (/\b(so\s*sánh|compare|diff)\b.*\b(file|tập\s*tin|văn\s*bản)\b/i.test(text)) {
+    const files = [...intent.rawText.matchAll(/\b([\w.-]+\.\w{2,5})\b/g)].map(m => m[1]);
+    if (files.length >= 2) {
+      return `do shell script "diff ~/${files[0]} ~/${files[1]} 2>/dev/null | head -60 || echo 'Files not found'"`;
+    }
+    return `tell application "Terminal"\nactivate\ndo script "echo 'Usage: diff file1.txt file2.txt'"\nend tell`;
+  }
+
+  // ── Battery below threshold → power save ──
+  if (/\b(pin|battery)\b.*\b(dưới|below|under)\s*\d+%/i.test(text)) {
+    return 'do shell script "BATT=$(pmset -g batt | grep -o \'[0-9]*%\' | head -1 | tr -d \'%\'); if [ -n \\"$BATT\\" ] && [ \\"$BATT\\" -lt 20 ]; then pmset -a lowpowermode 1; osascript -e \'display notification \\"Battery below 20% — Power save mode enabled\\" with title \\"OmniState\\"\'; else echo \\"Battery at $BATT% — no action needed\\"; fi"';
+  }
+
+  // ── Find large files ──
+  if (/\b(file\s*nặng\s*hơn|lớn\s*hơn|larger?\s*than|nặng\s*hơn|>\s*1\s*GB|greater\s*than\s*1\s*GB)\b/i.test(text)) {
+    const sizeMatch = intent.rawText.match(/(\d+)\s*(?:GB|MB|gb|mb)/i);
+    const size = sizeMatch ? `+${sizeMatch[1]}${sizeMatch[0].includes("G") || sizeMatch[0].includes("g") ? "G" : "M"}` : "+1G";
+    return `do shell script "find ~ -size ${size} -not -path '*/Library/*' -not -path '*/.Trash/*' 2>/dev/null | head -20 | xargs du -sh 2>/dev/null | sort -hr | head -20"`;
+  }
+
+  // ── Exchange rate ──
+  if (/\b(tỷ\s*giá|exchange\s*rate)\b/i.test(text)) {
+    const saveToFile = /\b(lưu|save|excel|xlsx|csv)\b/i.test(text);
+    if (saveToFile) {
+      return 'do shell script "curl -s \'https://api.exchangerate-api.com/v4/latest/USD\' | python3 -c \\"import json,sys,csv; d=json.load(sys.stdin); w=csv.writer(open(os.path.expanduser(\'~/Desktop/exchange_rates.csv\'),\'w\')); [w.writerow([k,v]) for k,v in d[\'rates\'].items()]; print(\'Saved to Desktop/exchange_rates.csv\')\\" 2>/dev/null || echo \'Install python3 to use this feature\'"';
+    }
+    return 'do shell script "curl -s \'https://api.exchangerate-api.com/v4/latest/USD\' | python3 -c \\"import json,sys; d=json.load(sys.stdin); r=d.get(\'rates\',{}); print(\'USD/VND:\',r.get(\'VND\',\'N/A\')); print(\'USD/EUR:\',r.get(\'EUR\',\'N/A\')); print(\'USD/JPY:\',r.get(\'JPY\',\'N/A\'))\\" 2>/dev/null || open \'https://vietcombank.com.vn/KHCN/Cong-cu-tien-ich/Ty-gia\'"';
+  }
+
   return null;
 }
 
@@ -2312,6 +3077,36 @@ function buildKeyboardAction(intent: Intent): Record<string, unknown> | null {
   // Close tab → Cmd+W
   if (/\bclose tab\b/i.test(text)) {
     return { key: "w", modifiers: { meta: true } };
+  }
+
+  // Find in page → Cmd+F
+  if (/\b(find\s+in\s+page|search\s+in\s+page|tìm\s+(?:trên\s+trang|từ|keyword)|tìm\s+kiếm.*trang)\b/i.test(text)) {
+    return { key: "f", modifiers: { meta: true } };
+  }
+
+  // Incognito/private tab → Cmd+Shift+N
+  if (/\b(incognito|private|ẩn\s*danh|private\s*tab|tab\s*ẩn\s*danh)\b/i.test(text)) {
+    return { key: "n", modifiers: { meta: true, shift: true } };
+  }
+
+  // Copy URL → Cmd+L then Cmd+C (select address bar then copy)
+  if (/\b(copy|sao\s*chép)\b.*\b(url|link|đường\s*link|địa\s*chỉ)\b/i.test(text)) {
+    return { key: "l", modifiers: { meta: true } };
+  }
+
+  // Open history (Vietnamese) → Cmd+Y
+  if (/\b(lịch\s*sử|history)\b/i.test(text)) {
+    return { key: "y", modifiers: { meta: true } };
+  }
+
+  // Screen recording → Cmd+Shift+5
+  if (/\b(quay|record)\b.*\b(màn\s*hình|screen)\b/i.test(text)) {
+    return { key: "5", modifiers: { meta: true, shift: true } };
+  }
+
+  // Screenshot region to clipboard → Cmd+Ctrl+Shift+4
+  if (/\b(chụp|screenshot)\b.*\b(vùng|region|area)\b.*\b(clipboard)\b/i.test(text)) {
+    return { key: "4", modifiers: { meta: true, control: true, shift: true } };
   }
 
   return null;
@@ -2419,6 +3214,14 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Package management ──────────────────────────────────────────────
     case "package-management": {
+      // pip/pip3 install (task 63)
+      if (/\b(pip3?)\b.*\binstall\b/i.test(text) || /\b(cài\s*(?:đặt\s*)?thư\s*viện|install\s*(?:python\s*)?package)\b/i.test(text)) {
+        const pkgMatch = intent.rawText.match(/\binstall\s+([a-zA-Z0-9_.-]+)\b/i)
+          ?? intent.rawText.match(/\bthư\s*viện\s+([a-zA-Z0-9_.-]+)\b/i);
+        const pkg = sanitizeToken(pkgMatch?.[1], SAFE_NAME_PATTERN) ?? "requests";
+        return { name: "shell.exec", params: { command: `pip3 install ${pkg} 2>&1 | tail -20` } };
+      }
+
       if (/startup\s*apps?|login\s*items?/.test(text)) {
         if (/list|show/.test(text)) {
           return {
@@ -2484,10 +3287,17 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
 
     // ── Power management ────────────────────────────────────────────────
     case "power-management": {
-      if (/battery|charge|level/.test(text)) return { name: "health.battery", params: {} };
-      if (/sleep\b/.test(text)) return { name: "shell.exec", params: { command: "pmset sleepnow" } };
-      if (/shutdown|power off/.test(text)) return { name: "shell.exec", params: { command: "sudo shutdown -h now" } };
-      if (/restart|reboot/.test(text)) return { name: "shell.exec", params: { command: "sudo shutdown -r now" } };
+      // Battery below threshold → enable power save (task 97)
+      if (/\b(pin|battery)\b.*\b(dưới|below|under)\s*\d+%/i.test(intent.rawText)) {
+        return { name: "shell.exec", params: { command: "BATT=$(pmset -g batt | grep -o '[0-9]*%' | head -1 | tr -d '%'); if [ -n \"$BATT\" ] && [ \"$BATT\" -lt 20 ]; then pmset -a lowpowermode 1; osascript -e 'display notification \"Battery below 20% — Power save mode enabled\" with title \"OmniState\"'; else echo \"Battery at $BATT% — no action needed\"; fi" } };
+      }
+      if (/low\s*power|power\s*save|tiết\s*kiệm\s*pin/.test(text)) {
+        return { name: "shell.exec", params: { command: "pmset -a lowpowermode 1 && echo 'Low power mode enabled'" } };
+      }
+      if (/battery|charge|level|pin/.test(text)) return { name: "health.battery", params: {} };
+      if (/sleep\b|ngủ\b/.test(text)) return { name: "shell.exec", params: { command: "pmset sleepnow" } };
+      if (/shutdown|power off|tắt\s*máy/.test(text)) return { name: "shell.exec", params: { command: "osascript -e 'tell application \"System Events\" to shut down'" } };
+      if (/restart|reboot|khởi\s*động\s*lại/.test(text)) return { name: "shell.exec", params: { command: "osascript -e 'tell application \"System Events\" to restart'" } };
       return { name: "health.battery", params: {} };
     }
 
@@ -2621,6 +3431,15 @@ function mapIntentToTool(intent: Intent): { name: string; params: Record<string,
       }
       if (/(compose\s*restart|restart\s*compose)/.test(text)) {
         return { name: "shell.exec", params: { command: "docker compose restart" } };
+      }
+      // Docker logs (task 59)
+      if (/\b(log|logs)\b/i.test(text)) {
+        const containerMatch = intent.rawText.match(/\blogs?\s+(?:of\s+)?([a-zA-Z0-9_.-]+)\b/i);
+        const container = sanitizeToken(containerMatch?.[1], SAFE_DOCKER_TARGET_PATTERN);
+        if (container) {
+          return { name: "shell.exec", params: { command: `docker logs --tail=100 ${container} 2>&1` } };
+        }
+        return { name: "shell.exec", params: { command: "docker ps --format 'table {{.ID}}\\t{{.Names}}\\t{{.Status}}' | head -10; echo '---'; docker logs --tail=50 $(docker ps -q | head -1) 2>/dev/null || echo 'No running containers'" } };
       }
       if (/(create|setup|init).*(venv|virtual\s*env|python\s*env)/.test(text)) {
         const dirMatch = intent.rawText.match(/(?:in|at|path)\s+([~/\w./-]+)/i);
@@ -3268,6 +4087,43 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     // ── app-control ─────────────────────────────────────────────────────────
     case "app-control": {
       const branchStartLen = nodes.length;
+
+      // ── Pre-built plan: Vietnamese "mở X trên Safari" → direct browser navigate ──
+      // Handles: "mở video đầu tiên của youtube trên Safari"
+      //          "mở youtube trên safari"
+      //          "mở youtube bằng safari"
+      const viOnBrowserMatch = /^(?:mở|open)\s+(.+?)\s+(?:trên|bằng|qua|trong)\s+(safari|chrome|firefox|brave|arc|edge)/i.exec(intent.rawText);
+      if (viOnBrowserMatch) {
+        const queryPart3 = viOnBrowserMatch[1]?.trim() ?? "";
+        const browserPart = viOnBrowserMatch[2]?.trim() ?? "safari";
+        const browserNorm = normalizeAppName(browserPart);
+        const isYouTube3 = /youtube/i.test(queryPart3);
+        const isFirstVideo3 = /\b(?:video\s*đầu\s*tiên|đầu\s*tiên|first\s*video)\b/i.test(queryPart3);
+        const ytScript = (() => {
+          const ytUrl = "https://www.youtube.com";
+          const safeYtUrl3 = escapeAppleScriptString(ytUrl);
+          if (isYouTube3 && isFirstVideo3 && browserNorm === "Safari") {
+            const js3 = escapeAppleScriptString(
+              'setTimeout(function(){' +
+              'var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link";' +
+              'var l=document.querySelector(sel);' +
+              'if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}' +
+              '},2500);'
+            );
+            return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeYtUrl3}"\ndelay 2.5\ndo JavaScript "${js3}" in current tab of front window\nend tell`;
+          }
+          if (isYouTube3 && browserNorm === "Safari") {
+            return `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeYtUrl3}"\nend tell`;
+          }
+          return null;
+        })();
+        if (ytScript) {
+          nodes.push(actionNode("launch-browser", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("navigate-action", intent.rawText, "app.script", "deep", { script: ytScript, entities: intent.entities }, ["launch-browser"]));
+          break;
+        }
+      }
+
       let appRaw = extractAppName(intent);
       if (!appRaw && /\b(?:on|in)\s+safari\b/i.test(intent.rawText)) {
         appRaw = "safari";
@@ -3604,6 +4460,26 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
 
     // ── system-query ─────────────────────────────────────────────────────────
     case "system-query": {
+      // Weather query (task 74)
+      if (/\b(thời\s*tiết|weather)\b/i.test(intent.rawText)) {
+        const cityMatch = intent.rawText.match(/\b(?:tại|at|in|ở)\s+([A-Za-zÀ-ỹ\s]{2,30}?)(?=\s+(?:hôm\s*nay|today|ngày\s*mai|tomorrow)|$)/i);
+        const city = cityMatch?.[1]?.trim().replace(/\s+/g, "+") ?? "Ho+Chi+Minh+City";
+        nodes.push(actionNode("query", intent.rawText, "shell.exec", "deep", {
+          command: `curl -s "wttr.in/${city}?format=3" 2>/dev/null || echo "Could not fetch weather for ${city.replace(/\+/g, " ")}"`,
+          entities: intent.entities,
+        }));
+        break;
+      }
+
+      // Exchange rate (task 96)
+      if (/\b(tỷ\s*giá|exchange\s*rate|tỉ\s*giá)\b/i.test(intent.rawText)) {
+        nodes.push(actionNode("query", intent.rawText, "shell.exec", "deep", {
+          command: `curl -s 'https://api.exchangerate-api.com/v4/latest/USD' | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rates',{}); [print(f'{k}: {v}') for k,v in r.items() if k in ['VND','EUR','JPY','GBP','CNY','KRW','SGD']]" 2>/dev/null || open 'https://vietcombank.com.vn/KHCN/Cong-cu-tien-ich/Ty-gia' && echo 'Opening VietcomBank exchange rates'`,
+          entities: intent.entities,
+        }));
+        break;
+      }
+
       if (/\b(summari[sz]e\s*(?:my\s*)?(?:context|workspace|work)|context\s*summary|t[oó]m\s*tắt\s*(?:ng[ữu]\s*cảnh|màn\s*hình|công\s*việc))\b/i.test(intent.rawText.toLowerCase())) {
         nodes.push(
           actionNode(
@@ -3641,6 +4517,62 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
       if (isDataEntryWorkflowText(intent.rawText)) {
         nodes.push(...buildDataEntryWorkflowNodes(intent));
         break;
+      }
+
+      // ── Pre-built plan: Vietnamese browser + YouTube + first video chain ──
+      // e.g. "Mở safari, truy cập youtube sau đó mở video đầu tiên"
+      // e.g. "Mở safari, vào youtube, xem video đầu tiên"
+      const isSafariYoutubeVideoChain =
+        /(?:mở|open)\s+safari/i.test(intent.rawText) &&
+        /youtube/i.test(intent.rawText) &&
+        /(?:video\s*đầu\s*tiên|first\s*video|mở\s*video|xem\s*video\s*đầu)/i.test(intent.rawText);
+
+      if (isSafariYoutubeVideoChain) {
+        const ytHomeUrl = escapeAppleScriptString("https://www.youtube.com");
+        const firstVideoJs4 = escapeAppleScriptString(
+          'setTimeout(function(){' +
+          'var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link,ytd-compact-video-renderer a#video-title";' +
+          'var l=document.querySelector(sel);' +
+          'if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}' +
+          '},2500);'
+        );
+        const navigateScript = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${ytHomeUrl}"\nend tell`;
+        const clickFirstVideoScript = `tell application "Safari"\nactivate\ndelay 2.5\ndo JavaScript "${firstVideoJs4}" in current tab of front window\nend tell`;
+
+        nodes.push(actionNode("step-0", "Open Safari", "app.launch", "deep", { name: "Safari" }));
+        nodes.push(actionNode("step-1", "Navigate to YouTube", "app.script", "deep", { script: navigateScript }, ["step-0"]));
+        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"]));
+        break;
+      }
+
+      // ── Pre-built plan: Vietnamese browser chain (non-YouTube) ──
+      // e.g. "Mở safari rồi vào google.com"
+      const isBrowserNavChain =
+        /(?:mở|open)\s+(?:safari|chrome|firefox|brave|trình\s*duyệt)/i.test(intent.rawText) &&
+        /(?:rồi|sau\s*đó|tiếp\s*theo|,)\s*(?:truy\s*cập|vào|navigate|go\s*to)/i.test(intent.rawText);
+
+      if (isBrowserNavChain) {
+        const browserNameMatch4 = intent.rawText.match(/(?:mở|open)\s+(safari|chrome|firefox|brave)/i);
+        const browserName4 = normalizeAppName(browserNameMatch4?.[1] ?? "safari");
+        const urlMatch4 = intent.rawText.match(/(?:truy\s*cập|vào|navigate\s+to|go\s+to)\s+(https?:\/\/[^\s]+|[\w-]+\.(?:com|vn|org|net|io)|youtube|google|facebook)/i);
+        const rawUrl4 = urlMatch4?.[1]?.trim() ?? "";
+        let navUrl4 = rawUrl4;
+        if (rawUrl4 && !rawUrl4.startsWith("http")) {
+          const siteMap4: Record<string, string> = { "youtube": "https://www.youtube.com", "google": "https://www.google.com", "facebook": "https://www.facebook.com" };
+          navUrl4 = siteMap4[rawUrl4.toLowerCase()] ?? `https://${rawUrl4}`;
+        }
+        if (navUrl4) {
+          const safeUrl4 = escapeAppleScriptString(navUrl4);
+          let navScript4: string;
+          if (browserName4 === "Safari") {
+            navScript4 = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl4}"\nend tell`;
+          } else {
+            navScript4 = `tell application "${escapeAppleScriptString(browserName4)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeUrl4}"\nend tell`;
+          }
+          nodes.push(actionNode("step-0", `Launch ${browserName4}`, "app.launch", "deep", { name: browserName4 }));
+          nodes.push(actionNode("step-1", `Navigate to ${navUrl4}`, "app.script", "deep", { script: navScript4 }, ["step-0"]));
+          break;
+        }
       }
 
       const steps = await decomposeMultiStep(intent.rawText, episodicContext || undefined, kgContext || undefined);

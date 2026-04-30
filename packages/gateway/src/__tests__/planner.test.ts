@@ -130,9 +130,9 @@ describe("classifyIntent() — regex heuristic fallback (no API key)", () => {
     process.env.OMNISTATE_REQUIRE_LLM = "false";
     requestLlmTextWithFallbackMock.mockRejectedValueOnce({ status: 503, message: "provider unavailable" });
 
-    const intent = await classifyIntent("open Safari");
+    const intent = await classifyIntent("click the submit button");
 
-    expect(intent.type).toBe("app-launch");
+    expect(intent.type).toBe("ui-interaction");
     expect(requestLlmTextWithFallbackMock).toHaveBeenCalledOnce();
   });
 
@@ -141,7 +141,7 @@ describe("classifyIntent() — regex heuristic fallback (no API key)", () => {
     process.env.OMNISTATE_REQUIRE_LLM = "true";
     requestLlmTextWithFallbackMock.mockRejectedValueOnce({ status: 503, message: "provider unavailable" });
 
-    await expect(classifyIntent("open notes app")).rejects.toThrow(
+    await expect(classifyIntent("find the largest files on my desktop and delete duplicates")).rejects.toThrow(
       "LLM API error (503): provider unavailable"
     );
   });
@@ -151,21 +151,20 @@ describe("classifyIntent() — regex heuristic fallback (no API key)", () => {
     process.env.OMNISTATE_REQUIRE_LLM = "true";
     requestLlmTextWithFallbackMock.mockResolvedValueOnce({ text: "not-json" });
 
-    await expect(classifyIntent("open notes app")).rejects.toThrow(/Invalid JSON from LLM/);
+    await expect(classifyIntent("find the largest files on my desktop and delete duplicates")).rejects.toThrow(/Invalid JSON from LLM/);
   });
 
   it("should_accept_strict_json_from_fenced_llm_response", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     process.env.OMNISTATE_REQUIRE_LLM = "true";
     requestLlmTextWithFallbackMock.mockResolvedValueOnce({
-      text: '```json\n{"type":"app-launch","confidence":0.81,"entities":{"app":{"type":"app","value":"Notes"}}}\n```',
+      text: '```json\n{"type":"health-check","confidence":0.81,"entities":{}}\n```',
     });
 
-    const intent = await classifyIntent("open notes app");
+    const intent = await classifyIntent("analyze my project for potential security issues");
 
-    expect(intent.type).toBe("app-launch");
+    expect(intent.type).toBe("health-check");
     expect(intent.confidence).toBe(0.81);
-    expect(intent.entities.app?.value).toBe("Notes");
   });
 
   it("should_clamp_llm_confidence_when_provider_returns_out_of_range_value", async () => {
@@ -1267,9 +1266,9 @@ describe("planFromIntent() — plan structure", () => {
     const intent = {
       type: "app-control",
       entities: {
-        app: { type: "app", value: "Safari" },
-        query: { type: "text", value: "Ghé qua" },
-        platform: { type: "app", value: "YouTube" },
+        app: { type: "app" as const, value: "Safari" },
+        query: { type: "text" as const, value: "Ghé qua" },
+        platform: { type: "app" as const, value: "YouTube" },
       },
       confidence: 0.93,
       rawText: "Mở video 'Ghé qua' trên youtube ở safari",
@@ -1291,9 +1290,9 @@ describe("planFromIntent() — plan structure", () => {
     const intent = {
       type: "voice-control",
       entities: {
-        song: { type: "text", value: "Hoa Hải Đường" },
-        platform: { type: "app", value: "YouTube" },
-        action: { type: "text", value: "play" },
+        song: { type: "text" as const, value: "Hoa Hải Đường" },
+        platform: { type: "app" as const, value: "YouTube" },
+        action: { type: "text" as const, value: "play" },
       },
       confidence: 0.82,
       rawText: 'Phát bài hát "Hoa Hải Đường" trên youtube',
@@ -1310,9 +1309,9 @@ describe("planFromIntent() — plan structure", () => {
     const intent = {
       type: "ui-interaction",
       entities: {
-        app: { type: "app", value: "Chrome" },
-        url: { type: "url", value: "youtube.com" },
-        text: { type: "text", value: "Ghé qua" },
+        app: { type: "app" as const, value: "Chrome" },
+        url: { type: "url" as const, value: "youtube.com" },
+        text: { type: "text" as const, value: "Ghé qua" },
       },
       confidence: 0.86,
       rawText: "Bật 'Ghé qua' trên youtube ở chrome",
