@@ -154,6 +154,8 @@ async function* callOpenAICompatibleStream(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
 
+  const hasTools = opts.tools && opts.tools.length > 0;
+
   const body: Record<string, unknown> = {
     model: provider.model,
     messages: [
@@ -163,10 +165,14 @@ async function* callOpenAICompatibleStream(
     max_tokens: req.maxTokens,
     temperature: 0,
     stream: true,
+    // Ask model to return valid JSON when no tools are in use (supported by most
+    // OpenAI-compatible providers including MiniMax). Avoids plain-text responses
+    // that cause "Invalid JSON from LLM" errors.
+    ...(!hasTools ? { response_format: { type: "json_object" } } : {}),
   };
 
-  if (opts.tools && opts.tools.length > 0) {
-    body.tools = toOpenAITools(opts.tools);
+  if (hasTools) {
+    body.tools = toOpenAITools(opts.tools!);
     if (opts.toolChoice?.type === "tool") {
       body.tool_choice = { type: "function", function: { name: opts.toolChoice.name } };
     } else {
@@ -213,6 +219,10 @@ async function* callOpenAICompatibleStream(
   // Accumulate tool call fragments per index
   const toolAccum: Map<number, { name: string; argsRaw: string }> = new Map();
 
+  // MiniMax sends <think>/ as separate content deltas. Track state
+  // to skip ALL content between the opening and closing tags.
+  let inThinkingBlock = false;
+
   try {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
@@ -244,7 +254,31 @@ async function* callOpenAICompatibleStream(
         if (!delta) continue;
 
         if (typeof delta.content === "string" && delta.content) {
-          yield { kind: "text", delta: delta.content };
+          // MiniMax sends <think> and  as separate content deltas.
+          // Track state and skip ALL content between them entirely.
+          const raw = delta.content;
+          if (raw === "<think>") {
+            inThinkingBlock = true;
+            continue;
+          }
+          if (raw === "") {
+            inThinkingBlock = false;
+            continue;
+          }
+          if (inThinkingBlock) {
+            continue; // skip thinking content
+          }
+          // Strip any stray thinking tags that may appear mid-content
+          const cleaned = raw
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .replace(/<\/think>[\s\S]*$/gi, "")
+            .replace(/^[\s\S]*?<think>/gi, "")
+            .replace(/^<\/think>\s*/gi, "")
+            .replace(/<think>[\s\S]*$/gi, "")
+            .replace(/^[\s\S]*?<think>/gi, "");
+          if (cleaned) {
+            yield { kind: "text", delta: cleaned };
+          }
         }
 
         if (delta.tool_calls) {

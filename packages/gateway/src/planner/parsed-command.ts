@@ -9,6 +9,10 @@ const INTENT_TYPES = [
   "package-management", "network-control", "os-config", "power-management",
   "hardware-control", "security-management", "peripheral-management",
   "container-management", "display-audio", "backup-restore", "update-management",
+  // Extended granular hardware/media types
+  "audio-management", "display-management", "thermal-management", "disk-management",
+  "memory-management", "clipboard-management", "font-locale-management",
+  "printer-management", "user-acl-management",
   "health-check", "disk-cleanup", "network-diagnose", "security-scan", "self-healing",
   "voice-control", "script-generation", "automation-macro", "workflow-template",
   "file-organization", "debug-assist", "compliance-check", "resource-forecast",

@@ -144,25 +144,25 @@ export const screenRecordStop: IntentHandler = async (_args, ctx) => {
 // ── Clipboard ─────────────────────────────────────────────────────────────────
 
 export const clipboardGet: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem!;
   const content = await deepSystem.getClipboard();
   return { speak: "Clipboard retrieved.", data: { content } };
 };
 
 export const clipboardSet: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem!;
   const success = await deepSystem.setClipboard(args.content as string);
   return { speak: "Clipboard set.", data: { success } };
 };
 
 export const clipboardHistory: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem!;
   const history = await deepSystem.getClipboardHistory();
   return { speak: "Clipboard history retrieved.", data: { history } };
 };
 
 export const clipboardClear: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem!;
   const success = await deepSystem.clearClipboard();
   return { speak: "Clipboard cleared.", data: { success } };
 };

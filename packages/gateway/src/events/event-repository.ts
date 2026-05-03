@@ -24,7 +24,7 @@ function clampLimit(limit: unknown, fallback = 50): number {
 }
 
 function text(value: unknown, limit = TEXT_LIMIT): string {
-  return String(value ?? "").replace(/\0/g, "").trim().slice(0, limit);
+  return String(value ?? "").split("\u0000").join("").trim().slice(0, limit);
 }
 
 function stringList(value: unknown): string[] {
@@ -58,12 +58,25 @@ function iso(value: unknown): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }
 
-function rowToEvent(row: any): EventRecord {
+interface EventRow {
+  id: string;
+  source: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string | null;
+  tags_json: string;
+  metadata_json: string;
+  occurred_at: string;
+  created_at: string;
+}
+
+function rowToEvent(row: EventRow): EventRecord {
   return {
     id: String(row.id),
     source: String(row.source),
     kind: String(row.kind),
-    severity: SEVERITIES.has(row.severity) ? row.severity : "info",
+    severity: SEVERITIES.has(row.severity as EventSeverity) ? (row.severity as EventSeverity) : "info",
     title: String(row.title),
     body: String(row.body ?? ""),
     tags: jsonParse<string[]>(row.tags_json, []),
@@ -110,7 +123,7 @@ export class EventRepository {
     const safeId = text(id, 120);
     if (!safeId) return null;
     try {
-      const row = this.db.prepare("SELECT * FROM events WHERE id = ?").get(safeId) as any;
+      const row = this.db.prepare("SELECT * FROM events WHERE id = ?").get(safeId) as EventRow | undefined;
       return row ? rowToEvent(row) : null;
     } catch {
       throw new Error("EVENT_QUERY_FAILED");
@@ -130,15 +143,15 @@ export class EventRepository {
       values.push(needle, needle);
     }
     const tags = stringList(input.tagsAny);
-    for (const tag of tags) {
-      where.push("tags_json LIKE ?");
-      values.push(`%${tag}%`);
+    if (tags.length > 0) {
+      where.push('(' + tags.map(() => 'tags_json LIKE ?').join(' OR ') + ')');
+      for (const tag of tags) values.push(`%${tag}%`);
     }
     values.push(clampLimit(input.limit));
 
     try {
       const sql = `SELECT * FROM events${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY occurred_at DESC, created_at DESC LIMIT ?`;
-      return (this.db.prepare(sql).all(...values) as any[]).map(rowToEvent);
+      return (this.db.prepare(sql).all(...values) as EventRow[]).map(rowToEvent);
     } catch {
       throw new Error("EVENT_QUERY_FAILED");
     }

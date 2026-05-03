@@ -19,6 +19,7 @@ export type ClientMessage =
   | RuntimeConfigGetMessage
   | RuntimeConfigSetMessage
   | RuntimeConfigUpsertProviderMessage
+  | RuntimeConfigDeleteProviderMessage
   | StatusQueryMessage
   | AdminShutdownMessage
   | VoiceTranscribeMessage
@@ -218,7 +219,10 @@ export interface RuntimeConfigSetMessage {
     | "voice.siri.mode"
     | "voice.siri.shortcutName"
     | "voice.siri.endpoint"
-    | "voice.siri.token";
+    | "voice.siri.token"
+    | "vad.silenceThresholdMs"
+    | "vad.speechThreshold"
+    | "vad.minSpeechMs";
   value: string | boolean | number;
 }
 
@@ -235,6 +239,11 @@ export interface RuntimeConfigUpsertProviderMessage {
   };
   activate?: boolean;
   addToFallback?: boolean;
+}
+
+export interface RuntimeConfigDeleteProviderMessage {
+  type: "runtime.config.deleteProvider";
+  providerId: string;
 }
 
 export interface StatusQueryMessage {

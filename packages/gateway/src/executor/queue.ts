@@ -51,11 +51,12 @@ export class ExecutionQueue {
       const item = lane.shift()!;
       this.processing.add(laneId);
 
-      try {
-        await item.execute();
-      } finally {
+      // Bug fix #3: do NOT await item.execute() here — that blocks the caller
+      // and prevents maxConcurrency from being honored. Fire-and-forget; the
+      // finally block cleans up the processing slot when the item completes.
+      item.execute().finally(() => {
         this.processing.delete(laneId);
-      }
+      });
       return true;
     }
     return false;

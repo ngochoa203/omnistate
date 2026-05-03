@@ -22,6 +22,7 @@ export type ClientMessage =
   | RuntimeConfigGetMessage
   | RuntimeConfigSetMessage
   | RuntimeConfigUpsertProviderMessage
+  | RuntimeConfigDeleteProviderMessage
   | StatusQueryMessage
   | AdminShutdownMessage
   | VoiceTranscribeMessage
@@ -38,7 +39,12 @@ export type ClientMessage =
   | PermissionPolicyUpdateMessage
   | PermissionHistoryMessage
   | PermissionStartMessage
-  | PermissionStopMessage;
+  | PermissionStopMessage
+  | VoiceEnrollStartMessage
+  | VoiceEnrollSampleMessage
+  | VoiceEnrollCancelMessage
+  | VoiceEnrollFinalizeMessage
+  | ToolsListMessage;
 
 export interface ConnectMessage {
   type: "connect";
@@ -195,7 +201,18 @@ export interface RuntimeConfigSetMessage {
     | "voice.siri.mode"
     | "voice.siri.shortcutName"
     | "voice.siri.endpoint"
-    | "voice.siri.token";
+    | "voice.siri.token"
+    | "vad.silenceThresholdMs"
+    | "vad.speechThreshold"
+    | "vad.minSpeechMs"
+    | "tts.provider"
+    | "tts.voiceVi"
+    | "tts.voiceEn"
+    | "speakerVerification.enabled"
+    | "speakerVerification.threshold"
+    | "speakerVerification.onMismatch"
+    | "voice.sttProvider"
+    | "voice.whisperLocalModel";
   value: string | boolean | number;
 }
 
@@ -212,6 +229,11 @@ export interface RuntimeConfigUpsertProviderMessage {
   };
   activate?: boolean;
   addToFallback?: boolean;
+}
+
+export interface RuntimeConfigDeleteProviderMessage {
+  type: "runtime.config.deleteProvider";
+  providerId: string;
 }
 
 // ── Status / Admin ────────────────────────────────────────────────────────────
@@ -321,6 +343,36 @@ export interface PermissionStopMessage {
   type: "permission.stop";
 }
 
+// ── Voice Enrollment (Client → Gateway) ──────────────────────────────────────
+
+export interface VoiceEnrollStartMessage {
+  type: "voice.enroll.start";
+  userId: string;
+}
+
+export interface VoiceEnrollSampleMessage {
+  type: "voice.enroll.sample";
+  audio: string;
+  format: string;
+  phraseIndex: number;
+}
+
+export interface VoiceEnrollCancelMessage {
+  type: "voice.enroll.cancel";
+  userId: string;
+}
+
+export interface VoiceEnrollFinalizeMessage {
+  type: "voice.enroll.finalize";
+  userId: string;
+}
+
+// ── Tools List (Client → Gateway) ─────────────────────────────────────────────
+
+export interface ToolsListMessage {
+  type: "tools.list";
+}
+
 // ─── Gateway → Client ────────────────────────────────────────────────────────
 
 /** Messages sent from gateway to client. */
@@ -363,7 +415,14 @@ export type ServerMessage =
   | SystemInfoMessage
   | PermissionPolicyReportMessage
   | PermissionHistoryResultMessage
-  | PermissionStatusMessage;
+  | PermissionStatusMessage
+  | VoiceTtsAudioMessage
+  | VoiceSpeakerMismatchMessage
+  | VoiceEnrollReadyMessage
+  | VoiceEnrollProgressMessage
+  | VoiceEnrollDoneMessage
+  | VoiceEnrollErrorMessage
+  | ToolsListResultMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -561,15 +620,51 @@ export interface VibeVoiceErrorMessage {
   error: string;
 }
 
+export interface BatteryInfo {
+  level: number;        // 0-100
+  charging: boolean;
+  plugged: boolean;
+  timeRemaining?: number; // minutes
+  cycleCount?: number;
+}
+
+export interface WifiInfo {
+  ssid: string | null;
+  connected: boolean;
+  signalStrength?: number;  // dBm
+  ipAddress?: string;
+}
+
+export interface DiskInfo {
+  total: number;   // bytes
+  used: number;    // bytes
+  free: number;    // bytes
+  usedPercent: number;
+}
+
+export interface CpuInfo {
+  usagePercent: number;
+  model?: string;
+  cores?: number;
+  speedMhz?: number;
+}
+
+export interface MemoryInfo {
+  total: number;    // bytes
+  used: number;     // bytes
+  free: number;     // bytes
+  usedPercent: number;
+}
+
 export interface SystemInfoMessage {
   type: "system.info";
   id: string;
   data: {
-    battery: any;
-    wifi: any;
-    disk: any;
-    cpu: any;
-    memory: any;
+    battery: BatteryInfo | null;
+    wifi: WifiInfo | null;
+    disk: DiskInfo | null;
+    cpu: CpuInfo | null;
+    memory: MemoryInfo | null;
     hostname: string;
     error?: string;
   };
@@ -623,4 +718,60 @@ export interface Alert {
   sensor: string;
   severity: string;
   message: string;
+}
+
+// ── Voice TTS / Speaker (Gateway → Client) ────────────────────────────────────
+
+export interface VoiceTtsAudioMessage {
+  type: "voice.tts.audio";
+  audio: string;
+  format?: string;
+}
+
+export interface VoiceSpeakerMismatchMessage {
+  type: "voice.speaker.mismatch";
+  score: number;
+  threshold: number;
+}
+
+// ── Voice Enrollment (Gateway → Client) ──────────────────────────────────────
+
+export interface VoiceEnrollReadyMessage {
+  type: "voice.enroll.ready";
+  phraseIndex: number;
+  prompt: string;
+  totalPhrases: number;
+}
+
+export interface VoiceEnrollProgressMessage {
+  type: "voice.enroll.progress";
+  phraseIndex: number;
+  accepted: boolean;
+  reason?: string;
+  samplesCollected: number;
+}
+
+export interface VoiceEnrollDoneMessage {
+  type: "voice.enroll.done";
+  userId: string;
+  sampleCount: number;
+}
+
+export interface VoiceEnrollErrorMessage {
+  type: "voice.enroll.error";
+  code: string;
+  message: string;
+}
+
+// ── Tools List (Gateway → Client) ────────────────────────────────────────────
+
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface ToolsListResultMessage {
+  type: "tools.list.result";
+  tools: ToolDefinition[];
 }

@@ -1,0 +1,76 @@
+{
+  "groups": [
+    {
+      "id": "core",
+      "name": "Core",
+      "items": [
+        { "id": "UC-C01", "title": "Natural language task execution", "status": "implemented" },
+        { "id": "UC-C02", "title": "Multi-step task orchestration", "status": "implemented" },
+        { "id": "UC-C03", "title": "Context-aware responses", "status": "implemented" },
+        { "id": "UC-C04", "title": "Crash detection & auto-restart", "status": "implemented" },
+        { "id": "UC-C05", "title": "Health monitoring & alerts", "status": "implemented" },
+        { "id": "UC-C06", "title": "Event ingestion & querying", "status": "implemented" },
+        { "id": "UC-C07", "title": "Memory record management", "status": "implemented" },
+        { "id": "UC-C08", "title": "Runtime config management", "status": "implemented" },
+        { "id": "UC-C09", "title": "LLM provider switching", "status": "implemented" },
+        { "id": "UC-C10", "title": "Thermal monitoring alerts", "status": "implemented" },
+        { "id": "UC-C11", "title": "Battery health monitoring", "status": "implemented" },
+        { "id": "UC-C12", "title": "Multi-client WebSocket support", "status": "implemented" },
+        { "id": "UC-C13", "title": "Permission policy management", "status": "implemented" },
+        { "id": "UC-C14", "title": "DNS & certificate monitoring", "status": "implemented" }
+      ]
+    },
+    {
+      "id": "voice",
+      "name": "Voice",
+      "items": [
+        { "id": "UC-V01", "title": "Voice transcription (Whisper)", "status": "implemented" },
+        { "id": "UC-V02", "title": "Real-time voice streaming", "status": "implemented" },
+        { "id": "UC-V03", "title": "Wake word detection", "status": "implemented" },
+        { "id": "UC-V04", "title": "Text-to-speech (Edge TTS)", "status": "implemented" },
+        { "id": "UC-V05", "title": "Speaker verification / enrollment", "status": "implemented" },
+        { "id": "UC-V06", "title": "Siri bridge integration", "status": "partial" },
+        { "id": "UC-V07", "title": "VAD (voice activity detection)", "status": "implemented" },
+        { "id": "UC-V08", "title": "Multi-language TTS (vi/en)", "status": "implemented" }
+      ]
+    },
+    {
+      "id": "automation",
+      "name": "Automation",
+      "items": [
+        { "id": "UC-A01", "title": "macOS app control via AppleScript", "status": "implemented" },
+        { "id": "UC-A02", "title": "Keyboard/mouse automation", "status": "implemented" },
+        { "id": "UC-A03", "title": "File system operations", "status": "implemented" },
+        { "id": "UC-A04", "title": "Shell command execution", "status": "implemented" },
+        { "id": "UC-A05", "title": "Browser automation", "status": "partial" },
+        { "id": "UC-A06", "title": "OpenClaw visual automation", "status": "implemented" },
+        { "id": "UC-A07", "title": "WiFi / network management", "status": "implemented" },
+        { "id": "UC-A08", "title": "IOKit hardware sensors", "status": "implemented" }
+      ]
+    },
+    {
+      "id": "memory",
+      "name": "Memory",
+      "items": [
+        { "id": "UC-M01", "title": "Shared memory summary", "status": "implemented" },
+        { "id": "UC-M02", "title": "Per-conversation memory", "status": "implemented" },
+        { "id": "UC-M03", "title": "Episodic memory storage", "status": "partial" },
+        { "id": "UC-M04", "title": "Knowledge graph queries", "status": "partial" }
+      ]
+    },
+    {
+      "id": "ui",
+      "name": "UI",
+      "items": [
+        { "id": "UC-U01", "title": "Real-time chat interface", "status": "implemented" },
+        { "id": "UC-U02", "title": "Voice button with waveform", "status": "implemented" },
+        { "id": "UC-U03", "title": "Health dashboard", "status": "implemented" },
+        { "id": "UC-U04", "title": "Event log viewer", "status": "implemented" },
+        { "id": "UC-U05", "title": "Memory record editor", "status": "implemented" },
+        { "id": "UC-U06", "title": "Settings panel", "status": "implemented" },
+        { "id": "UC-U07", "title": "Onboarding wizard", "status": "implemented" },
+        { "id": "UC-U08", "title": "Multi-language UI (vi/en)", "status": "implemented" }
+      ]
+    }
+  ]
+}

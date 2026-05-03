@@ -403,8 +403,8 @@ async function main() {
     const processContext = await getProcessContext();
     const hostScreenCaptureTargets = inferHostScreenCaptureTargets(processContext);
     const profile = latencyProfile === "frame-only" ? "frame-only" : "full";
-    const rounds = profile === "frame-only" ? 24 : 10;
-    const warmupRounds = profile === "frame-only" ? 2 : 1;
+    const rounds = profile === "frame-only" ? 8 : 5;
+    const warmupRounds = 1;
     const frameSamples = [];
     const treeSamples = [];
     let treeAvailable = trusted && profile !== "frame-only";
@@ -457,6 +457,7 @@ async function main() {
     if (screenRecordingGranted) {
       for (let i = 0; i < rounds + warmupRounds; i += 1) {
         const f0 = performance.now();
+        const roundTimeout = f0 + 2000; // bail if single round takes >2s
         try {
           captureFrame();
         } catch (err) {
@@ -479,6 +480,11 @@ async function main() {
           }
         }
         const f1 = performance.now();
+        // Bail early if round is stuck (>2s) — avoid hammering
+        if (f1 - f0 > 2000) {
+          captureFailureCategory = "capture_stuck";
+          break;
+        }
 
         let treeMs = 0;
         if (treeAvailable && profile !== "frame-only") {

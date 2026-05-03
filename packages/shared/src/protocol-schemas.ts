@@ -54,6 +54,9 @@ export const RuntimeConfigSetMessageSchema = z.object({
     "voice.siri.shortcutName",
     "voice.siri.endpoint",
     "voice.siri.token",
+    "vad.silenceThresholdMs",
+    "vad.speechThreshold",
+    "vad.minSpeechMs",
   ]),
   value: z.union([z.string(), z.boolean(), z.number()]),
 });
@@ -82,6 +85,7 @@ const ClientMessageUnionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("llm.preflight.query") }),
   z.object({ type: z.literal("runtime.config.get") }),
   z.object({ type: z.literal("runtime.config.upsertProvider"), provider: z.record(z.unknown()), activate: z.boolean().optional(), addToFallback: z.boolean().optional() }),
+  z.object({ type: z.literal("runtime.config.deleteProvider"), providerId: z.string().min(1) }),
   z.object({ type: z.literal("admin.shutdown") }),
   z.object({ type: z.literal("vibevoice.start"), sessionId: z.string(), format: z.string().optional(), sampleRate: z.number().optional() }),
   z.object({ type: z.literal("vibevoice.chunk"), sessionId: z.string(), audio: z.string() }),

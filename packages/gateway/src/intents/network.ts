@@ -56,49 +56,49 @@ export const networkVpn: IntentHandler = async (_args, ctx) => {
 };
 
 export const firewallRules: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const rules = await deepSystem.getFirewallRules();
   return { speak: "Firewall rules retrieved.", data: { rules } };
 };
 
 export const firewallAddRule: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.addFirewallRule(args.rule);
   return { speak: "Firewall rule added.", data: { success } };
 };
 
 export const firewallBlockIP: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.blockIP(args.ip as string);
   return { speak: "IP blocked.", data: { success } };
 };
 
 export const firewallUnblockIP: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.unblockIP(args.ip as string);
   return { speak: "IP unblocked.", data: { success } };
 };
 
 export const firewallBlockPort: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.blockPort(args.port as number, args.protocol as "tcp" | "udp" | undefined);
   return { speak: "Port blocked.", data: { success } };
 };
 
 export const firewallAllowPort: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const success = await deepSystem.allowPort(args.port as number, args.protocol as "tcp" | "udp" | undefined);
   return { speak: "Port allowed.", data: { success } };
 };
 
 export const sshList: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const keys = await deepSystem.listSSHKeys();
   return { speak: "SSH keys listed.", data: { keys } };
 };
 
 export const sshGenerate: IntentHandler = async (args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem as any;
   const key = await deepSystem.generateSSHKey(args.type as string | undefined, args.comment as string | undefined);
   return { speak: "SSH key generated.", data: { key } };
 };

@@ -1,39 +1,73 @@
 import type { IntentHandler } from "./types.js";
 
+// ── HybridAutoLayer interface ─────────────────────────────────────────────────
+
+interface HybridAutoLayer {
+  processVoiceCommand(audioBuffer: Buffer): Promise<unknown>;
+  scanSourceMachine(): Promise<unknown>;
+  generateMigrationPlan(manifest: unknown, target?: string): Promise<unknown>;
+  executeMigration(plan: unknown): Promise<unknown>;
+  startRecording(): string;
+  stopRecording(sessionId: string): unknown;
+  inferMacro(sequence: unknown): Promise<unknown>;
+  saveMacro(macro: unknown): Promise<boolean>;
+  listMacros(): Promise<unknown[]>;
+  runMacro(macroId: string, params?: Record<string, unknown>): Promise<unknown>;
+  speak(text: string, voice?: string): Promise<boolean>;
+  generateScript(description: string, language?: string): Promise<unknown>;
+  suggestNextAction(): Promise<unknown>;
+  orchestrateApps(workflow: unknown): Promise<unknown>;
+  defineDesiredState(spec: unknown): Promise<unknown>;
+  checkDrift(stateId: string): Promise<unknown>;
+  enforcState(stateId: string): Promise<unknown>;
+  startDesiredStateLoop(stateId: string, intervalMs?: number): void;
+  stopDesiredStateLoop(stateId: string): void;
+  recordCheckpoint(label?: string): Promise<unknown>;
+  listCheckpoints(): Promise<unknown[]>;
+  rollbackToCheckpoint(checkpointId: string): Promise<unknown>;
+  undoLastAction(): Promise<unknown>;
+  serializeContext(): Promise<unknown>;
+  sendContextToDevice(context: unknown, targetId: string): Promise<boolean>;
+  receiveContext(context: unknown): Promise<boolean>;
+  analyzePatterns(days?: number): Promise<unknown>;
+  suggestAutomation(): Promise<unknown>;
+  getUserProfile(): Promise<unknown>;
+}
+
 // ── Hybrid Automation ─────────────────────────────────────────────────────────
 
 export const hybridVoice: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.processVoiceCommand(args.audioBuffer as Buffer);
   return { speak: "Voice command processed.", data: { result } };
 };
 
 export const hybridMigrationScan: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const manifest = await hybridAuto.scanSourceMachine();
   return { speak: "Migration scan complete.", data: { manifest } };
 };
 
 export const hybridMigrationPlan: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const plan = await hybridAuto.generateMigrationPlan(args.manifest, args.target as string | undefined);
   return { speak: "Migration plan generated.", data: { plan } };
 };
 
 export const hybridMigrationExecute: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.executeMigration(args.plan);
   return { speak: "Migration complete.", data: { result } };
 };
 
 export const hybridMacroStart: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const sessionId = hybridAuto.startRecording();
   return { speak: "Macro recording started.", data: { sessionId } };
 };
 
 export const hybridMacroStop: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const sessionId = args.sessionId as string | undefined;
   if (!sessionId) {
     throw new Error("No active macro recording session");
@@ -43,25 +77,25 @@ export const hybridMacroStop: IntentHandler = async (args, ctx) => {
 };
 
 export const hybridMacroInfer: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const macro = await hybridAuto.inferMacro(args.sequence);
   return { speak: "Macro inferred.", data: { macro } };
 };
 
 export const hybridMacroSave: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const success = await hybridAuto.saveMacro(args.macro);
   return { speak: "Macro saved.", data: { success } };
 };
 
 export const hybridMacroList: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const macros = await hybridAuto.listMacros();
   return { speak: "Macros listed.", data: { macros } };
 };
 
 export const hybridMacroRun: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.runMacro(
     args.macroId as string,
     args.params as Record<string, unknown> | undefined,
@@ -70,13 +104,13 @@ export const hybridMacroRun: IntentHandler = async (args, ctx) => {
 };
 
 export const hybridSpeak: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const success = await hybridAuto.speak(args.text as string, args.voice as string | undefined);
   return { speak: args.text as string, data: { success } };
 };
 
 export const hybridGenerateScript: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const script = await hybridAuto.generateScript(
     args.description as string,
     args.language as "bash" | "python" | "applescript" | undefined,
@@ -85,117 +119,247 @@ export const hybridGenerateScript: IntentHandler = async (args, ctx) => {
 };
 
 export const hybridSuggestAction: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const suggestions = await hybridAuto.suggestNextAction();
   return { speak: "Action suggestions ready.", data: { suggestions } };
 };
 
 export const hybridOrchestrateApps: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.orchestrateApps(args.workflow);
   return { speak: "Apps orchestrated.", data: { result } };
 };
 
 export const hybridStateDefine: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const stateId = await hybridAuto.defineDesiredState(args.spec);
   return { speak: "Desired state defined.", data: { stateId } };
 };
 
 export const hybridStateCheck: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const report = await hybridAuto.checkDrift(args.stateId as string);
   return { speak: "Drift check complete.", data: { report } };
 };
 
 export const hybridStateEnforce: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.enforcState(args.stateId as string);
   return { speak: "State enforced.", data: { result } };
 };
 
 export const hybridStateStartLoop: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   hybridAuto.startDesiredStateLoop(args.stateId as string, args.intervalMs as number | undefined);
   return { speak: "State loop started.", data: { success: true } };
 };
 
 export const hybridStateStopLoop: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   hybridAuto.stopDesiredStateLoop(args.stateId as string);
   return { speak: "State loop stopped.", data: { success: true } };
 };
 
 export const hybridCheckpointRecord: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const checkpoint = await hybridAuto.recordCheckpoint(args.label as string | undefined);
   return { speak: "Checkpoint recorded.", data: { checkpoint } };
 };
 
 export const hybridCheckpointList: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const checkpoints = await hybridAuto.listCheckpoints();
   return { speak: "Checkpoints listed.", data: { checkpoints } };
 };
 
 export const hybridCheckpointRollback: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.rollbackToCheckpoint(args.checkpointId as string);
   return { speak: "Rolled back to checkpoint.", data: { result } };
 };
 
 export const hybridCheckpointUndo: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const result = await hybridAuto.undoLastAction();
   return { speak: "Last action undone.", data: { result } };
 };
 
 export const hybridContextSerialize: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const context = await hybridAuto.serializeContext();
   return { speak: "Context serialized.", data: { context } };
 };
 
 export const hybridContextSend: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const success = await hybridAuto.sendContextToDevice(args.context, args.targetId as string);
   return { speak: "Context sent.", data: { success } };
 };
 
 export const hybridContextReceive: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const success = await hybridAuto.receiveContext(args.context);
   return { speak: "Context received.", data: { success } };
 };
 
 export const hybridProfileAnalyze: IntentHandler = async (args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const profile = await hybridAuto.analyzePatterns(args.days as number | undefined);
   return { speak: "Profile analyzed.", data: { profile } };
 };
 
 export const hybridProfileSuggest: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const suggestions = await hybridAuto.suggestAutomation();
   return { speak: "Automation suggestions ready.", data: { suggestions } };
 };
 
 export const hybridProfileGet: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const profile = await hybridAuto.getUserProfile();
   return { speak: "User profile retrieved.", data: { profile } };
+};
+
+// ── Siri Shortcuts ─────────────────────────────────────────────────────────
+
+export const shortcutsList: IntentHandler = async (_args, _ctx) => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  try {
+    const script = `
+      tell application "Shortcuts"
+        set shortcutList to {}
+        repeat with s in shortcuts
+          set end of shortcutList to {name of s}
+        end repeat
+        return shortcutList as list
+      end tell`;
+
+    const { stdout } = await execFileAsync(
+      `osascript -e ${JSON.stringify(script)}`,
+      { timeout: 15_000 }
+    );
+
+    const names = stdout
+      .split(",")
+      .map((n: string) => n.trim())
+      .filter(Boolean);
+
+    return {
+      speak: `Found ${names.length} Shortcuts automations.`,
+      data: {
+        success: true,
+        automations: names.map((name: string, i: number) => ({
+          id: String(i + 1),
+          name,
+        })),
+        count: names.length,
+      },
+    };
+  } catch (err: any) {
+    return {
+      speak: "Could not list Shortcuts automations.",
+      data: { success: false, error: err.message },
+    };
+  }
+};
+
+export const shortcutsRun: IntentHandler = async (args, _ctx) => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  const name = String(args.name ?? args.automation ?? "").trim();
+  if (!name) {
+    return { speak: "No automation name specified.", data: { success: false } };
+  }
+
+  try {
+    const escaped = name.replace(/"/g, '\\"');
+    const script = `
+      tell application "Shortcuts"
+        run shortcut "${escaped}"
+      end tell`;
+
+    const startTime = Date.now();
+    const { stdout } = await execFileAsync(
+      `osascript -e ${JSON.stringify(script)}`,
+      { timeout: 60_000 }
+    );
+
+    return {
+      speak: `Shortcut "${name}" ran successfully.`,
+      data: {
+        success: true,
+        name,
+        output: stdout || "(no output)",
+        durationMs: Date.now() - startTime,
+      },
+    };
+  } catch (err: any) {
+    return {
+      speak: `Shortcut "${name}" failed: ${err.message}`,
+      data: { success: false, error: err.message },
+    };
+  }
+};
+
+export const shortcutsRunWithInput: IntentHandler = async (args, _ctx) => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  const name = String(args.name ?? "").trim();
+  const input = String(args.input ?? "");
+  if (!name) {
+    return { speak: "No automation name specified.", data: { success: false } };
+  }
+
+  try {
+    const escapedName = name.replace(/"/g, '\\"');
+    const escapedInput = input.replace(/"/g, '\\"');
+    const script = `
+      tell application "Shortcuts"
+        set input to "${escapedInput}"
+        run shortcut "${escapedName}" with input from input
+      end tell`;
+
+    const startTime = Date.now();
+    const { stdout } = await execFileAsync(
+      `osascript -e ${JSON.stringify(script)}`,
+      { timeout: 60_000 }
+    );
+
+    return {
+      speak: `Shortcut "${name}" ran with input.`,
+      data: {
+        success: true,
+        name,
+        input,
+        output: stdout || "(no output)",
+        durationMs: Date.now() - startTime,
+      },
+    };
+  } catch (err: any) {
+    return {
+      speak: `Shortcut "${name}" failed.`,
+      data: { success: false, error: err.message },
+    };
+  }
 };
 
 // ── Hybrid Tooling ────────────────────────────────────────────────────────────
 
 export const hybridTemplates: IntentHandler = async (_args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const templates = await hybridTools.listWorkflowTemplates();
   return { speak: "Templates listed.", data: { templates } };
 };
 
 export const hybridRunTemplate: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const result = await hybridTools.runTemplate(
     args.templateId as string,
     args.params as Record<string, unknown> | undefined,
@@ -204,55 +368,55 @@ export const hybridRunTemplate: IntentHandler = async (args, ctx) => {
 };
 
 export const hybridAnalyzeError: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const analysis = await hybridTools.analyzeError(args.error);
   return { speak: "Error analyzed.", data: { analysis } };
 };
 
 export const hybridOrganizeFiles: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const result = await hybridTools.organizeDirectory(args.dirPath as string, args.rules);
   return { speak: "Files organized.", data: { result } };
 };
 
 export const hybridHealthReport: IntentHandler = async (_args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const report = await hybridTools.generateHealthReport();
   return { speak: "Health report generated.", data: { report } };
 };
 
 export const hybridMachineDiff: IntentHandler = async (_args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const snapshot = await hybridTools.snapshotMachine();
   return { speak: "Machine snapshot taken.", data: { snapshot } };
 };
 
 export const hybridCompliance: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const report = await hybridTools.runComplianceCheck(args.policies);
   return { speak: "Compliance check complete.", data: { report } };
 };
 
 export const hybridDocs: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const results = await hybridTools.lookupDocs(args.query as string, args.context);
   return { speak: "Docs retrieved.", data: { results } };
 };
 
 export const hybridForecast: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const forecast = await hybridTools.forecastUsage(args.metric as string, args.days as number | undefined);
   return { speak: "Forecast complete.", data: { forecast } };
 };
 
 export const hybridExtensions: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const extensions = await hybridTools.listBrowserExtensions(args.browser as string | undefined);
   return { speak: "Browser extensions listed.", data: { extensions } };
 };
 
 export const hybridPlugins: IntentHandler = async (args, ctx) => {
-  const hybridTools = (ctx.layers as any).hybridTools;
+  const hybridTools = ctx.layers.hybridTools as any;
   const plugins = await hybridTools.listIDEPlugins(args.ide as string | undefined);
   return { speak: "IDE plugins listed.", data: { plugins } };
 };
@@ -260,7 +424,7 @@ export const hybridPlugins: IntentHandler = async (args, ctx) => {
 // ── Learning / Workflow / Search ──────────────────────────────────────────────
 
 export const learningDetectHabits: IntentHandler = async (_args, ctx) => {
-  const deepSystem = (ctx.layers as any).deepSystem;
+  const deepSystem = ctx.layers.deepSystem!;
   const history = await deepSystem.getShellHistory(500);
   const cmdFreq: Record<string, number> = {};
   for (const line of history) {
@@ -291,7 +455,7 @@ export const learningDetectHabits: IntentHandler = async (_args, ctx) => {
 };
 
 export const learningSuggestMacro: IntentHandler = async (_args, ctx) => {
-  const hybridAuto = (ctx.layers as any).hybridAuto;
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
   const macro = await hybridAuto.inferMacro({ actions: [], sessionId: "" });
   return { speak: "Macro suggestion ready.", data: { success: true, macro } };
 };
@@ -384,7 +548,7 @@ export const genericExecute: IntentHandler = async (args, ctx) => {
   const cmd = typeof raw === "string" ? raw : "";
   const trimmed = cmd.trim();
   const nlIndicators = /^(what|how|why|when|where|who|show|check|find|list|get|tell|can|is|are|do|does|please|help|i want|i need|open|launch|start|message|send|chat)/i;
-  const looksLikeCommand = /^[.\/~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|python3|node|make|brew|docker|kubectl|tmutil|osascript)\b/i.test(trimmed);
+  const looksLikeCommand = /^[./~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|python3|node|make|brew|docker|kubectl|tmutil|osascript)\b/i.test(trimmed);
   if (!trimmed || nlIndicators.test(trimmed) || !looksLikeCommand) {
     return {
       speak: `I understood your request but couldn't map it to a safe shell command.`,
@@ -410,4 +574,53 @@ export const alarmSet: IntentHandler = async (args, ctx) => {
     5000,
   );
   return { speak: `Alarm set for ${seconds} seconds.`, data: { success: true, seconds, message } };
+};
+
+// ── Siri Voice Feedback ─────────────────────────────────────────────────────
+
+export const siriSpeak: IntentHandler = async (args, ctx) => {
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
+  const text = String(args.text ?? args.message ?? "Hello!");
+  const voice = String(args.voice ?? "default");
+
+  try {
+    const success = await hybridAuto.speak(text, voice);
+    return {
+      speak: text,
+      data: { success, text, voice },
+    };
+  } catch (err: any) {
+    return {
+      speak: "Could not speak.",
+      data: { success: false, error: err.message },
+    };
+  }
+};
+
+export const siriGreeting: IntentHandler = async (_args, ctx) => {
+  const hour = new Date().getHours();
+  let greeting: string;
+  if (hour < 12) {
+    greeting = "Good morning! How can I help you today?";
+  } else if (hour < 17) {
+    greeting = "Good afternoon! What can I do for you?";
+  } else {
+    greeting = "Good evening! How can I assist you?";
+  }
+
+  const hybridAuto = ctx.layers.hybridAuto as unknown as HybridAutoLayer;
+  try {
+    await hybridAuto.speak(greeting, "default");
+  } catch {
+    // Voice may not be available
+  }
+
+  return {
+    speak: greeting,
+    data: {
+      success: true,
+      greeting,
+      time: new Date().toLocaleTimeString(),
+    },
+  };
 };

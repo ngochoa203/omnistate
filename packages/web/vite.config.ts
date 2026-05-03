@@ -3,6 +3,9 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 
+const port = process.env.VITE_PORT ? Number.parseInt(process.env.VITE_PORT, 10) : 5173;
+const host = process.env.VITE_HOST || undefined;
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -11,7 +14,9 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port,
+    host,
+    strictPort: true,
     proxy: {
       "/api": {
         target: "http://127.0.0.1:19801",
@@ -22,5 +27,10 @@ export default defineConfig({
         ws: true,
       },
     },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./test/setup.ts"],
+    globals: true,
   },
 });

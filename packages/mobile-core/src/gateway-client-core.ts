@@ -32,7 +32,7 @@ export interface GatewayClientOptions {
 }
 
 export class GatewayClientCore {
-  readonly url: string;
+  private _url: string;
   private role: string;
   private token?: string;
   private tokenType: "session" | "device";
@@ -49,8 +49,12 @@ export class GatewayClientCore {
   private ttsChunkHandlers = new Set<(evt: TtsChunkEvent) => void>();
   private transcriptHandlers = new Set<(msg: any) => void>();
 
+  get url(): string {
+    return this._url;
+  }
+
   constructor(options: GatewayClientOptions) {
-    this.url = options.url;
+    this._url = options.url;
     this.role = options.role ?? "remote";
     this.token = options.token;
     this.tokenType = options.tokenType ?? "session";
@@ -289,6 +293,6 @@ export class GatewayClientCore {
   }
 
   updateUrl(url: string): void {
-    (this as any).url = url;
+    this._url = url;
   }
 }

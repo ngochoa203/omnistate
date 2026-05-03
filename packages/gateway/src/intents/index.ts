@@ -180,10 +180,102 @@ import {
   wifiScan, wifiDetails, wifiMonitorStart, wifiMonitorStop,
   networkCapture, networkScanHosts, networkScanPorts, networkDns, networkWhois,
   securityTools, securityAudit,
+  wifiDeepScan, wifiSignal, wifiChannel, wifiCaptureHandshake, wifiInstallTools,
 } from "./security.js";
+import {
+  iokitThermals, iokitFans, iokitBatteryHealth, iokitGPU, iokitCPUUsage,
+  iokitMemoryPressure, iokitNVRAMGet, iokitNVRAMSet, iokitNVRAMList,
+  iokitPCIDevices, iokitUSBTree, iokitSMCKeys, iokitSMCRead,
+} from "./iokit.js";
+import {
+  kernelSysctlGet, kernelSysctlSet, kernelSysctlAll, kernelSysctlPrefix,
+  kernelVMStats, kernelSwapUsage, kernelPurgeMemory,
+  kernelListKexts, kernelGetKext, kernelTraceSyscalls, kernelOpenFiles, kernelFDs,
+  kernelSpotlight, kernelMdutilStatus, kernelMdutilControl,
+  kernelSIPStatus, kernelBootArgs,
+  kernelLaunchctlList, kernelLaunchctlLoad, kernelLaunchctlUnload, kernelLaunchctlKickstart,
+} from "./kernel-intents.js";
 
 export { IntentRegistry } from "./types.js";
 export type { StructuredResponse, HandlerContext, HandlerLayers, IntentHandler } from "./types.js";
+
+// ── Inline handler functions (exported for external use) ───────────────────────
+export const appLaunchHandler = async (
+  args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<StructuredResponse> => {
+  const name = String(args.name ?? args.app ?? "").trim();
+  const success = await ctx.layers.deep.launchApp(name);
+  if (success) {
+    return { speak: `Launched ${name}.`, data: { success: true } };
+  }
+  const fallback = await ctx.layers.deep.openDefaultBrowser(name);
+  return {
+    speak: fallback
+      ? `App "${name}" not found. Opened in default browser instead.`
+      : `Unable to launch "${name}".`,
+    data: { success: fallback, fallback: fallback ? "default-browser" : "none" },
+  };
+};
+
+export const shellExecHandler = async (
+  args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<StructuredResponse> => {
+  const command = String(args.command ?? "").trim();
+  if (!command) return { speak: "No command provided." };
+  const output = ctx.layers.deep.exec(command);
+  return { speak: `Command executed.`, data: { output } };
+};
+
+export const networkWifiHandler = async (
+  _args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<StructuredResponse> => {
+  const wifi = await ctx.layers.deepOS?.getWiFiStatus() ?? null;
+  return { speak: "Wi-Fi status retrieved.", data: { wifi } };
+};
+
+export const audioVolumeHandler = async (
+  args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<StructuredResponse> => {
+  const deepOS = ctx.layers.deepOS;
+  if (args.level !== undefined && deepOS?.setVolume) {
+    const success = await deepOS.setVolume(Number(args.level));
+    return { speak: `Volume set to ${args.level}.`, data: { success } };
+  }
+  const level = deepOS?.getVolume ? await deepOS.getVolume() : null;
+  return { speak: `Current volume is ${level ?? "unknown"}.`, data: { level } };
+};
+
+export const uiClickHandler = async (
+  args: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<StructuredResponse> => {
+  const button = (args.button as "left" | "right" | "middle" | undefined) ?? "left";
+  const x = args.x as number | undefined;
+  const y = args.y as number | undefined;
+  const surface = ctx.layers.surface;
+
+  if (typeof x === "number" && typeof y === "number") {
+    await surface.moveMouse(x, y);
+    await surface.click(button);
+    return { speak: `Clicked at (${x}, ${y}).`, data: {} };
+  }
+
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  if (query) {
+    const found = await surface.findElement(query);
+    if (found) {
+      await surface.clickElement(found);
+      return { speak: `Clicked element "${query}".`, data: {} };
+    }
+    throw new Error(`ui.click target not found for query: ${query}`);
+  }
+
+  throw new Error("ui.click requires element, query, or x/y coordinates");
+};
 
 export const intentRegistry = new IntentRegistry();
 
@@ -200,84 +292,208 @@ intentRegistry.register("reminder.cancel", reminderCancel);
 intentRegistry.register("calendar.today", calendarToday);
 intentRegistry.register("calendar.next", calendarNext);
 
+// ── Non-technical user aliases (map simplified intent types → closest handlers) ─
+intentRegistry.register("app-launch", appLaunchHandler);
+intentRegistry.register("app-control", appQuit);
+intentRegistry.register("power-management", powerBattery);
+intentRegistry.register("network-control", networkWifiConnect);
+intentRegistry.register("peripheral-management", bluetoothToggle);
+intentRegistry.register("audio-management", hardwareSetVolume);
+intentRegistry.register("thermal-management", healthThermal);
+intentRegistry.register("disk-management", maintGetDiskUsage);
+intentRegistry.register("memory-management", memoryPressure);
+
 // ── Previously migrated tool adapters ────────────────────────────────────────
+intentRegistry.register("app.launch", appLaunchHandler);
+intentRegistry.register("shell.exec", shellExecHandler);
+intentRegistry.register("network.wifi", networkWifiHandler);
+intentRegistry.register("audio.volume", audioVolumeHandler);
+intentRegistry.register("ui.click", uiClickHandler);
 
-intentRegistry.register(
-  "app.launch",
-  async (args, ctx: HandlerContext): Promise<StructuredResponse> => {
-    const name = String(args.name ?? args.app ?? "").trim();
-    const success = await ctx.layers.deep.launchApp(name);
-    if (success) {
-      return { speak: `Launched ${name}.`, data: { success: true } };
-    }
-    const fallback = await ctx.layers.deep.openDefaultBrowser(name);
-    return {
-      speak: fallback
-        ? `App "${name}" not found. Opened in default browser instead.`
-        : `Unable to launch "${name}".`,
-      data: { success: fallback, fallback: fallback ? "default-browser" : "none" },
-    };
-  },
-);
-
-intentRegistry.register(
-  "shell.exec",
-  async (args, ctx: HandlerContext): Promise<StructuredResponse> => {
-    const command = String(args.command ?? "").trim();
-    if (!command) return { speak: "No command provided." };
-    const output = ctx.layers.deep.exec(command);
-    return { speak: `Command executed.`, data: { output } };
-  },
-);
-
-intentRegistry.register(
-  "network.wifi",
-  async (_args, ctx: HandlerContext): Promise<StructuredResponse> => {
-    const wifi = await ctx.layers.deepOS?.getWiFiStatus() ?? null;
-    return { speak: "Wi-Fi status retrieved.", data: { wifi } };
-  },
-);
-
-intentRegistry.register(
-  "audio.volume",
-  async (args, ctx: HandlerContext): Promise<StructuredResponse> => {
-    const deepOS = ctx.layers.deepOS;
-    if (args.level !== undefined && deepOS?.setVolume) {
-      const success = await deepOS.setVolume(Number(args.level));
-      return { speak: `Volume set to ${args.level}.`, data: { success } };
-    }
-    const level = deepOS?.getVolume ? await deepOS.getVolume() : null;
-    return { speak: `Current volume is ${level ?? "unknown"}.`, data: { level } };
-  },
-);
-
-intentRegistry.register(
-  "ui.click",
-  async (args, ctx: HandlerContext): Promise<StructuredResponse> => {
-    const button = (args.button as "left" | "right" | "middle" | undefined) ?? "left";
-    const x = args.x as number | undefined;
-    const y = args.y as number | undefined;
-    const surface = ctx.layers.surface;
-
-    if (typeof x === "number" && typeof y === "number") {
-      await surface.moveMouse(x, y);
-      await surface.click(button);
-      return { speak: `Clicked at (${x}, ${y}).`, data: {} };
-    }
-
-    const query = typeof args.query === "string" ? args.query.trim() : "";
-    if (query) {
-      const found = await surface.findElement(query);
-      if (found) {
-        await surface.clickElement(found);
-        return { speak: `Clicked element "${query}".`, data: {} };
-      }
-      throw new Error(`ui.click target not found for query: ${query}`);
-    }
-
-    throw new Error("ui.click requires element, query, or x/y coordinates");
-  },
-);
+// ── Process ───────────────────────────────────────────────────────────────────
+export { processRestart, processRenice, processDetails, processList, processKill } from "./process.js";
+export {
+  appActivate, appQuit, appScript, appResolve, appInstall, appLaunchWithContext, appChat,
+} from "./app.js";
+export {
+  fileRead, fileWrite, filePermissions, fileChmod, fileChown, fileCreate, fileCopy, fileMove,
+  fileRenameBatch, fileDelete, fileSearch, fileZip, fileUnzip, fileOrganizeDesktop,
+  fileList, fileMetadata, fileExists, fileSize, fileHash, fileTouch, fileAppend,
+  fileSymlink, fileResolveSymlink, fileDiskSpace, fileCompare, fileMkdir, fileReadBuffer,
+  fileGetPermissions, fileSetPermissions, fileWatch,
+} from "./file.js";
+export {
+  systemInfo, systemLock, systemDnd,
+  osGetConfig, osSetConfig, osDarkMode, osDns, osProxy,
+  snapshotCreate, snapshotList, snapshotRollback,
+  envGet, envSet, envUnset, envList,
+  defaultsRead, defaultsWrite, defaultsDelete,
+  timezoneGet, timezoneSet, localeGet, localeSet,
+  powerBattery, powerSleep, powerShutdown, powerRestart, powerScheduleWake,
+  startupList, startupAdd, startupRemove,
+  loginItems, loginAdd, loginRemove,
+  userList, userCurrent, userGroups,
+  scheduleList, scheduleCreate, scheduleRemove,
+  wifiToggle, searchSpotlight,
+} from "./system.js";
+export {
+  serviceList, serviceStatus, serviceStart, serviceStop, serviceRestart, serviceEnable, serviceDisable,
+} from "./service.js";
+export {
+  packageList, packageInstall, packageRemove, packageUpgrade, packageUpgradeAll, packageSearch,
+  softwareInstall, softwareUninstall, softwareUpdate,
+  softwareBrewInstall, softwareBrewUninstall, softwareBrewList, softwareBrewSearch,
+  softwareBrewUpdate, softwareBrewUpgrade, softwareBrewInfo, softwareBrewServices, softwareBrewDoctor,
+  softwareNpmInstall, softwareNpmUninstall, softwareNpmList, softwareNpmRun, softwareNpmInit,
+  softwareNpmSearch, softwareNpmOutdated, softwareNpmUpdate,
+  softwarePipInstall, softwarePipUninstall, softwarePipList, softwarePipFreeze, softwarePipSearch, softwarePipShowVenvs,
+  softwareGetEnv, softwareSetEnv, softwareUnsetEnv, softwareListEnv, softwareExportEnv,
+  softwareGetSystemInfo, softwareGetDiskUsage, softwareGetMemoryUsage, softwareGetProcessorUsage, softwareGetNetworkInterfaces,
+  softwareGetNodeVersions, softwareSetNodeVersion, softwareGetPythonVersions, softwareSetPythonVersion, softwareGetRubyVersions,
+  softwareCaskInstall, softwareCaskUninstall, softwareCaskList, softwareCaskSearch,
+  softwareGetInstalledApps, softwareGetAppInfo, softwareIsAppInstalled,
+} from "./package.js";
+export {
+  networkInterfaces, networkWifiConnect, networkWifiDisconnect, networkFirewall, networkFirewallToggle,
+  networkOpenPorts, networkConnections, networkRoutes, networkPing, networkTraceroute, networkVpn,
+  firewallRules, firewallAddRule, firewallBlockIP, firewallUnblockIP, firewallBlockPort, firewallAllowPort,
+  sshList, sshGenerate, securityVpnToggle, securityDnsSet, securityProxySet,
+} from "./network.js";
+export {
+  audioDevices, audioSetOutput, audioSetInput, audioMute, audioSources, audioDefaultOutput, audioDefaultInput, audioMuted, audioToggleMute,
+  hardwareGetVolume, hardwareSetVolume, hardwareMute, hardwareUnmute, hardwareToggleMute, hardwareGetInputVolume, hardwareSetInputVolume, hardwareListAudioDevices,
+  displayBrightness, displayList, displaySetResolution, displayNightShift, displayNightshift,
+  hardwareGetBrightness, hardwareSetBrightness, hardwareGetNightShift, hardwareSetNightShift,
+  hardwareListDisplays, hardwareGetResolution, hardwareSetResolution, hardwareIsDarkMode, hardwareSetDarkMode, hardwareGetAppearance,
+  bluetoothStatus, bluetoothToggle, bluetoothDevices,
+  hardwareGetBluetoothStatus, hardwareEnableBluetooth, hardwareDisableBluetooth,
+  hardwareListBluetoothDevices, hardwareConnectBluetooth, hardwareDisconnectBluetooth,
+  diskEject, volumeList, volumeMount, volumeUnmount,
+  keyboardLayouts, keyboardSetLayout,
+  hardwareGetKeyboardBacklight, hardwareSetKeyboardBacklight, hardwareIsKeyboardBacklightAuto,
+  printerList, printerDefault, printerPrint, printerQueue,
+  memoryPressure, memorySwap, memoryTopProcesses, memoryPurge, memoryVmstats,
+  kernelSysctl, kernelPower,
+  hardwareGetBatteryStatus, hardwareGetSleepSettings, hardwarePreventSleep, hardwareAllowSleep,
+  hardwareSleep, hardwareRestart, hardwareShutdown,
+  hardwareListUSBDevices, hardwareListThunderboltDevices, hardwareGetInputDevices, hardwareEjectDisk,
+  hardwareGetWifiInfo, hardwareGetWifiNetworks, hardwareConnectToWifi,
+  hardwareEject, hardwarePrint, hardwareWebcamLock, hardwareMicLock, hardwareHealth,
+} from "./hardware.js";
+export {
+  browserOpen, browserNewTab, browserCloseTab, browserFillForm, browserScrape, browserDownload, browserBookmark,
+  browserListTabs, browserGetActiveTab, browserSwitchTab, browserReloadTab, browserDuplicateTab,
+  browserNavigateTo, browserGoBack, browserGoForward, browserGetUrl, browserGetTitle, browserGetPageSource,
+  browserExecuteJs, browserQuerySelector, browserQuerySelectorAll, browserGetElementText, browserGetElementAttribute,
+  browserFillInput, browserClickElement, browserSubmitForm, browserSelectOption,
+  browserGetCookies, browserSetCookie, browserGetLocalStorage, browserSetLocalStorage,
+  browserScreenshot, browserSavePdf, browserStartHeadless, browserStopHeadless, browserIsHeadlessRunning, browserExecuteInHeadless,
+  browserPinTab, browserMuteTab, browserUnmuteTab, browserGetTabMemory,
+  browserGetDownloads, browserClearDownloads, browserGetDownloadDirectory,
+  browserGetBookmarks, browserAddBookmark, browserSearchBookmarks,
+  browserGetHistory, browserGetPageLoadTime, browserGetNetworkRequests, browserBlockUrls,
+} from "./browser-intents.js";
+export {
+  windowMinimize, windowMaximize, windowRestore, windowSnap, windowFocus,
+  uiFind, uiMove, uiClickAt, uiDoubleClickAt, uiDrag, uiType, uiKey, uiScroll, uiWait,
+  uiHighlight, uiDesktopSwitch, screenRecordStart, screenRecordStop,
+  clipboardGet, clipboardSet, clipboardHistory, clipboardClear,
+} from "./ui.js";
+export {
+  fleetDiscoverDevices, fleetGetDeviceStatus, fleetPingDevice, fleetGetDeviceInfo, fleetListOnlineDevices, fleetGetFleetOverview,
+  fleetSendTask, fleetBroadcastTask, fleetGetTaskStatus, fleetCancelTask, fleetCollectResults,
+  fleetSendFile, fleetRequestFile, fleetSyncDirectory, fleetGetRemoteFileList, fleetSyncClipboard, fleetSendNotification, fleetGetRemoteClipboard,
+  fleetStartHeartbeat, fleetStopHeartbeat, fleetGetHealthHistory,
+  fleetCreateTaskGroup, fleetGetTaskGroupStatus, fleetCancelTaskGroup,
+  fleetScheduleTask, fleetSyncConfig, fleetGetRemoteConfig, fleetBroadcastConfig,
+  fleetGetFleetMetrics, fleetGetDeviceMetrics, fleetSetAlertThresholds,
+  fleetEnableMeshRelay, fleetGetNetworkTopology, fleetFindBestRoute, fleetWakeDevice, fleetGetDeviceMacAddress,
+} from "./fleet-intents.js";
+export {
+  shellType, shellConfig, shellAddAlias, shellRemoveAlias, shellAliases, shellAddToPath, shellHistory,
+  nlToCommand,
+  gitStatus, gitCommit, gitPush, gitPull, gitBranch,
+  dockerPs, dockerStart, dockerStop, dockerCompose, dockerStatus,
+  containerList, containerStart, containerStop, containerRemove, containerLogs, containerImages, containerPull,
+  vmList, vmStart, vmStop,
+  devOpenTerminal, devRunCommand, devRunCommandAsync, devGetRunningShells, devGetShellHistory, devGetEnvironment,
+  devGitStatus, devGitLog, devGitDiff, devGitBranches, devGitCommit, devGitPush, devGitPull, devGitClone,
+  devOpenInEditor, devOpenProject, devGetOpenEditors, devSearchInProject, devGetProjectStructure,
+  devDockerPs, devDockerImages, devDockerRun, devDockerStop, devDockerLogs, devDockerCompose,
+  logAnalyze,
+} from "./dev.js";
+export {
+  mediaToggle, mediaNext, mediaPrevious, mediaInfo,
+  mediaPlay, mediaPause, mediaTogglePlayPause, mediaNextTrack, mediaPreviousTrack,
+  mediaGetCurrentTrack, mediaSetPosition, mediaGetQueue, mediaGetPlayerVolume, mediaSetPlayerVolume,
+  mediaGetAudioOutput, mediaSetAudioOutput, mediaGetPlaylists, mediaPlayPlaylist,
+  mediaAddToPlaylist, mediaCreatePlaylist, mediaSearchTracks,
+  mediaGetAirPlayDevices, mediaSetAirPlayDevice, mediaIsAirPlaying, mediaStopAirPlay,
+  mediaGetVideoPlayers, mediaControlVideo, mediaGetVideoInfo, mediaSetVideoPosition,
+  visionModalDetect, visionModalDismiss, visionCaptchaDetect, visionTableDetect, visionTableExtract,
+  visionA11yAudit, visionLanguageDetect, visionTranslate, visionOcr, visionContext, visionOrganizeDesktop,
+} from "./media.js";
+export {
+  emailCompose, calendarCreate, reminderCreate,
+  commSendEmail, commGetUnreadEmails, commReadEmail, commSearchEmails, commGetMailboxes,
+  commSendMessage, commGetRecentMessages, commSearchMessages,
+  commGetEvents, commCreateEvent, commDeleteEvent, commGetCalendars, commGetUpcomingEvents,
+  commSendNotification, commGetRecentNotifications, commClearNotifications,
+  commSearchContacts, commGetContactDetails, commAddContact, commGetContactGroups,
+  commSendEmailWithAttachment, commGetEmailAccounts, commMoveEmail, commFlagEmail,
+  commStartFaceTimeCall, commEndFaceTimeCall, commIsFaceTimeActive,
+  commGetReminders, commCreateReminder, commCompleteReminder, commGetReminderLists, commDeleteReminder,
+  commGetNotes, commCreateNote, commSearchNotes, commGetNoteFolders,
+} from "./comm.js";
+export {
+  maintenanceDiskCleanup, maintenanceNetworkFix, maintenanceKillMemoryLeaks,
+  healthNotify, healthDiskRescue, healthNetworkDiagnose, healthSecurityScan, healthThermal, healthBattery,
+  healthFilesystem, healthCertExpiry, healthLogAnomalies, healthSmartDisk, healthSocketStats,
+  maintGetDiskUsage, maintGetLargeFiles, maintCleanTempFiles, maintCleanDownloads, maintEmptyTrash,
+  maintGetDirectorySize, maintListCaches, maintClearAppCache, maintClearBrowserCache, maintClearDeveloperCaches, maintGetCacheSize,
+  maintListProcesses, maintKillProcess, maintKillByName, maintGetProcessInfo, maintGetResourceHogs, maintGetZombieProcesses,
+  maintGetSystemLogs, maintGetAppLogs, maintClearUserLogs, maintGetLogSize,
+  maintRepairPermissions, maintVerifyDisk, maintFlushDNS, maintRebuildSpotlight, maintGetStartupItems,
+  logSystem, logApp, logSearch, logSize, logClean,
+  certList, certInstall, gpgList,
+  updateCheck, updateInstall, updateInstallAll, updateOsVersion,
+  backupTimemachine, backupStart, backupList, backupRsync,
+  fontList, fontInstall,
+  securityScan, securityVaultGet, securityEncrypt, securityShred,
+} from "./maintenance.js";
+export {
+  hybridVoice, hybridMigrationScan, hybridMigrationPlan, hybridMigrationExecute,
+  hybridMacroStart, hybridMacroStop, hybridMacroInfer, hybridMacroSave, hybridMacroList, hybridMacroRun,
+  hybridSpeak, hybridGenerateScript, hybridSuggestAction, hybridOrchestrateApps,
+  hybridStateDefine, hybridStateCheck, hybridStateEnforce, hybridStateStartLoop, hybridStateStopLoop,
+  hybridCheckpointRecord, hybridCheckpointList, hybridCheckpointRollback, hybridCheckpointUndo,
+  hybridContextSerialize, hybridContextSend, hybridContextReceive,
+  hybridProfileAnalyze, hybridProfileSuggest, hybridProfileGet,
+  hybridTemplates, hybridRunTemplate, hybridAnalyzeError, hybridOrganizeFiles, hybridHealthReport,
+  hybridMachineDiff, hybridCompliance, hybridDocs, hybridForecast, hybridExtensions, hybridPlugins,
+  learningDetectHabits, learningSuggestMacro, learningHealthReminder, learningPrefetch,
+  workflowResearch, workflowDataEntry, workflowMeeting, workflowDev,
+  genericExecute, alarmSet,
+} from "./hybrid-intents.js";
+export {
+  wifiScan, wifiDetails, wifiMonitorStart, wifiMonitorStop,
+  networkCapture, networkScanHosts, networkScanPorts, networkDns, networkWhois,
+  securityTools, securityAudit,
+  wifiDeepScan, wifiSignal, wifiChannel, wifiCaptureHandshake, wifiInstallTools,
+} from "./security.js";
+export {
+  iokitThermals, iokitFans, iokitBatteryHealth, iokitGPU, iokitCPUUsage,
+  iokitMemoryPressure, iokitNVRAMGet, iokitNVRAMSet, iokitNVRAMList,
+  iokitPCIDevices, iokitUSBTree, iokitSMCKeys, iokitSMCRead,
+} from "./iokit.js";
+export {
+  kernelSysctlGet, kernelSysctlSet, kernelSysctlAll, kernelSysctlPrefix,
+  kernelVMStats, kernelSwapUsage, kernelPurgeMemory,
+  kernelListKexts, kernelGetKext, kernelTraceSyscalls, kernelOpenFiles, kernelFDs,
+  kernelSpotlight, kernelMdutilStatus, kernelMdutilControl,
+  kernelSIPStatus, kernelBootArgs,
+  kernelLaunchctlList, kernelLaunchctlLoad, kernelLaunchctlUnload, kernelLaunchctlKickstart,
+} from "./kernel-intents.js";
 
 // ── Process ───────────────────────────────────────────────────────────────────
 intentRegistry.register("process.restart", processRestart);
@@ -934,3 +1150,48 @@ intentRegistry.register("workflow.meeting", workflowMeeting);
 intentRegistry.register("workflow.dev", workflowDev);
 intentRegistry.register("generic.execute", genericExecute);
 intentRegistry.register("alarm.set", alarmSet);
+
+// ── IOKit — direct hardware sensor access ─────────────────────────────────────
+intentRegistry.register("iokit.thermals", iokitThermals);
+intentRegistry.register("iokit.fans", iokitFans);
+intentRegistry.register("iokit.battery.health", iokitBatteryHealth);
+intentRegistry.register("iokit.gpu", iokitGPU);
+intentRegistry.register("iokit.cpu.usage", iokitCPUUsage);
+intentRegistry.register("iokit.memory.pressure", iokitMemoryPressure);
+intentRegistry.register("iokit.nvram.get", iokitNVRAMGet);
+intentRegistry.register("iokit.nvram.set", iokitNVRAMSet);
+intentRegistry.register("iokit.nvram.list", iokitNVRAMList);
+intentRegistry.register("iokit.pci.devices", iokitPCIDevices);
+intentRegistry.register("iokit.usb.tree", iokitUSBTree);
+intentRegistry.register("iokit.smc.keys", iokitSMCKeys);
+intentRegistry.register("iokit.smc.read", iokitSMCRead);
+
+// ── Kernel — deep OS kernel control ───────────────────────────────────────────
+intentRegistry.register("kernel.sysctl.get", kernelSysctlGet);
+intentRegistry.register("kernel.sysctl.set", kernelSysctlSet);
+intentRegistry.register("kernel.sysctl.all", kernelSysctlAll);
+intentRegistry.register("kernel.sysctl.prefix", kernelSysctlPrefix);
+intentRegistry.register("kernel.vm.stats", kernelVMStats);
+intentRegistry.register("kernel.swap.usage", kernelSwapUsage);
+intentRegistry.register("kernel.memory.purge", kernelPurgeMemory);
+intentRegistry.register("kernel.kext.list", kernelListKexts);
+intentRegistry.register("kernel.kext.get", kernelGetKext);
+intentRegistry.register("kernel.trace.syscalls", kernelTraceSyscalls);
+intentRegistry.register("kernel.trace.openfiles", kernelOpenFiles);
+intentRegistry.register("kernel.trace.fds", kernelFDs);
+intentRegistry.register("kernel.spotlight.query", kernelSpotlight);
+intentRegistry.register("kernel.mdutil.status", kernelMdutilStatus);
+intentRegistry.register("kernel.mdutil.control", kernelMdutilControl);
+intentRegistry.register("kernel.sip.status", kernelSIPStatus);
+intentRegistry.register("kernel.boot.args", kernelBootArgs);
+intentRegistry.register("kernel.launchctl.list", kernelLaunchctlList);
+intentRegistry.register("kernel.launchctl.load", kernelLaunchctlLoad);
+intentRegistry.register("kernel.launchctl.unload", kernelLaunchctlUnload);
+intentRegistry.register("kernel.launchctl.kickstart", kernelLaunchctlKickstart);
+
+// ── WiFi Deep Control ─────────────────────────────────────────────────────────
+intentRegistry.register("wifi.deep.scan", wifiDeepScan);
+intentRegistry.register("wifi.signal", wifiSignal);
+intentRegistry.register("wifi.channel.set", wifiChannel);
+intentRegistry.register("wifi.capture.handshake", wifiCaptureHandshake);
+intentRegistry.register("wifi.tools.install", wifiInstallTools);

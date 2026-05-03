@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { GatewayClient } from "../lib/gateway-client";
 import { buildClaudeMemPayloadFromState, useChatStore } from "../lib/chat-store";
-import type { ServerMessage } from "../lib/protocol";
+import type { ServerMessage, VoiceErrorMessage, SystemInfoMessage } from "../lib/protocol";
 import { speakText } from "../lib/tts";
 
 let _client: GatewayClient | null = null;
@@ -157,7 +157,7 @@ export function useGateway() {
     unsubs.push(client.on("voice.error", (msg: ServerMessage) => {
       if (msg.type === "voice.error") {
         store.setVoiceState("idle");
-        store.addSystemMessage(`Voice error: ${(msg as any).error}`);
+        store.addSystemMessage(`Voice error: ${(msg as VoiceErrorMessage).error}`);
       }
     }));
 
@@ -185,14 +185,21 @@ export function useGateway() {
 
     unsubs.push(client.on("voice.tts.audio", (msg: ServerMessage) => {
       if (msg.type === "voice.tts.audio") {
-        const binary = atob(msg.audio);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: "audio/mpeg" });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
-        void audio.play();
+        // Bug fix #19: empty audio string → atob("") is "" (no crash), but
+        // creating a 0-byte Blob and playing it wastes resources. Guard here.
+        if (!msg.audio) return;
+        try {
+          const binary = atob(msg.audio);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+          void audio.play();
+        } catch (err) {
+          console.warn("[tts] Failed to decode audio:", err);
+        }
       }
     }));
 
@@ -207,7 +214,7 @@ export function useGateway() {
 
     unsubs.push(client.on("system.info", (msg: ServerMessage) => {
       if (msg.type === "system.info") {
-        store.setSystemInfo((msg as any).data);
+        store.setSystemInfo((msg as SystemInfoMessage).data);
       }
     }));
 

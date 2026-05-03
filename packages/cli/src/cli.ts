@@ -46,7 +46,6 @@ import type {
   StatusReplyMessage,
   GatewayShutdownMessage,
   ErrorMessage,
-  ToolsReportMessage,
 } from "@omnistate/shared/protocol";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -991,10 +990,7 @@ async function cmdRepl(args: string[]): Promise<void> {
             for (const g of TOOL_GROUPS) {
               console.log(`  ${cyan(g.group.padEnd(12))} ${dim(`${g.count} tools`)}`);
             }
-            // If connected, request live list from gateway
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              send(ws, { type: "tools.list" } as ClientMessage);
-            }
+            // NOTE: live tool listing via gateway not yet implemented in protocol
             break;
           }
 
@@ -1099,13 +1095,6 @@ async function cmdRepl(args: string[]): Promise<void> {
               case "task.error": {
                 const m = msg as TaskErrorMessage;
                 console.error(`\n${red("✗")} ${m.error}`);
-                ws!.off("message", onMsg);
-                resolveTask();
-                break;
-              }
-              case "tools.report": {
-                const m = msg as ToolsReportMessage;
-                console.log(`\n${bold("Live tools from gateway:")} ${m.tools.length} tools, ${m.skills.length} skills`);
                 ws!.off("message", onMsg);
                 resolveTask();
                 break;

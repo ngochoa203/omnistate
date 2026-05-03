@@ -50,6 +50,16 @@ export interface TriggerDef {
   updatedAt: string;
 }
 
+export interface TriggerLogEntry {
+  id: string;
+  trigger_id: string;
+  user_id: string;
+  fired_at: string;
+  condition_snapshot: string;
+  status: 'fired' | 'executed' | 'failed';
+  error?: string;
+}
+
 export type TriggerFireCallback = (trigger: TriggerDef) => Promise<void>;
 
 export class TriggerEngine {
@@ -173,11 +183,16 @@ export class TriggerEngine {
     if (delay <= 0) return;
 
     const timer = setTimeout(async () => {
-      if (this.checkCooldown(trigger)) {
-        await this.fireTrigger(trigger);
+      // Bug fix #14: re-fetch the trigger from DB so lastFiredAt/enabled reflect
+      // the current state — the captured `trigger` object is stale after firing.
+      const freshTrigger = this.getTrigger(trigger.id);
+      if (freshTrigger && freshTrigger.enabled && this.checkCooldown(freshTrigger)) {
+        await this.fireTrigger(freshTrigger);
       }
-      // Reschedule
-      this.setupCronTrigger(trigger);
+      // Reschedule using the fresh trigger definition
+      if (freshTrigger && freshTrigger.enabled) {
+        this.setupCronTrigger(freshTrigger);
+      }
     }, Math.min(delay, 2147483647)); // Max setTimeout value
 
     this.cronTimers.set(trigger.id, timer);
@@ -188,8 +203,9 @@ export class TriggerEngine {
     try {
       const watcher = watch(config.path, { recursive: true }, async (eventType) => {
         if (config.events.includes(eventType) || config.events.includes("all")) {
-          if (this.checkCooldown(trigger)) {
-            await this.fireTrigger(trigger);
+          const freshTrigger = this.getTrigger(trigger.id);
+          if (freshTrigger && freshTrigger.enabled && this.checkCooldown(freshTrigger)) {
+            await this.fireTrigger(freshTrigger);
           }
         }
       });
@@ -204,16 +220,19 @@ export class TriggerEngine {
     const now = new Date().toISOString();
     const logId = uuid();
 
-    // Log the fire event
-    db.prepare(`
-      INSERT INTO trigger_log (id, trigger_id, user_id, fired_at, condition_snapshot, status)
-      VALUES (?, ?, ?, ?, ?, 'fired')
-    `).run(logId, trigger.id, trigger.userId, now, JSON.stringify({ condition: trigger.condition, ...(context ?? {}) }));
+    // Bug fix #20: update fire_count and last_fired_at BEFORE executing the
+    // action so that if the action throws/crashes, the cooldown is still respected
+    // and the audit log is consistent. Use a transaction to keep log + counter atomic.
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO trigger_log (id, trigger_id, user_id, fired_at, condition_snapshot, status)
+        VALUES (?, ?, ?, ?, ?, 'fired')
+      `).run(logId, trigger.id, trigger.userId, now, JSON.stringify({ condition: trigger.condition, ...context }));
 
-    // Update trigger
-    db.prepare(`
-      UPDATE triggers SET fire_count = fire_count + 1, last_fired_at = ? WHERE id = ?
-    `).run(now, trigger.id);
+      db.prepare(`
+        UPDATE triggers SET fire_count = fire_count + 1, last_fired_at = ? WHERE id = ?
+      `).run(now, trigger.id);
+    })();
 
     logger.info({ triggerId: trigger.id, eventId: context?.eventId }, `[triggers] Fired: ${trigger.name} (${trigger.id})`);
 
@@ -223,8 +242,8 @@ export class TriggerEngine {
         await this.onFire(trigger);
       }
       db.prepare("UPDATE trigger_log SET status = 'executed' WHERE id = ?").run(logId);
-    } catch (err: any) {
-      db.prepare("UPDATE trigger_log SET status = 'failed', error = ? WHERE id = ?").run(err.message, logId);
+    } catch (err: unknown) {
+      db.prepare("UPDATE trigger_log SET status = 'failed', error = ? WHERE id = ?").run(err instanceof Error ? err.message : String(err), logId);
     }
   }
 
@@ -234,13 +253,32 @@ export class TriggerEngine {
     return elapsed >= trigger.cooldownMs;
   }
 
+  // Bug fix #5: reading cumulative ticks at a single point in time gives the
+  // CPU usage since boot, not the current load. We maintain a snapshot from
+  // the previous polling interval and compute the delta.
+  private _prevCpuTimes: Array<ReturnType<typeof cpus>[number]["times"]> | null = null;
+
   private getCpuUsage(): number {
     const cpuInfo = cpus();
-    const times = cpuInfo.map(cpu => {
-      const total = Object.values(cpu.times).reduce((a, b) => a + b, 0);
-      return ((total - cpu.times.idle) / total) * 100;
+    const currentTimes = cpuInfo.map(c => ({ ...c.times }));
+
+    if (!this._prevCpuTimes || this._prevCpuTimes.length !== currentTimes.length) {
+      // First call or CPU count changed — store snapshot, return 0 for now
+      this._prevCpuTimes = currentTimes;
+      return 0;
+    }
+
+    const usages = currentTimes.map((cur, i) => {
+      const prev = this._prevCpuTimes![i]!;
+      const deltaIdle = cur.idle - prev.idle;
+      const deltaTotal = Object.values(cur).reduce((a, b) => a + b, 0)
+        - Object.values(prev).reduce((a, b) => a + b, 0);
+      if (deltaTotal === 0) return 0;
+      return ((deltaTotal - deltaIdle) / deltaTotal) * 100;
     });
-    return times.reduce((a, b) => a + b, 0) / times.length;
+
+    this._prevCpuTimes = currentTimes;
+    return usages.reduce((a, b) => a + b, 0) / usages.length;
   }
 
   private getNextCronTime(expression: string): Date | null {
@@ -251,23 +289,30 @@ export class TriggerEngine {
     const [minute, hour] = parts;
     const now = new Date();
     const next = new Date(now);
+    next.setMilliseconds(0);
 
     if (minute !== "*" && hour !== "*") {
-      next.setMinutes(parseInt(minute));
-      next.setHours(parseInt(hour));
+      next.setMinutes(parseInt(minute, 10));
+      next.setHours(parseInt(hour, 10));
       next.setSeconds(0);
-      next.setMilliseconds(0);
+      // Bug fix #15: if the computed time is already past, schedule for tomorrow
       if (next <= now) next.setDate(next.getDate() + 1);
     } else if (minute.startsWith("*/")) {
-      const interval = parseInt(minute.slice(2));
-      const nextMinute = Math.ceil((now.getMinutes() + 1) / interval) * interval;
-      next.setMinutes(nextMinute);
+      // Bug fix #15: nextMinute can exceed 59 — use Date arithmetic instead of
+      // setMinutes(>59) which silently rolls over hours unpredictably on some runtimes.
+      const interval = parseInt(minute.slice(2), 10);
+      if (!Number.isFinite(interval) || interval <= 0 || interval > 59) return null;
+      const currentMinute = now.getMinutes();
+      const minutesSinceLastTick = currentMinute % interval;
+      const minutesUntilNextTick = minutesSinceLastTick === 0 ? interval : (interval - minutesSinceLastTick);
+      next.setTime(now.getTime() + minutesUntilNextTick * 60_000);
       next.setSeconds(0);
-      if (next <= now) next.setMinutes(next.getMinutes() + interval);
+      next.setMilliseconds(0);
     } else {
       // Default: next minute
-      next.setMinutes(next.getMinutes() + 1);
+      next.setTime(now.getTime() + 60_000);
       next.setSeconds(0);
+      next.setMilliseconds(0);
     }
 
     return next;
@@ -311,8 +356,10 @@ export class TriggerEngine {
 
   listTriggers(userId: string): TriggerDef[] {
     const db = getDb();
+    // Bug fix #4: rowToTrigger is a method — must bind(this) so `this` is
+    // correct inside the callback; using an arrow wrapper is the cleaner fix.
     return (db.prepare("SELECT * FROM triggers WHERE user_id = ? ORDER BY created_at DESC").all(userId) as any[])
-      .map(this.rowToTrigger);
+      .map((row) => this.rowToTrigger(row));
   }
 
   updateTrigger(id: string, updates: Partial<{
@@ -325,7 +372,7 @@ export class TriggerEngine {
   }>): TriggerDef | null {
     const db = getDb();
     const sets: string[] = [];
-    const values: any[] = [];
+    const values: (string | number | boolean)[] = [];
 
     if (updates.name !== undefined) { sets.push("name = ?"); values.push(updates.name); }
     if (updates.description !== undefined) { sets.push("description = ?"); values.push(updates.description); }
@@ -345,7 +392,8 @@ export class TriggerEngine {
     const trigger = this.getTrigger(id);
     if (trigger) {
       // Refresh watchers/timers
-      this.cronTimers.get(id) && clearTimeout(this.cronTimers.get(id)!);
+      const existingTimer = this.cronTimers.get(id);
+      if (existingTimer) clearTimeout(existingTimer);
       this.fsWatchers.get(id)?.close();
       if (trigger.enabled) {
         if (trigger.condition.type === "cron") this.setupCronTrigger(trigger);
@@ -357,17 +405,18 @@ export class TriggerEngine {
   }
 
   deleteTrigger(id: string): void {
-    this.cronTimers.get(id) && clearTimeout(this.cronTimers.get(id)!);
+    const timerToDelete = this.cronTimers.get(id);
+    if (timerToDelete) clearTimeout(timerToDelete);
     this.fsWatchers.get(id)?.close();
     this.cronTimers.delete(id);
     this.fsWatchers.delete(id);
     getDb().prepare("DELETE FROM triggers WHERE id = ?").run(id);
   }
 
-  getTriggerHistory(triggerId: string, limit = 50): any[] {
+  getTriggerHistory(triggerId: string, limit = 50): TriggerLogEntry[] {
     return getDb().prepare(
       "SELECT * FROM trigger_log WHERE trigger_id = ? ORDER BY fired_at DESC LIMIT ?"
-    ).all(triggerId, limit);
+    ).all(triggerId, limit) as TriggerLogEntry[];
   }
 
   /** Bridge existing trigger fires into the EventBus. */

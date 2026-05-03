@@ -1,0 +1,3202 @@
+[
+  {
+    "text": "mở Safari",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "bật Slack",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Slack"
+    }
+  },
+  {
+    "text": "mở Chrome",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "bật Terminal",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "mở Finder",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "bật VSCode",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "mở Zalo",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zalo"
+    }
+  },
+  {
+    "text": "bật Telegram",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Telegram"
+    }
+  },
+  {
+    "text": "mở Discord",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Discord"
+    }
+  },
+  {
+    "text": "bật Spotify",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Spotify"
+    }
+  },
+  {
+    "text": "mở Notes",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notes"
+    }
+  },
+  {
+    "text": "bật Reminders",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Reminders"
+    }
+  },
+  {
+    "text": "mở Calendar",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Calendar"
+    }
+  },
+  {
+    "text": "bật Messages",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Messages"
+    }
+  },
+  {
+    "text": "mở Mail",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Mail"
+    }
+  },
+  {
+    "text": "bật Music",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Music"
+    }
+  },
+  {
+    "text": "mở Photos",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Photos"
+    }
+  },
+  {
+    "text": "bật Zoom",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zoom"
+    }
+  },
+  {
+    "text": "mở Notion",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notion"
+    }
+  },
+  {
+    "text": "bật Figma",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Figma"
+    }
+  },
+  {
+    "text": "mở Safari trên máy",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "bật app Slack để chat",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Slack"
+    }
+  },
+  {
+    "text": "mở Chrome để lướt web",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "bật VSCode để code",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "mở Finder xem file",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "bật Terminal chạy lệnh",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "mở ứng dụng Notes",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notes"
+    }
+  },
+  {
+    "text": "bật app Reminders",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Reminders"
+    }
+  },
+  {
+    "text": "mở Telegram nhắn tin",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Telegram"
+    }
+  },
+  {
+    "text": "bật Zalo chat với bạn",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zalo"
+    }
+  },
+  {
+    "text": "mở Discord tham gia server",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Discord"
+    }
+  },
+  {
+    "text": "bật Spotify nghe nhạc",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Spotify"
+    }
+  },
+  {
+    "text": "mở Mail kiểm tra email",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Mail"
+    }
+  },
+  {
+    "text": "bật Calendar xem lịch",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Calendar"
+    }
+  },
+  {
+    "text": "mở Messages đọc tin nhắn",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Messages"
+    }
+  },
+  {
+    "text": "bật Photos xem ảnh",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Photos"
+    }
+  },
+  {
+    "text": "mở Zoom họp online",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zoom"
+    }
+  },
+  {
+    "text": "bật Notion viết note",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notion"
+    }
+  },
+  {
+    "text": "mở Figma thiết kế",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Figma"
+    }
+  },
+  {
+    "text": "bật Xcode lập trình",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Xcode"
+    }
+  },
+  {
+    "text": "giúp tôi mở ứng dụng Safari trên máy Mac",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "làm ơn bật Slack để tôi có thể chat với team",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Slack"
+    }
+  },
+  {
+    "text": "nhờ mở Chrome giúp tôi với",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "có thể bật VSCode để tôi code không?",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "tôi muốn mở Finder để xem các file trong thư mục",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "giúp tôi bật Terminal để chạy một số lệnh terminal",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "mở ứng dụng Notes giúp tôi để tôi ghi chú",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notes"
+    }
+  },
+  {
+    "text": "bật app Reminders để xem các công việc cần làm hôm nay",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Reminders"
+    }
+  },
+  {
+    "text": "mở Telegram giúp tôi với, tôi cần nhắn tin cho bạn",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Telegram"
+    }
+  },
+  {
+    "text": "làm ơn bật Zalo, tôi muốn gửi tin nhắn cho mẹ",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zalo"
+    }
+  },
+  {
+    "text": "nhờ mở Discord để tham gia phòng chat của bạn bè",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Discord"
+    }
+  },
+  {
+    "text": "bật Spotify đi, tôi muốn nghe nhạc thư giãn",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Spotify"
+    }
+  },
+  {
+    "text": "mở Mail kiểm tra hộp thư xem có email mới không",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Mail"
+    }
+  },
+  {
+    "text": "giúp tôi bật Calendar để xem lịch hẹn tuần này",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Calendar"
+    }
+  },
+  {
+    "text": "nhờ mở Messages để tôi đọc tin nhắn mới",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Messages"
+    }
+  },
+  {
+    "text": "bật Photos để xem lại các bức ảnh kỷ niệm",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Photos"
+    }
+  },
+  {
+    "text": "mở Zoom để tôi tham gia cuộc họp online",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zoom"
+    }
+  },
+  {
+    "text": "làm ơn bật Notion, tôi cần viết ghi chú cho dự án",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notion"
+    }
+  },
+  {
+    "text": "nhờ mở Figma để thiết kế giao diện ứng dụng mới",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Figma"
+    }
+  },
+  {
+    "text": "bật Xcode để tôi có thể tiếp tục lập trình iOS app",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Xcode"
+    }
+  },
+  {
+    "text": "moo Safari",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "bậtttt Slack",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Slack"
+    }
+  },
+  {
+    "text": "mở Safaria",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "bật Chromeee",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "mở VSCod",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "bật Terminnal",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "mở Finderr",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "bật Spotfy",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Spotify"
+    }
+  },
+  {
+    "text": "mở Notio",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notion"
+    }
+  },
+  {
+    "text": "bật Zalloo",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zalo"
+    }
+  },
+  {
+    "text": "mở Telegramm",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Telegram"
+    }
+  },
+  {
+    "text": "bật Discorrd",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Discord"
+    }
+  },
+  {
+    "text": "mở Notessss",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notes"
+    }
+  },
+  {
+    "text": "bật Mailll",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Mail"
+    }
+  },
+  {
+    "text": "mở Calendaar",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Calendar"
+    }
+  },
+  {
+    "text": "bật Zoommmm",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zoom"
+    }
+  },
+  {
+    "text": "mở Figmaaa",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Figma"
+    }
+  },
+  {
+    "text": "bật Xcodeee",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Xcode"
+    }
+  },
+  {
+    "text": "mở Messageess",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Messages"
+    }
+  },
+  {
+    "text": "bật Photosss",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Photos"
+    }
+  },
+  {
+    "text": "xin hãy mở Safari giúp tôi",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "làm ơn bật Slack đi",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Slack"
+    }
+  },
+  {
+    "text": "nhờ mở Chrome với",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "cho tôi bật VSCode được không",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "mở Terminal giúp mình với",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "bật Finder đi bạn",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "giúp tớ mở Safari nhé",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Safari"
+    }
+  },
+  {
+    "text": "làm ơn mở Zalo để tớ nhắn tin",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zalo"
+    }
+  },
+  {
+    "text": "nhờ bạn bật Telegram giúp",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Telegram"
+    }
+  },
+  {
+    "text": "mở Spotify để nghe nhạc đi",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Spotify"
+    }
+  },
+  {
+    "text": "bật Chrome giúp với",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Chrome"
+    }
+  },
+  {
+    "text": "làm ơn mở Notion cho tôi",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Notion"
+    }
+  },
+  {
+    "text": "cho mở VSCode được không",
+    "intent": "app-launch",
+    "entities": {
+      "app": "VSCode"
+    }
+  },
+  {
+    "text": "bật Mail giúp tớ kiểm tra email",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Mail"
+    }
+  },
+  {
+    "text": "nhờ mở Calendar xem lịch họp",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Calendar"
+    }
+  },
+  {
+    "text": "mở Zoom giúp tôi với ạ",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Zoom"
+    }
+  },
+  {
+    "text": "bật Figma cho tôi xin",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Figma"
+    }
+  },
+  {
+    "text": "làm ơn bật Xcode để lập trình",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Xcode"
+    }
+  },
+  {
+    "text": "mở Terminal để chạy lệnh",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Terminal"
+    }
+  },
+  {
+    "text": "bật Finder giúp mình nhé",
+    "intent": "app-launch",
+    "entities": {
+      "app": "Finder"
+    }
+  },
+  {
+    "text": "tìm file test.txt",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa file đó",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy file này",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển file X",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên file đó",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén thư mục",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén file zip",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo thư mục mới",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc nội dung file",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê file trong thư mục",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm file ảnh",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa thư mục rỗng",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy thư mục đó",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển thư mục",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên thư mục",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén file thành zip",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén ở đây",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo file mới",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "xem nội dung",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "kiểm tra file",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm tất cả file có đuôi .log",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa tất cả file tạm trong thư mục temp",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy file config.conf sang thư mục backup",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển ảnh vào thư mục Photos",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên nhiều file cùng lúc",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén thư mục Documents thành docs.zip",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén file archive.tar.gz",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo thư mục dự án mới",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc nội dung file readme.md",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê tất cả file ẩn",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm file lớn hơn 100MB",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa file trùng lặp trong thư mục",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy toàn bộ thư mục vào USB",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển file sang desktop",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên file từ tiếng Việt sang tiếng Anh",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén tất cả ảnh thành một file",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén vào thư mục mới",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo file text với nội dung mẫu",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc 10 dòng đầu tiên của file",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê file theo ngày sửa đổi",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "giúp tôi tìm tất cả các file có phần mở rộng .txt trong thư mục Documents",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa tất cả các file tạm (temporary files) trong thư mục temp và cache",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy file cấu hình config.json từ thư mục hiện tại sang thư mục backup",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển toàn bộ ảnh từ thư mục Downloads vào thư mục Photos theo ngày",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên hàng loạt file trong thư mục theo format ngày-tháng-năm",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén thư mục dự án (project folder) thành file zip để gửi cho đồng nghiệp",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén file nén chứa mã nguồn vào thư mục làm việc hiện tại",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo cấu trúc thư mục mới cho dự án React với các thư mục src, components, utils",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc nội dung toàn bộ file log để tìm các lỗi (errors) xảy ra gần đây",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê tất cả các file và thư mục ẩn (hidden files) trong thư mục home",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm kiếm file có chứa từ khóa quan trọng trong nội dung",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa các bản sao (duplicates) của file trong thư mục Documents",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy toàn bộ thư mục dự án kể cả các file ẩn vào ổ cứng ngoài",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyển tất cả video từ thư mục Downloads vào thư mục Movies theo tháng",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên file ảnh theo format ngày chụp để dễ quản lý thư viện ảnh",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén tất cả các file tài liệu quan trọng thành một file duy nhất để backup",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải nén file nén được tải về từ internet vào thư mục làm việc",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo file cấu hình mới với các thiết lập mặc định cho ứng dụng",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc và hiển thị nội dung của file CSV chứa danh sách nhân viên",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê tất cả các file trong thư mục hiện tại sắp xếp theo kích thước",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "timm file test.txt",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xoóa file đó",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copyy file này",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "di chuyểnn file X",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tênnn file đó",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "néén thư mục",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giải néén file",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạoo thư mục mới",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọcc nội dung",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kêê file",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm file .log",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóaa all file temp",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy sang folder backup",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "move to desktop",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "rename file.txt",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "zip folder này",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "unzip cái này",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tao folder moi",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "doc file readme",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "ls -la trong folder",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "xin hãy tìm file này",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "làm ơn xóa file đó giúp tôi",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "nhờ copy file này sang đâu đó",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "cho di chuyển file vào thư mục kia",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "bạn ơi đổi tên file này thành X",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "làm ơn nén thư mục này lại",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "giúp tôi giải nén file zip",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "tạo giúp tôi một thư mục mới",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "đọc giúp nội dung file này",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "liệt kê giúp các file trong đây",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "tìm giúp file config",
+    "intent": "file-operation",
+    "operation": "find"
+  },
+  {
+    "text": "xóa hộ tôi mấy file rác",
+    "intent": "file-operation",
+    "operation": "delete"
+  },
+  {
+    "text": "copy giúp sang folder mới",
+    "intent": "file-operation",
+    "operation": "copy"
+  },
+  {
+    "text": "chuyển file này đi chỗ khác",
+    "intent": "file-operation",
+    "operation": "move"
+  },
+  {
+    "text": "đổi tên thành cái gì đó",
+    "intent": "file-operation",
+    "operation": "rename"
+  },
+  {
+    "text": "nén lại cho gọn",
+    "intent": "file-operation",
+    "operation": "zip"
+  },
+  {
+    "text": "bung file ra đi",
+    "intent": "file-operation",
+    "operation": "unzip"
+  },
+  {
+    "text": "làm cái folder mới đi",
+    "intent": "file-operation",
+    "operation": "create"
+  },
+  {
+    "text": "xem trong file có gì",
+    "intent": "file-operation",
+    "operation": "read"
+  },
+  {
+    "text": "cho xem có những gì trong folder",
+    "intent": "file-operation",
+    "operation": "list"
+  },
+  {
+    "text": "pin còn bao nhiêu",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "máy nóng không",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "xem dung lượng",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "CPU bao nhiêu",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "RAM còn bao nhiêu",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "wifi có kết nối không",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "thời tiết thế nào",
+    "intent": "system-query",
+    "query_type": "weather"
+  },
+  {
+    "text": "mấy giờ rồi",
+    "intent": "system-query",
+    "query_type": "time"
+  },
+  {
+    "text": "ngày hôm nay là ngày bao nhiêu",
+    "intent": "system-query",
+    "query_type": "date"
+  },
+  {
+    "text": "ai đang dùng máy",
+    "intent": "system-query",
+    "query_type": "user"
+  },
+  {
+    "text": "máy chạy bao lâu rồi",
+    "intent": "system-query",
+    "query_type": "uptime"
+  },
+  {
+    "text": "wifi mật khẩu là gì",
+    "intent": "system-query",
+    "query_type": "wifi"
+  },
+  {
+    "text": "dung lượng ổ cứng",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "bộ nhớ sử dụng bao nhiêu",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "cpu usage",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "kiểm tra pin",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "nhiệt độ máy",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "network status",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "system info",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "memory usage",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "cho tôi xem CPU usage hiện tại",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "battery level còn bao nhiêu phần trăm",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "dung lượng ổ cứng còn trống bao nhiêu",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "RAM đã sử dụng bao nhiêu GB",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "nhiệt độ CPU hiện tại là bao nhiêu",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "wifi đang kết nối mạng gì",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "thời tiết ở Hồ Chí Minh hôm nay",
+    "intent": "system-query",
+    "query_type": "weather"
+  },
+  {
+    "text": "tốc độ mạng internet hiện tại",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "danh sách process đang chạy",
+    "intent": "system-query",
+    "query_type": "process"
+  },
+  {
+    "text": "ai đang login vào máy này",
+    "intent": "system-query",
+    "query_type": "user"
+  },
+  {
+    "text": "thông tin hệ điều hành",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "tỷ giá USD hôm nay",
+    "intent": "system-query",
+    "query_type": "exchange"
+  },
+  {
+    "text": "clipboard có gì trong đó",
+    "intent": "system-query",
+    "query_type": "clipboard"
+  },
+  {
+    "text": "ổ cứng có bao nhiêu partition",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "bộ nhớ RAM tổng cộng bao nhiêu",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "quạt máy có đang chạy không",
+    "intent": "system-query",
+    "query_type": "thermal"
+  },
+  {
+    "text": "bao nhiêu process đang chạy",
+    "intent": "system-query",
+    "query_type": "process"
+  },
+  {
+    "text": "macOS version hiện tại",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "kết nối bluetooth nào đang active",
+    "intent": "system-query",
+    "query_type": "bluetooth"
+  },
+  {
+    "text": "IP address của máy là gì",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "giúp tôi kiểm tra xem pin laptop còn bao nhiêu phần trăm và còn bao lâu nữa thì hết",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "cho hỏi CPU đang sử dụng bao nhiêu phần trăm và có process nào chiếm nhiều CPU không",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "tôi muốn biết dung lượng ổ cứng đã sử dụng và còn trống bao nhiêu GB",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "bộ nhớ RAM đã dùng bao nhiêu và còn bao nhiêu RAM available cho các ứng dụng",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "nhiệt độ của máy tính hiện tại là bao nhiêu độ và quạt có đang chạy ồn không",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "wifi đang kết nối ở tốc độ bao nhiêu Mbps và signal strength thế nào",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "thời tiết ở Hồ Chí Minh City hôm nay như thế nào, có mưa không, nhiệt độ bao nhiêu",
+    "intent": "system-query",
+    "query_type": "weather"
+  },
+  {
+    "text": "máy tính đã chạy được bao lâu kể từ lần restart cuối cùng",
+    "intent": "system-query",
+    "query_type": "uptime"
+  },
+  {
+    "text": "cho tôi xem thông tin chi tiết về hệ thống: OS version, model máy, serial number",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "tỷ giá USD so với VND hôm nay là bao nhiêu, có thay đổi gì không",
+    "intent": "system-query",
+    "query_type": "exchange"
+  },
+  {
+    "text": "trong clipboard hiện tại đang có nội dung gì, có phải là text không",
+    "intent": "system-query",
+    "query_type": "clipboard"
+  },
+  {
+    "text": "danh sách tất cả các ứng dụng đang chạy ngầm (background processes) là gì",
+    "intent": "system-query",
+    "query_type": "process"
+  },
+  {
+    "text": "thông tin về mạng wifi đang kết nối: SSID, channel, bảo mật, IP address",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "dung lượng của từng partition trên ổ cứng là bao nhiêu, partition nào gần đầy",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "bộ nhớ RAM của máy có bao nhiêu GB và swap/virtual memory đang dùng bao nhiêu",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "các thiết bị bluetooth đang paired và connected với máy là gì",
+    "intent": "system-query",
+    "query_type": "bluetooth"
+  },
+  {
+    "text": "ai là user hiện tại đang login vào máy và có quyền gì",
+    "intent": "system-query",
+    "query_type": "user"
+  },
+  {
+    "text": "thông tin chi tiết về CPU: model, speed, số cores, cache size",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "dung lượng các thư mục lớn nhất trên ổ cứng là gì và chiếm bao nhiêu",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "network interfaces đang có trên máy và trạng thái của từng interface",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "pinn còn bao nhiêu",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "mayy nóng không",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "dung lượnn ổ cứng",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "CPUuu bao nhiêu",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "RAMMM còn bao nhiêu",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "wifiieee có kết nối không",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "thời tiếttt thế nào",
+    "intent": "system-query",
+    "query_type": "weather"
+  },
+  {
+    "text": "mấyyy giờ rồi",
+    "intent": "system-query",
+    "query_type": "time"
+  },
+  {
+    "text": "ngàyyy hôm nay",
+    "intent": "system-query",
+    "query_type": "date"
+  },
+  {
+    "text": "kiểmm tra pin",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "system infooo",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "memoryy usage",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "batteryy level",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "cpuu usage",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "networktt status",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "diskk usage",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "nhiệt độ máyyy",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "uptimeee máy",
+    "intent": "system-query",
+    "query_type": "uptime"
+  },
+  {
+    "text": "RAM đã sử dụnggg",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "xem thông tin hệ thốnggg",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "xin hãy cho biết pin còn bao nhiêu phần trăm",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "làm ơn kiểm tra nhiệt độ CPU",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "nhờ xem dung lượng ổ cứng giúp tôi",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "cho hỏi CPU đang sử dụng bao nhiêu",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "bạn ơi RAM còn bao nhiêu vậy",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "wifi có kết nối được không bạn",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "thời tiết hôm nay ra sao",
+    "intent": "system-query",
+    "query_type": "weather"
+  },
+  {
+    "text": "mấy giờ rồi bạn ơi",
+    "intent": "system-query",
+    "query_type": "time"
+  },
+  {
+    "text": "hôm nay là ngày bao nhiêu rồi",
+    "intent": "system-query",
+    "query_type": "date"
+  },
+  {
+    "text": "ai đang ngồi đây vậy",
+    "intent": "system-query",
+    "query_type": "user"
+  },
+  {
+    "text": "máy chạy được bao lâu rồi nhỉ",
+    "intent": "system-query",
+    "query_type": "uptime"
+  },
+  {
+    "text": "xem giúp mình pin với",
+    "intent": "system-query",
+    "query_type": "battery"
+  },
+  {
+    "text": "RAM có còn trống không",
+    "intent": "system-query",
+    "query_type": "memory"
+  },
+  {
+    "text": "CPU usage thế nào",
+    "intent": "system-query",
+    "query_type": "cpu"
+  },
+  {
+    "text": "disk space còn bao nhiêu",
+    "intent": "system-query",
+    "query_type": "disk"
+  },
+  {
+    "text": "network đang ở trạng thái nào",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "cho xem nhiệt độ máy",
+    "intent": "system-query",
+    "query_type": "temperature"
+  },
+  {
+    "text": "thông tin hệ điều hành là gì",
+    "intent": "system-query",
+    "query_type": "system"
+  },
+  {
+    "text": "tốc độ mạng thế nào",
+    "intent": "system-query",
+    "query_type": "network"
+  },
+  {
+    "text": "có bao nhiêu process đang chạy",
+    "intent": "system-query",
+    "query_type": "process"
+  },
+  {
+    "text": "bật nhạc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt nhạc",
+    "intent": "media.pause",
+    "action": "stop"
+  },
+  {
+    "text": "tăng volume",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "giảm tiếng",
+    "intent": "audio-management",
+    "action": "volume_down"
+  },
+  {
+    "text": "tắt tiếng",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật tiếng",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "bài tiếp theo",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "bài trước",
+    "intent": "app-control",
+    "action": "previous"
+  },
+  {
+    "text": "dừng phát",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "phát tiếp",
+    "intent": "media.play",
+    "action": "resume"
+  },
+  {
+    "text": "đặt báo thức 7 giờ",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "hẹn giờ 10 phút",
+    "intent": "alarm.set",
+    "action": "timer"
+  },
+  {
+    "text": "bấm giờ",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "tạm dừng nhạc",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "volume lên 80",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "bật Spotify",
+    "intent": "app-launch",
+    "action": "app_launch"
+  },
+  {
+    "text": "phát bài hát",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt âm thanh",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật âm thanh",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "nhạc to lên",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "bật nhạc trên Spotify",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "phát bài hát trên Apple Music",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt nhạc trên loa",
+    "intent": "media.pause",
+    "action": "stop"
+  },
+  {
+    "text": "tăng volume lên một chút",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "giảm âm lượng xuống 50",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "bật tiếng laptop lên",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "next bài trên Spotify",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "chuyển bài kế tiếp",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "quay lại bài trước",
+    "intent": "app-control",
+    "action": "previous"
+  },
+  {
+    "text": "đặt báo thức 7 giờ sáng mai",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "hẹn giờ tắt máy sau 30 phút",
+    "intent": "alarm.set",
+    "action": "timer"
+  },
+  {
+    "text": "bấm giờ cho tôi",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "tạm dừng bài hát đang phát",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "tiếp tục phát nhạc",
+    "intent": "media.play",
+    "action": "resume"
+  },
+  {
+    "text": "điều chỉnh volume vừa đủ nghe",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "bật nhạc relaxing để làm việc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt mọi âm thanh trên máy",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "mở Spotify và phát nhạc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "chuyển âm thanh sang loa ngoài",
+    "intent": "audio-management",
+    "action": "output_switch"
+  },
+  {
+    "text": "volume tối đa đi",
+    "intent": "audio-management",
+    "action": "volume_max"
+  },
+  {
+    "text": "giúp tôi bật nhạc trên Spotify để tôi có thể thư giãn một chút",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "phát bài hát yêu thích của tôi trên Apple Music",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt nhạc đang phát và tạm dừng tất cả âm thanh",
+    "intent": "media.pause",
+    "action": "stop"
+  },
+  {
+    "text": "tăng volume lên một chút để tôi nghe rõ hơn",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "giảm âm lượng xuống 30% vì sắp có cuộc gọi",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "bật tiếng laptop lên để nghe thông báo từ các ứng dụng",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "chuyển sang bài tiếp theo trong playlist của tôi",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "quay lại nghe bài hát vừa mới phát",
+    "intent": "app-control",
+    "action": "previous"
+  },
+  {
+    "text": "đặt báo thức lúc 7 giờ sáng mai để tôi dậy đúng giờ",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "hẹn giờ 25 phút để tôi nghỉ ngơi một chút rồi tiếp tục làm việc",
+    "intent": "alarm.set",
+    "action": "timer"
+  },
+  {
+    "text": "bấm giờ để tôi đo thời gian hoàn thành công việc",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "tạm dừng bài hát đang phát để tôi nghe điện thoại",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "tiếp tục phát nhạc từ chỗ tôi dừng lúc nãy",
+    "intent": "media.play",
+    "action": "resume"
+  },
+  {
+    "text": "điều chỉnh volume vừa đủ nghe trong khi làm việc",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "bật nhạc relaxing với tiếng rain sounds để tập trung làm việc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt mọi âm thanh trên máy để không làm phiền người khác",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "mở Spotify và phát playlist chill để thư giãn cuối tuần",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "chuyển âm thanh từ loa laptop sang tai nghe bluetooth",
+    "intent": "audio-management",
+    "action": "output_switch"
+  },
+  {
+    "text": "volume tối đa để tôi nghe rõ thông báo từ xa",
+    "intent": "audio-management",
+    "action": "volume_max"
+  },
+  {
+    "text": "phát bài hát mới nhất từ nghệ sĩ tôi theo dõi",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "bật nhạccc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt nhạccc",
+    "intent": "media.pause",
+    "action": "stop"
+  },
+  {
+    "text": "tăng volumee",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "giảm tiếnggg",
+    "intent": "audio-management",
+    "action": "volume_down"
+  },
+  {
+    "text": "tắt tiếnggg",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật tiếnggg",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "bài tiếpp theo",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "đặt báo thứcc 7 giờ",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "hẹn giờ 10 phúttt",
+    "intent": "alarm.set",
+    "action": "timer"
+  },
+  {
+    "text": "bấm giờờ",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "tạm dừng nhạcc",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "volume lênnn 80",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "phát bài háttt",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt âm thanhhh",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật âm thanhhh",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "nhạc to lênnn",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "next bàiii",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "phát tiếpp",
+    "intent": "media.play",
+    "action": "resume"
+  },
+  {
+    "text": "đặt báo thứccc",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "bấm giờờờ",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "xin hãy bật nhạc giúp tôi",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "làm ơn tắt nhạc đi",
+    "intent": "media.pause",
+    "action": "stop"
+  },
+  {
+    "text": "tăng volume lên một chút được không",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "giảm tiếng xuống giúp tôi",
+    "intent": "audio-management",
+    "action": "volume_down"
+  },
+  {
+    "text": "tắt tiếng đi bạn",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật tiếng lên đi",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "chuyển bài tiếp theo giúp tớ",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "đặt báo thức 7 giờ sáng mai nhé",
+    "intent": "alarm.set",
+    "action": "alarm"
+  },
+  {
+    "text": "hẹn giờ 10 phút giúp mình",
+    "intent": "alarm.set",
+    "action": "timer"
+  },
+  {
+    "text": "bấm giờ đi bạn",
+    "intent": "app-control",
+    "action": "stopwatch"
+  },
+  {
+    "text": "tạm dừng nhạc giúp tôi",
+    "intent": "media.pause",
+    "action": "pause"
+  },
+  {
+    "text": "phát tiếp đi",
+    "intent": "media.play",
+    "action": "resume"
+  },
+  {
+    "text": "volume 50 thôi nhé",
+    "intent": "audio-management",
+    "action": "volume_set"
+  },
+  {
+    "text": "mở Spotify cho tôi nghe nhạc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "tắt âm thanh hộ tôi",
+    "intent": "audio-management",
+    "action": "mute"
+  },
+  {
+    "text": "bật âm thanh lên đi",
+    "intent": "audio-management",
+    "action": "unmute"
+  },
+  {
+    "text": "nhạc to hơn một chút",
+    "intent": "audio-management",
+    "action": "volume_up"
+  },
+  {
+    "text": "next track giúp mình",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "làm ơn chuyển bài",
+    "intent": "app-control",
+    "action": "next"
+  },
+  {
+    "text": "nhờ bật Spotify nghe nhạc",
+    "intent": "media.play",
+    "action": "play"
+  },
+  {
+    "text": "bật wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "tắt wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật bluetooth",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tắt bluetooth",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tăng độ sáng",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "giảm độ sáng",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "tắt máy",
+    "intent": "power-management",
+    "topic": "shutdown"
+  },
+  {
+    "text": "khởi động lại",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "cho máy ngủ",
+    "intent": "power-management",
+    "topic": "sleep"
+  },
+  {
+    "text": "eject USB",
+    "intent": "peripheral-management",
+    "topic": "eject"
+  },
+  {
+    "text": "ping google.com",
+    "intent": "network-control",
+    "topic": "ping"
+  },
+  {
+    "text": "kiểm tra wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "xem pin còn bao nhiêu",
+    "intent": "power-management",
+    "topic": "battery"
+  },
+  {
+    "text": "đổi keyboard layout",
+    "intent": "hardware-control",
+    "topic": "keyboard"
+  },
+  {
+    "text": "in file này",
+    "intent": "printer-management",
+    "topic": "print"
+  },
+  {
+    "text": "xem máy in",
+    "intent": "printer-management",
+    "topic": "list"
+  },
+  {
+    "text": "tắt màn hình",
+    "intent": "display-management",
+    "topic": "display_off"
+  },
+  {
+    "text": "bật màn hình",
+    "intent": "display-management",
+    "topic": "display_on"
+  },
+  {
+    "text": "kết nối wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "ngắt wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật wifi lên để kết nối internet",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "tắt wifi đi vì không cần dùng",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật bluetooth để kết nối tai nghe",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tắt bluetooth tiết kiệm pin",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tăng độ sáng màn hình lên một chút",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "giảm độ sáng xuống vì quá chói mắt",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "tắt máy tính đi",
+    "intent": "power-management",
+    "topic": "shutdown"
+  },
+  {
+    "text": "khởi động lại máy tính",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "cho máy tính ngủ đi",
+    "intent": "power-management",
+    "topic": "sleep"
+  },
+  {
+    "text": "eject ổ USB một cách an toàn",
+    "intent": "peripheral-management",
+    "topic": "eject"
+  },
+  {
+    "text": "ping thử xem mạng có ổn định không",
+    "intent": "network-control",
+    "topic": "ping"
+  },
+  {
+    "text": "kiểm tra wifi đang kết nối mạng gì",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "xem pin còn bao nhiêu phần trăm",
+    "intent": "power-management",
+    "topic": "battery"
+  },
+  {
+    "text": "đổi keyboard layout sang tiếng Việt",
+    "intent": "hardware-control",
+    "topic": "keyboard"
+  },
+  {
+    "text": "in file document này ra máy in",
+    "intent": "printer-management",
+    "topic": "print"
+  },
+  {
+    "text": "xem có máy in nào đang kết nối không",
+    "intent": "printer-management",
+    "topic": "list"
+  },
+  {
+    "text": "tắt màn hình để tiết kiệm điện",
+    "intent": "display-management",
+    "topic": "display_off"
+  },
+  {
+    "text": "bật màn hình lên",
+    "intent": "display-management",
+    "topic": "display_on"
+  },
+  {
+    "text": "kết nối wifi tên X mật khẩu Y",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "ngắt kết nối wifi hiện tại",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật wifi lên để tôi có thể kết nối internet và làm việc online",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "tắt wifi đi vì tôi không cần dùng internet lúc này và muốn tiết kiệm pin",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật bluetooth để tôi có thể kết nối tai nghe không dây và nghe nhạc",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tắt bluetooth để tiết kiệm pin laptop khi không sử dụng thiết bị nào",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tăng độ sáng màn hình lên một chút vì phòng đang tối và tôi khó nhìn",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "giảm độ sáng xuống vì màn hình quá chói mắt gây mỏi mắt khi làm việc lâu",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "tắt máy tính đi vì tôi đã hoàn thành công việc và cần về nhà",
+    "intent": "power-management",
+    "topic": "shutdown"
+  },
+  {
+    "text": "khởi động lại máy tính vì có một số ứng dụng bị treo không phản hồi",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "cho máy tính ngủ đi vì tôi cần đi ra ngoài trong giây lát",
+    "intent": "power-management",
+    "topic": "sleep"
+  },
+  {
+    "text": "eject ổ USB một cách an toàn trước khi rút ra khỏi máy để tránh mất dữ liệu",
+    "intent": "peripheral-management",
+    "topic": "eject"
+  },
+  {
+    "text": "ping thử xem mạng internet có ổn định không để tôi có thể join cuộc họp online",
+    "intent": "network-control",
+    "topic": "ping"
+  },
+  {
+    "text": "kiểm tra wifi đang kết nối xem tốc độ bao nhiêu và signal strength thế nào",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "xem pin còn bao nhiêu phần trăm và ước tính còn chạy được bao lâu nữa",
+    "intent": "power-management",
+    "topic": "battery"
+  },
+  {
+    "text": "đổi keyboard layout từ tiếng Anh sang tiếng Việt để tôi có thể gõ tiếng Việt",
+    "intent": "hardware-control",
+    "topic": "keyboard"
+  },
+  {
+    "text": "in file document này ra máy in để tôi có bản cứng mang đi họp",
+    "intent": "printer-management",
+    "topic": "print"
+  },
+  {
+    "text": "xem có máy in nào đang kết nối với máy tính và tình trạng của chúng",
+    "intent": "printer-management",
+    "topic": "list"
+  },
+  {
+    "text": "tắt màn hình đi để tiết kiệm điện khi không sử dụng trong một thời gian",
+    "intent": "display-management",
+    "topic": "display_off"
+  },
+  {
+    "text": "bật màn hình lên vì tôi cần tiếp tục làm việc",
+    "intent": "display-management",
+    "topic": "display_on"
+  },
+  {
+    "text": "kết nối wifi với tên mạng HomeWiFi và mật khẩu là 12345678",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "ngắt kết nối wifi hiện tại để kết nối với mạng wifi khác có tín hiệu mạnh hơn",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật wifii",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "tắt wifii",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật bluetootth",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tắt bluetootth",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tăng độ sánggg",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "giảm độ sánggg",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "tắt máyyy",
+    "intent": "power-management",
+    "topic": "shutdown"
+  },
+  {
+    "text": "khởi độnnnn lại",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "ngủ máyyy",
+    "intent": "power-management",
+    "topic": "sleep"
+  },
+  {
+    "text": "ejecttt USB",
+    "intent": "peripheral-management",
+    "topic": "eject"
+  },
+  {
+    "text": "pinggg google.com",
+    "intent": "network-control",
+    "topic": "ping"
+  },
+  {
+    "text": "kiểm traaa wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "xem pinnn",
+    "intent": "power-management",
+    "topic": "battery"
+  },
+  {
+    "text": "đổiii keyboard",
+    "intent": "hardware-control",
+    "topic": "keyboard"
+  },
+  {
+    "text": "innn file",
+    "intent": "printer-management",
+    "topic": "print"
+  },
+  {
+    "text": "tắtt màn hình",
+    "intent": "display-management",
+    "topic": "display_off"
+  },
+  {
+    "text": "bậtt màn hình",
+    "intent": "display-management",
+    "topic": "display_on"
+  },
+  {
+    "text": "kết nốiii wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "ngắtt wifi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "restarttt máy",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "xin hãy bật wifi giúp tôi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "làm ơn tắt wifi đi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "bật bluetooth để tôi kết nối thiết bị",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tắt bluetooth giúp tôi",
+    "intent": "peripheral-management",
+    "topic": "bluetooth"
+  },
+  {
+    "text": "tăng độ sáng màn hình lên một chút được không",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "giảm độ sáng xuống giúp tôi",
+    "intent": "display-management",
+    "topic": "brightness"
+  },
+  {
+    "text": "tắt máy tính đi bạn",
+    "intent": "power-management",
+    "topic": "shutdown"
+  },
+  {
+    "text": "restart máy giúp mình",
+    "intent": "power-management",
+    "topic": "restart"
+  },
+  {
+    "text": "cho ngủ máy đi",
+    "intent": "power-management",
+    "topic": "sleep"
+  },
+  {
+    "text": "eject USB hộ tôi",
+    "intent": "peripheral-management",
+    "topic": "eject"
+  },
+  {
+    "text": "ping google giúp tôi",
+    "intent": "network-control",
+    "topic": "ping"
+  },
+  {
+    "text": "xem wifi có kết nối không",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "pin còn bao nhiêu vậy bạn",
+    "intent": "power-management",
+    "topic": "battery"
+  },
+  {
+    "text": "đổi bàn phím sang tiếng Việt đi",
+    "intent": "hardware-control",
+    "topic": "keyboard"
+  },
+  {
+    "text": "in giúp tôi file này",
+    "intent": "printer-management",
+    "topic": "print"
+  },
+  {
+    "text": "xem máy in nào đang có",
+    "intent": "printer-management",
+    "topic": "list"
+  },
+  {
+    "text": "tắt màn hình đi được không",
+    "intent": "display-management",
+    "topic": "display_off"
+  },
+  {
+    "text": "bật màn hình lên giúp mình",
+    "intent": "display-management",
+    "topic": "display_on"
+  },
+  {
+    "text": "kết nối wifi cho tôi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "ngắt wifi hộ tôi",
+    "intent": "network-control",
+    "topic": "wifi"
+  },
+  {
+    "text": "đóng Safari",
+    "intent": "app-control",
+    "action": "close"
+  },
+  {
+    "text": "tắt Slack",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "gửi tin nhắn cho Nam",
+    "intent": "app-control",
+    "action": "send_message"
+  },
+  {
+    "text": "lưu trang này",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "mở tab mới",
+    "intent": "app-control",
+    "action": "new_tab"
+  },
+  {
+    "text": "đóng tab",
+    "intent": "app-control",
+    "action": "close_tab"
+  },
+  {
+    "text": "refesh trang",
+    "intent": "app-control",
+    "action": "reload"
+  },
+  {
+    "text": "quay lại trang trước",
+    "intent": "app-control",
+    "action": "back"
+  },
+  {
+    "text": "tiến tới trang sau",
+    "intent": "app-control",
+    "action": "forward"
+  },
+  {
+    "text": "tắt Chrome",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "đóng tất cả app",
+    "intent": "app-control",
+    "action": "close_all"
+  },
+  {
+    "text": "minimize cửa sổ",
+    "intent": "app-control",
+    "action": "minimize"
+  },
+  {
+    "text": "maximize cửa sổ",
+    "intent": "app-control",
+    "action": "maximize"
+  },
+  {
+    "text": "fullscreen Safari",
+    "intent": "app-control",
+    "action": "fullscreen"
+  },
+  {
+    "text": "fill form đăng nhập",
+    "intent": "ui-interaction",
+    "action": "fill_form"
+  },
+  {
+    "text": "submit form",
+    "intent": "ui-interaction",
+    "action": "submit"
+  },
+  {
+    "text": "đóng notification",
+    "intent": "app-control",
+    "action": "dismiss"
+  },
+  {
+    "text": "xoá lịch sử duyệt web",
+    "intent": "app-control",
+    "action": "clear_history"
+  },
+  {
+    "text": "tạo bookmark",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "xem lịch sử",
+    "intent": "app-control",
+    "action": "history"
+  },
+  {
+    "text": "đóng Safari và tất cả các tab của nó",
+    "intent": "app-control",
+    "action": "close"
+  },
+  {
+    "text": "tắt Slack và ngắt kết nối",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "gửi tin nhắn cho Nam trên Zalo",
+    "intent": "app-control",
+    "action": "send_message"
+  },
+  {
+    "text": "lưu trang web này vào bookmark",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "mở tab mới trên Chrome",
+    "intent": "app-control",
+    "action": "new_tab"
+  },
+  {
+    "text": "đóng tab hiện tại trên Safari",
+    "intent": "app-control",
+    "action": "close_tab"
+  },
+  {
+    "text": "refresh trang web này",
+    "intent": "app-control",
+    "action": "reload"
+  },
+  {
+    "text": "quay lại trang trước đó",
+    "intent": "app-control",
+    "action": "back"
+  },
+  {
+    "text": "tiến tới trang kế tiếp",
+    "intent": "app-control",
+    "action": "forward"
+  },
+  {
+    "text": "tắt tất cả cửa sổ Chrome",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "đóng tất cả các ứng dụng đang mở",
+    "intent": "app-control",
+    "action": "close_all"
+  },
+  {
+    "text": "minimize cửa sổ Finder",
+    "intent": "app-control",
+    "action": "minimize"
+  },
+  {
+    "text": "maximize cửa sổ Terminal",
+    "intent": "app-control",
+    "action": "maximize"
+  },
+  {
+    "text": "chuyển Safari sang fullscreen",
+    "intent": "app-control",
+    "action": "fullscreen"
+  },
+  {
+    "text": "fill form đăng nhập vào website",
+    "intent": "ui-interaction",
+    "action": "fill_form"
+  },
+  {
+    "text": "submit form đăng ký",
+    "intent": "ui-interaction",
+    "action": "submit"
+  },
+  {
+    "text": "đóng notification đang hiện",
+    "intent": "app-control",
+    "action": "dismiss"
+  },
+  {
+    "text": "xoá lịch sử duyệt web trên Safari",
+    "intent": "app-control",
+    "action": "clear_history"
+  },
+  {
+    "text": "tạo bookmark cho trang này",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "xem lịch sử duyệt web",
+    "intent": "app-control",
+    "action": "history"
+  },
+  {
+    "text": "đóng Safari và tất cả các tab của nó vì tôi không cần nữa",
+    "intent": "app-control",
+    "action": "close"
+  },
+  {
+    "text": "tắt Slack để tôi có thể tập trung làm việc mà không bị phân tâm",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "gửi tin nhắn cho Nam trên Zalo để thông báo về cuộc họp ngày mai",
+    "intent": "app-control",
+    "action": "send_message"
+  },
+  {
+    "text": "lưu trang web này vào bookmark để tôi có thể quay lại sau",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "mở tab mới trên Chrome để tôi có thể tìm kiếm thông tin khác",
+    "intent": "app-control",
+    "action": "new_tab"
+  },
+  {
+    "text": "đóng tab hiện tại trên Safari vì nó không còn cần thiết nữa",
+    "intent": "app-control",
+    "action": "close_tab"
+  },
+  {
+    "text": "refresh trang web này để xem nội dung mới nhất",
+    "intent": "app-control",
+    "action": "reload"
+  },
+  {
+    "text": "quay lại trang trước đó vì tôi nhấn nhầm link",
+    "intent": "app-control",
+    "action": "back"
+  },
+  {
+    "text": "tiến tới trang kế tiếp trong lịch sử duyệt web",
+    "intent": "app-control",
+    "action": "forward"
+  },
+  {
+    "text": "tắt tất cả cửa sổ Chrome để giải phóng bộ nhớ",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "đóng tất cả các ứng dụng đang mở để khởi động lại máy",
+    "intent": "app-control",
+    "action": "close_all"
+  },
+  {
+    "text": "minimize cửa sổ Finder để tôi có thể làm việc với cửa sổ khác",
+    "intent": "app-control",
+    "action": "minimize"
+  },
+  {
+    "text": "maximize cửa sổ Terminal để tôi có thể nhìn rõ hơn",
+    "intent": "app-control",
+    "action": "maximize"
+  },
+  {
+    "text": "chuyển Safari sang chế độ fullscreen để tập trung đọc nội dung",
+    "intent": "app-control",
+    "action": "fullscreen"
+  },
+  {
+    "text": "fill form đăng nhập vào website với username và password của tôi",
+    "intent": "ui-interaction",
+    "action": "fill_form"
+  },
+  {
+    "text": "submit form đăng ký tài khoản mới trên website",
+    "intent": "ui-interaction",
+    "action": "submit"
+  },
+  {
+    "text": "đóng notification đang hiện để không bị phân tâm khi làm việc",
+    "intent": "app-control",
+    "action": "dismiss"
+  },
+  {
+    "text": "xoá lịch sử duyệt web trên Safari để bảo mật thông tin cá nhân",
+    "intent": "app-control",
+    "action": "clear_history"
+  },
+  {
+    "text": "tạo bookmark cho trang này để dễ dàng quay lại lần sau",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "xem lịch sử duyệt web gần đây để tìm lại trang đã xem",
+    "intent": "app-control",
+    "action": "history"
+  },
+  {
+    "text": "đónggg Safari",
+    "intent": "app-control",
+    "action": "close"
+  },
+  {
+    "text": "tắttt Slack",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "gửiiiii tin nhắn cho Nam",
+    "intent": "app-control",
+    "action": "send_message"
+  },
+  {
+    "text": "lưuu trang này",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "mở tabbb mới",
+    "intent": "app-control",
+    "action": "new_tab"
+  },
+  {
+    "text": "đóng tabbbb",
+    "intent": "app-control",
+    "action": "close_tab"
+  },
+  {
+    "text": "refeshhh trang",
+    "intent": "app-control",
+    "action": "reload"
+  },
+  {
+    "text": "quay lạii trang trước",
+    "intent": "app-control",
+    "action": "back"
+  },
+  {
+    "text": "tiến tớiiiii trang",
+    "intent": "app-control",
+    "action": "forward"
+  },
+  {
+    "text": "tắtttt Chrome",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "đóng tất cảảả app",
+    "intent": "app-control",
+    "action": "close_all"
+  },
+  {
+    "text": "minimizeee cửa sổ",
+    "intent": "app-control",
+    "action": "minimize"
+  },
+  {
+    "text": "maximizeee cửa sổ",
+    "intent": "app-control",
+    "action": "maximize"
+  },
+  {
+    "text": "fullscreennnn Safari",
+    "intent": "app-control",
+    "action": "fullscreen"
+  },
+  {
+    "text": "fillll form",
+    "intent": "ui-interaction",
+    "action": "fill_form"
+  },
+  {
+    "text": "submittt form",
+    "intent": "ui-interaction",
+    "action": "submit"
+  },
+  {
+    "text": "đóng notificationn",
+    "intent": "app-control",
+    "action": "dismiss"
+  },
+  {
+    "text": "xoáaa lịch sử",
+    "intent": "app-control",
+    "action": "clear_history"
+  },
+  {
+    "text": "tạooo bookmark",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "xem lịch sửhhh",
+    "intent": "app-control",
+    "action": "history"
+  },
+  {
+    "text": "xin hãy đóng Safari giúp tôi",
+    "intent": "app-control",
+    "action": "close"
+  },
+  {
+    "text": "làm ơn tắt Slack đi",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "gửi tin nhắn cho Nam giúp tôi",
+    "intent": "app-control",
+    "action": "send_message"
+  },
+  {
+    "text": "lưu trang này lại đi",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "mở tab mới hộ tôi",
+    "intent": "app-control",
+    "action": "new_tab"
+  },
+  {
+    "text": "đóng tab này đi",
+    "intent": "app-control",
+    "action": "close_tab"
+  },
+  {
+    "text": "refresh trang giúp mình",
+    "intent": "app-control",
+    "action": "reload"
+  },
+  {
+    "text": "quay lại trang trước đi",
+    "intent": "app-control",
+    "action": "back"
+  },
+  {
+    "text": "tiến tới trang kế đi",
+    "intent": "app-control",
+    "action": "forward"
+  },
+  {
+    "text": "tắt Chrome hộ mình",
+    "intent": "app-control",
+    "action": "quit"
+  },
+  {
+    "text": "đóng hết app đi bạn",
+    "intent": "app-control",
+    "action": "close_all"
+  },
+  {
+    "text": "minimize cửa sổ giúp tôi",
+    "intent": "app-control",
+    "action": "minimize"
+  },
+  {
+    "text": "maximize lên đi",
+    "intent": "app-control",
+    "action": "maximize"
+  },
+  {
+    "text": "fullscreen đi bạn",
+    "intent": "app-control",
+    "action": "fullscreen"
+  },
+  {
+    "text": "fill form hộ tôi",
+    "intent": "ui-interaction",
+    "action": "fill_form"
+  },
+  {
+    "text": "submit đi",
+    "intent": "ui-interaction",
+    "action": "submit"
+  },
+  {
+    "text": "đóng notification giúp",
+    "intent": "app-control",
+    "action": "dismiss"
+  },
+  {
+    "text": "xoá lịch sử hộ tôi",
+    "intent": "app-control",
+    "action": "clear_history"
+  },
+  {
+    "text": "bookmark trang này đi",
+    "intent": "app-control",
+    "action": "bookmark"
+  },
+  {
+    "text": "xem lịch sử duyệt web giúp mình",
+    "intent": "app-control",
+    "action": "history"
+  }
+]

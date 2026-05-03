@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { buildMemoryEntry, summarizeMemory } from "./session-memory";
 import type { ClaudeMemPayload, EventRecord, MemoryRecord } from "./protocol";
 import { storageGetItem, storageSetItem } from "./native-storage";
-import type { AppLanguage } from "@omnistate/shared";
+import type { AppLanguage, BatteryInfo, WifiInfo, DiskInfo, CpuInfo, MemoryInfo } from "@omnistate/shared";
 
 export interface ChatMessage {
   id: string;
@@ -69,11 +69,11 @@ interface ChatStore {
   voiceState: "idle" | "recording" | "transcribing";
   ttsEnabled: boolean;
   systemInfo: null | {
-    battery: any;
-    wifi: any;
-    disk: any;
-    cpu: any;
-    memory: any;
+    battery: BatteryInfo | null;
+    wifi: WifiInfo | null;
+    disk: DiskInfo | null;
+    cpu: CpuInfo | null;
+    memory: MemoryInfo | null;
     hostname: string;
   };
   llmPreflight: null | {

@@ -3,3 +3,11 @@ numpy
 torch
 faster-whisper>=1.0.0
 openai-whisper>=20231117
+openwakeword
+pvporcupine
+speechbrain
+sounddevice
+librosa
+speech_recognition
+requests
+sea_g2p

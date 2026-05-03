@@ -26,7 +26,7 @@ export function useVoiceStream(options: VoiceStreamOptions = {}) {
   const [error, setError] = useState<string | undefined>();
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const sessionIdRef = useRef<string | undefined>();
+  const sessionIdRef = useRef<string | undefined>(undefined);
   const seqRef = useRef(0);
 
   const cleanup = useCallback(() => {

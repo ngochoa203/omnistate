@@ -1,28 +1,42 @@
 /**
- * useVoice VAD gate tests.
+ * useVoice hook tests.
  *
- * We exercise the hook's stopRecording() path in isolation by mocking
- * AudioContext, AudioWorkletNode, and getUserMedia so the hook can run
- * in jsdom. We feed silent audio (all-zero Float32Array) to trigger the
- * VAD guard (speechFrames < 5 && peakRms < 0.02) and assert that onError
- * fires with the STT_NO_SPEECH message while sendAudio is NOT called.
+ * We exercise startRecording() / stopRecording() in isolation by mocking
+ * AudioContext (using createScriptProcessor), and getUserMedia so the hook
+ * can run in jsdom.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useVoice } from "../../src/hooks/useVoice";
 
+// Hoist mock functions to ensure they're available before vi.mock factory runs
+const { mockEncodeWav, mockBlobToBase64 } = vi.hoisted(() => ({
+  mockEncodeWav: vi.fn().mockReturnValue(new Blob(["wav"])),
+  mockBlobToBase64: vi.fn().mockResolvedValue("base64audio=="),
+}));
+
+// Hoist audio-utils mock so it applies to all tests
+vi.mock("../../src/lib/audio-utils", () => ({
+  encodeWav: mockEncodeWav,
+  blobToBase64: mockBlobToBase64,
+}));
+
 // ── AudioContext / AudioWorklet mock ──────────────────────────────────────────
 
+type AudioProcessHandler = (e: { inputBuffer: { getChannelData: (ch: number) => Float32Array } }) => void;
 type MessageHandler = (e: { data: Float32Array }) => void;
 
-function makeMockAudioContext(onWorkletMessage: (handler: MessageHandler) => void) {
-  const mockWorkletNode = {
-    port: {
-      set onmessage(handler: MessageHandler) {
-        onWorkletMessage(handler);
-      },
-    },
+function makeMockAudioContext(onAudioProcess?: (handler: AudioProcessHandler) => void) {
+  let capturedOnaudioprocess: AudioProcessHandler | null = null;
+
+  const mockProcessor = {
+    connect: vi.fn(),
     disconnect: vi.fn(),
+    set onaudioprocess(handler: AudioProcessHandler) {
+      capturedOnaudioprocess = handler;
+      onAudioProcess?.(handler);
+    },
+    get onaudioprocess() { return capturedOnaudioprocess; },
   };
 
   const mockSource = {
@@ -34,16 +48,22 @@ function makeMockAudioContext(onWorkletMessage: (handler: MessageHandler) => voi
     addModule: vi.fn().mockResolvedValue(undefined),
   };
 
+  const mockWorkletNode = {
+    port: { onmessage: null as MessageHandler | null },
+    disconnect: vi.fn(),
+  };
+
   return {
     audioWorklet: mockAudioWorklet,
     createMediaStreamSource: vi.fn().mockReturnValue(mockSource),
-    createScriptProcessor: vi.fn(),
+    createScriptProcessor: vi.fn().mockReturnValue(mockProcessor),
     close: vi.fn().mockResolvedValue(undefined),
     destination: {},
     sampleRate: 16000,
     workletNode: mockWorkletNode,
     AudioWorkletNode: vi.fn().mockReturnValue(mockWorkletNode),
     source: mockSource,
+    processor: mockProcessor,
   };
 }
 
@@ -75,21 +95,15 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("useVoice — VAD gate", () => {
-  it("fires onError with STT_NO_SPEECH and does NOT call sendAudio for silent audio", async () => {
+describe("useVoice — recording lifecycle", () => {
+  it("fires onError('No audio recorded') when stopRecording is called with no chunks", async () => {
     const onError = vi.fn();
     const sendAudio = vi.fn();
 
-    let capturedMessageHandler: MessageHandler | null = null;
-
-    const mockCtx = makeMockAudioContext((handler) => {
-      capturedMessageHandler = handler;
-    });
+    const mockCtx = makeMockAudioContext();
 
     // Patch AudioContext constructor
     vi.stubGlobal("AudioContext", vi.fn().mockImplementation(() => mockCtx));
-    // Patch AudioWorkletNode constructor
-    vi.stubGlobal("AudioWorkletNode", mockCtx.AudioWorkletNode);
 
     const mockStream = makeMockStream();
     vi.stubGlobal("navigator", {
@@ -99,7 +113,7 @@ describe("useVoice — VAD gate", () => {
     });
 
     const { result } = renderHook(() =>
-      useVoice({ onError, sendAudio, vadThreshold: 0.015 })
+      useVoice({ onError, sendAudio })
     );
 
     // Start recording
@@ -107,48 +121,30 @@ describe("useVoice — VAD gate", () => {
       await result.current.startRecording();
     });
 
-    // Wait for AudioWorklet addModule to resolve and workletNode to be set up
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
+    expect(result.current.state).toBe("recording");
 
-    // Feed a single silent frame via the worklet message handler (all zeros → rms = 0)
-    // This simulates the onmessage callback from the PCMProcessor worklet
-    if (capturedMessageHandler) {
-      act(() => {
-        capturedMessageHandler!({ data: new Float32Array(128) });
-      });
-    }
-
-    // Stop recording — triggers VAD check
+    // Stop without feeding any audio — chunksRef stays empty
     await act(async () => {
       await result.current.stopRecording();
     });
 
     expect(onError).toHaveBeenCalledOnce();
-    expect(onError.mock.calls[0][0]).toMatch(/STT_NO_SPEECH/);
+    expect(onError.mock.calls[0][0]).toMatch(/No audio recorded/);
     expect(sendAudio).not.toHaveBeenCalled();
     expect(result.current.state).toBe("idle");
   });
 
-  it("does NOT fire STT_NO_SPEECH when audio has sufficient speech frames", async () => {
+  it("calls sendAudio when audio chunks are present", async () => {
     const onError = vi.fn();
     const sendAudio = vi.fn();
 
-    let capturedMessageHandler: MessageHandler | null = null;
+    let capturedProcessHandler: AudioProcessHandler | null = null;
 
     const mockCtx = makeMockAudioContext((handler) => {
-      capturedMessageHandler = handler;
+      capturedProcessHandler = handler;
     });
 
     vi.stubGlobal("AudioContext", vi.fn().mockImplementation(() => mockCtx));
-    vi.stubGlobal("AudioWorkletNode", mockCtx.AudioWorkletNode);
-
-    // Stub encodeWav and blobToBase64 to avoid @omnistate/mobile-core import
-    vi.mock("../../src/lib/audio-utils", () => ({
-      encodeWav: vi.fn().mockReturnValue(new Blob(["wav"])),
-      blobToBase64: vi.fn().mockResolvedValue("base64audio=="),
-    }));
 
     const mockStream = makeMockStream();
     vi.stubGlobal("navigator", {
@@ -158,24 +154,21 @@ describe("useVoice — VAD gate", () => {
     });
 
     const { result } = renderHook(() =>
-      useVoice({ onError, sendAudio, vadThreshold: 0.015 })
+      useVoice({ onError, sendAudio })
     );
 
     await act(async () => {
       await result.current.startRecording();
     });
 
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
-    // Feed 6 loud frames (rms >> 0.02 threshold)
-    if (capturedMessageHandler) {
+    // Feed audio frame via the onaudioprocess callback
+    if (capturedProcessHandler) {
       act(() => {
-        for (let i = 0; i < 6; i++) {
-          const frame = new Float32Array(128).fill(0.5); // rms = 0.5, well above thresholds
-          capturedMessageHandler!({ data: frame });
-        }
+        capturedProcessHandler!({
+          inputBuffer: {
+            getChannelData: () => new Float32Array(128).fill(0.5),
+          },
+        });
       });
     }
 
@@ -183,8 +176,12 @@ describe("useVoice — VAD gate", () => {
       await result.current.stopRecording();
     });
 
-    // VAD should pass — onError must NOT be called with STT_NO_SPEECH
-    const speechErrors = onError.mock.calls.filter(([msg]) => msg.includes("STT_NO_SPEECH"));
-    expect(speechErrors).toHaveLength(0);
+    // onError must NOT be called with "No audio recorded"
+    const recordingErrors = onError.mock.calls.filter(([msg]) =>
+      typeof msg === "string" && msg.includes("No audio recorded")
+    );
+    expect(recordingErrors).toHaveLength(0);
+    // Verify sendAudio was called (with any audio data)
+    expect(sendAudio).toHaveBeenCalledOnce();
   });
 });

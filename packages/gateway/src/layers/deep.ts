@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { hostname, platform, arch, cpus, totalmem, freemem } from "node:os";
+import { hostname, platform, arch, cpus, totalmem, freemem, homedir } from "node:os";
 
 const execAsync = promisify(exec);
 
@@ -107,13 +107,35 @@ export class DeepLayer {
    *
    * On macOS, uses `open -a`. On Linux, searches PATH.
    * Returns true if launch command succeeded.
+   *
+   * If the app is not installed on macOS, returns false with a descriptive error.
    */
   async launchApp(name: string): Promise<boolean> {
     try {
       switch (this.platform) {
-        case "macos":
+        case "macos": {
+          // Check if app exists before launching (provides better error message)
+          const appPaths = [
+            `/Applications/${name}.app`,
+            `~/Applications/${name}.app`,
+          ].map((p) => p.replace(/^~/, homedir()));
+
+          const exists = appPaths.some((p) => existsSync(p));
+          if (!exists) {
+            // Try Spotlight search as last resort
+            const spotlight = await execAsync(
+              `mdfind -onlyin /Applications "kMDItemFSName == '${name}.app"' 2>/dev/null | head -1`,
+              { timeout: 5_000 }
+            );
+            if (!spotlight.stdout.trim()) {
+              // App not found - return false with descriptive error stored in instance
+              this._lastLaunchError = `App '${name}' is not installed. Install it from https://zalo.me or check the Applications folder.`;
+              return false;
+            }
+          }
           await execAsync(`open -a "${name}"`);
           break;
+        }
         case "linux":
           // Try common launch methods
           spawn(name, { detached: true, stdio: "ignore" }).unref();
@@ -123,9 +145,26 @@ export class DeepLayer {
           break;
       }
       return true;
-    } catch {
+    } catch (err) {
+      // Capture the actual error for better diagnostics
+      this._lastLaunchError = err instanceof Error
+        ? `Failed to launch '${name}': ${err.message}`
+        : `Failed to launch '${name}' for unknown reason`;
       return false;
     }
+  }
+
+  /** Stores the last launch error message for retrieval. */
+  private _lastLaunchError: string | undefined;
+
+  /** Returns the last launch error message, if any. */
+  getLastLaunchError(): string | undefined {
+    return this._lastLaunchError;
+  }
+
+  /** Clears the last launch error (call before attempting a new launch). */
+  clearLastLaunchError(): void {
+    this._lastLaunchError = undefined;
   }
 
   /** Open URL or query in the system default browser. */
@@ -184,18 +223,17 @@ export class DeepLayer {
    */
   async runAppleScript(script: string, timeoutMs: number = 5000): Promise<string> {
     try {
-      // osascript needs each line as a separate -e flag for multiline scripts
-      const lines = script.split("\n").filter(l => l.trim());
-      const args = lines.map(l => `-e ${JSON.stringify(l)}`).join(" ");
-      const { stdout } = await execAsync(
-        `osascript ${args}`,
-        { timeout: timeoutMs, encoding: "utf-8" }
-      );
+      const fs = await import('fs/promises');
+      const pathModule = await import('path');
+      const tmpFile = pathModule.join('/tmp', `osascript_${Date.now()}_${Math.random().toString(36).slice(2,6)}.scpt`);
+      await fs.writeFile(tmpFile, script, { encoding: 'utf-8' });
+      const { stdout } = await execAsync(`osascript "${tmpFile}"`, { timeout: timeoutMs, encoding: 'utf-8' });
+      // Clean up temp file asynchronously (don't await)
+      fs.unlink(tmpFile).catch(() => {});
       return stdout.trim();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Detect common macOS permission issues
-      if (msg.includes("not allowed") || msg.includes("-1743")) {
+      if (msg.includes('not allowed') || msg.includes('-1743')) {
         throw new Error(
           `AppleScript blocked by macOS. Grant permission: System Settings → Privacy & Security → Automation → Terminal → enable the target app.`
         );

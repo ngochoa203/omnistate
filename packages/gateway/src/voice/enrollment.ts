@@ -26,9 +26,11 @@ function send(ws: WebSocket, type: string, payload: Record<string, unknown>): vo
 
 export function handleEnrollStart(ws: WebSocket, userId: string): void {
   sessions.set(userId, { embeddings: [], currentPhraseIndex: 0 });
+  // Bug fix #6: include totalPhrases so the client knows how many steps remain
   send(ws, "voice.enroll.ready", {
     phraseIndex: 0,
     prompt: ENROLLMENT_PHRASES[0],
+    totalPhrases: REQUIRED_SAMPLES,
   });
 }
 
@@ -69,7 +71,17 @@ export async function handleEnrollSample(
       send(ws, "voice.enroll.ready", {
         phraseIndex: nextIndex,
         prompt: ENROLLMENT_PHRASES[nextIndex],
+        totalPhrases: REQUIRED_SAMPLES,
       });
+    } else {
+      // Bug fix #7: all phrases collected — client should call finalize, but if
+      // they don't, the session would leak indefinitely. Mark it as ready-to-finalize
+      // by leaving it, but set a cleanup timeout so orphaned sessions are evicted.
+      setTimeout(() => {
+        if (sessions.has(userId)) {
+          sessions.delete(userId);
+        }
+      }, 10 * 60 * 1000); // 10 minutes
     }
   } catch (err) {
     console.error(err);
@@ -95,7 +107,7 @@ export async function handleEnrollFinalize(ws: WebSocket, userId: string): Promi
   }
 
   const dim = session.embeddings[0]!.length;
-  const averaged: number[] = new Array(dim).fill(0);
+  const averaged: number[] = Array.from({ length: dim }, () => 0);
   for (const emb of session.embeddings) {
     for (let i = 0; i < dim; i++) averaged[i]! += emb[i]!;
   }

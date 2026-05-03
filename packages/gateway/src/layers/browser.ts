@@ -1672,4 +1672,79 @@ ws.close()
       );
     }
   }
+
+  /**
+   * Open YouTube and click the first video thumbnail.
+   * Navigates to youtube.com in a new tab, waits for load, then clicks the first video.
+   * Returns the video URL on success, null on failure.
+   */
+  async clickFirstVideo(browser?: string): Promise<string | null> {
+    // Step 1: Open YouTube in a new tab
+    await this.newTab("https://www.youtube.com", browser);
+
+    // Step 2: Wait for page to load (YouTube homepage can be slow)
+    await this.waitForPageLoad(10000, browser);
+
+    // Step 3: Click the first video link on YouTube homepage
+    const scripts = [
+      // 1. Try YouTube homepage video title links (modern YouTube)
+      `(function(){
+        var selectors = [
+          'ytd-rich-item-renderer a#video-title-link',
+          'ytd-video-renderer a#video-title-link',
+          'ytd-grid-video-renderer a#thumbnail',
+          '#content a.ytd-rich-grid-media',
+          'ytd-shelf-renderer ytd-video-renderer a#thumbnail',
+          'a.yt-simple-endpoint.style-scope.ytd-rich-grid-media'
+        ];
+        for (var i = 0; i < selectors.length; i++) {
+          var els = document.querySelectorAll(selectors[i]);
+          for (var j = 0; j < els.length; j++) {
+            var el = els[j];
+            if (el.offsetWidth > 0 && el.offsetHeight > 0 && el.href && el.href.includes('/watch?v=') && !el.href.includes('&list=')) {
+              return el.href;
+            }
+          }
+        }
+        return null;
+      })()`,
+      // 2. Fallback: any <a> with /watch?v= that is visible
+      `(function(){
+        var allLinks = document.querySelectorAll('a[href*="/watch?v="]');
+        for (var k = 0; k < allLinks.length; k++) {
+          var l = allLinks[k];
+          if (l.offsetWidth > 0 && l.offsetHeight > 0 && l.href && !l.href.includes('&list=')) {
+            return l.href;
+          }
+        }
+        return null;
+      })()`,
+      // 3. Try to click the first visible video thumbnail directly
+      `(function(){
+        var thumbs = document.querySelectorAll('a[href*="/watch?v="][id="thumbnail"], a[href*="/watch?v="].yt-simple-thumb');
+        for (var t = 0; t < thumbs.length; t++) {
+          var thumb = thumbs[t];
+          if (thumb.offsetWidth > 0 && thumb.offsetHeight > 0) {
+            return thumb.href;
+          }
+        }
+        return null;
+      })()`,
+    ];
+
+    for (const script of scripts) {
+      const result = await this.executeJavaScript(script, browser);
+      if (result && typeof result === "string" && result.includes("/watch?v=")) {
+        // Now navigate to the video
+        const urlObj = new URL(result);
+        const videoId = urlObj.searchParams.get("v");
+        if (videoId) {
+          await this.navigate(`https://www.youtube.com/watch?v=${videoId}`, browser);
+          return result;
+        }
+      }
+    }
+
+    return null;
+  }
 }

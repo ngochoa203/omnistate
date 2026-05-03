@@ -30,182 +30,182 @@ export const mediaInfo: IntentHandler = async (_args, ctx) => {
 
 // Media layer wrappers
 export const mediaPlay: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.play();
   return { speak: "Playing.", data: { success: true } };
 };
 
 export const mediaPause: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.pause();
   return { speak: "Paused.", data: { success: true } };
 };
 
 export const mediaTogglePlayPause: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.togglePlayPause();
   return { speak: "Play/pause toggled.", data: { success: true } };
 };
 
 export const mediaNextTrack: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.nextTrack();
   return { speak: "Next track.", data: { success: true } };
 };
 
 export const mediaPreviousTrack: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.previousTrack();
   return { speak: "Previous track.", data: { success: true } };
 };
 
 export const mediaGetCurrentTrack: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const track = await media.getCurrentTrack();
   return { speak: "Current track retrieved.", data: { track } };
 };
 
 export const mediaSetPosition: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.setPosition(args.seconds as number);
   return { speak: "Position set.", data: { success: true } };
 };
 
 export const mediaGetQueue: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const queue = await media.getQueue(args.limit as number | undefined);
   return { speak: "Queue retrieved.", data: { queue } };
 };
 
 export const mediaGetPlayerVolume: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const volume = await media.getPlayerVolume(args.app as "music" | "spotify" | undefined);
   return { speak: "Player volume retrieved.", data: { volume } };
 };
 
 export const mediaSetPlayerVolume: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.setPlayerVolume(args.level as number, args.app as "music" | "spotify" | undefined);
   return { speak: "Player volume set.", data: { success: true } };
 };
 
 export const mediaGetAudioOutput: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const device = await media.getAudioOutput();
   return { speak: "Audio output retrieved.", data: { device } };
 };
 
 export const mediaSetAudioOutput: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.setAudioOutput(args.deviceName as string);
   return { speak: "Audio output set.", data: { success: true } };
 };
 
 export const mediaGetPlaylists: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const playlists = await media.getPlaylists(args.app as "music" | "spotify" | undefined);
   return { speak: "Playlists retrieved.", data: { playlists } };
 };
 
 export const mediaPlayPlaylist: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.playPlaylist(args.name as string, args.app as "music" | "spotify" | undefined);
   return { speak: "Playlist started.", data: { success: true } };
 };
 
 export const mediaAddToPlaylist: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.addToPlaylist(args.trackName as string, args.playlistName as string);
   return { speak: "Track added to playlist.", data: { success: true } };
 };
 
 export const mediaCreatePlaylist: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.createPlaylist(args.name as string, args.app as "music" | "spotify" | undefined);
   return { speak: "Playlist created.", data: { success: true } };
 };
 
 export const mediaSearchTracks: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const results = await media.searchTracks(args.query as string, args.app as "music" | "spotify" | undefined);
   return { speak: "Track search complete.", data: { results } };
 };
 
 export const mediaGetAirPlayDevices: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const devices = await media.getAirPlayDevices();
   return { speak: "AirPlay devices retrieved.", data: { devices } };
 };
 
 export const mediaSetAirPlayDevice: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.setAirPlayDevice(args.deviceName as string);
   return { speak: "AirPlay device set.", data: { success: true } };
 };
 
 export const mediaIsAirPlaying: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const playing = await media.isAirPlaying();
   return { speak: playing ? "AirPlay is active." : "AirPlay is not active.", data: { playing } };
 };
 
 export const mediaStopAirPlay: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.stopAirPlay();
   return { speak: "AirPlay stopped.", data: { success: true } };
 };
 
 export const mediaGetVideoPlayers: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const players = await media.getVideoPlayers();
   return { speak: "Video players retrieved.", data: { players } };
 };
 
 export const mediaControlVideo: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.controlVideo(args.action);
   return { speak: "Video control applied.", data: { success: true } };
 };
 
 export const mediaGetVideoInfo: IntentHandler = async (_args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   const info = await media.getVideoInfo();
   return { speak: "Video info retrieved.", data: { info } };
 };
 
 export const mediaSetVideoPosition: IntentHandler = async (args, ctx) => {
-  const media = (ctx.layers as any).media;
+  const media = ctx.layers.media as any;
   await media.setVideoPosition(args.seconds as number);
   return { speak: "Video position set.", data: { success: true } };
 };
 
 // Vision handlers
 export const visionModalDetect: IntentHandler = async (_args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const modal = await vision.detectModal();
   return { speak: "Modal detected.", data: { modal } };
 };
 
 export const visionModalDismiss: IntentHandler = async (args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const handled = await vision.dismissModal((args.action as "accept" | "dismiss" | "close" | undefined) ?? "dismiss");
   return { speak: "Modal dismissed.", data: { handled } };
 };
 
 export const visionCaptchaDetect: IntentHandler = async (_args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const captcha = await vision.detectCaptcha();
   return { speak: captcha ? "Captcha detected." : "No captcha detected.", data: { captcha, present: captcha !== null } };
 };
 
 export const visionTableDetect: IntentHandler = async (_args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const tables = await vision.detectTables();
   return { speak: "Tables detected.", data: { tables } };
 };
 
 export const visionTableExtract: IntentHandler = async (args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const capture = await ctx.layers.surface.captureScreen();
   const region =
     typeof args.x === "number" && typeof args.y === "number" &&
@@ -219,13 +219,13 @@ export const visionTableExtract: IntentHandler = async (args, ctx) => {
 };
 
 export const visionA11yAudit: IntentHandler = async (_args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const report = await vision.auditAccessibility();
   return { speak: "Accessibility audit complete.", data: { report } };
 };
 
 export const visionLanguageDetect: IntentHandler = async (_args, ctx) => {
-  const vision = (ctx.layers as any).vision;
+  const vision = ctx.layers.vision as any;
   const language = await vision.detectUILanguage();
   return { speak: "UI language detected.", data: { language } };
 };
@@ -258,7 +258,7 @@ export const visionOcr: IntentHandler = async (args, ctx) => {
 };
 
 export const visionContext: IntentHandler = async (_args, ctx) => {
-  const bridge = (ctx.layers as any).bridge;
+  const bridge = ctx.layers.bridge as any;
   const tree = bridge?.getUiTree?.();
   const activeApp = (tree as any)?.title ?? "Unknown";
   const windowTitle = (tree as any)?.children?.[0]?.title ?? "";

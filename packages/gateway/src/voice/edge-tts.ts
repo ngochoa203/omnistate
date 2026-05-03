@@ -50,7 +50,7 @@ export function sanitizeForTts(input: string): string {
   // Emoji and pictographic symbols (Extended_Pictographic covers most emoji)
   text = text.replace(/\p{Extended_Pictographic}/gu, " ");
   // Variation selectors / zero-width joiners
-  text = text.replace(/[‍️]/g, "");
+  text = text.replace(/‍|️/g, "");
 
   // Collapse runs of same punctuation (e.g. "!!!" → "!")
   text = text.replace(/([!?.,;:])\1{1,}/g, "$1");
