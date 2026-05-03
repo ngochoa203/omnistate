@@ -19,12 +19,19 @@ interface EnrollmentSession {
 }
 
 const sessions = new Map<string, EnrollmentSession>();
+const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function send(ws: WebSocket, type: string, payload: Record<string, unknown>): void {
   ws.send(JSON.stringify({ type, ...payload }));
 }
 
 export function handleEnrollStart(ws: WebSocket, userId: string): void {
+  // Bug fix: Clear existing session and timer before creating new one
+  if (sessions.has(userId)) {
+    const oldTimer = cleanupTimers.get(userId);
+    if (oldTimer) clearTimeout(oldTimer);
+    sessions.delete(userId);
+  }
   sessions.set(userId, { embeddings: [], currentPhraseIndex: 0 });
   // Bug fix #6: include totalPhrases so the client knows how many steps remain
   send(ws, "voice.enroll.ready", {
@@ -75,13 +82,15 @@ export async function handleEnrollSample(
       });
     } else {
       // Bug fix #7: all phrases collected — client should call finalize, but if
-      // they don't, the session would leak indefinitely. Mark it as ready-to-finalize
-      // by leaving it, but set a cleanup timeout so orphaned sessions are evicted.
-      setTimeout(() => {
+      // they don't, the session would leak indefinitely. Use cleanup timers map
+      // so we can clear the timer when finalize is called.
+      const timer = setTimeout(() => {
         if (sessions.has(userId)) {
           sessions.delete(userId);
+          cleanupTimers.delete(userId);
         }
       }, 10 * 60 * 1000); // 10 minutes
+      cleanupTimers.set(userId, timer);
     }
   } catch (err) {
     console.error(err);
@@ -125,6 +134,12 @@ export async function handleEnrollFinalize(ws: WebSocket, userId: string): Promi
 
   try {
     await saveProfile(profile);
+    // Bug fix: Clear the cleanup timer since we successfully finalized
+    const timer = cleanupTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      cleanupTimers.delete(userId);
+    }
     sessions.delete(userId);
     send(ws, "voice.enroll.done", { userId, sampleCount: profile.sampleCount });
   } catch (err) {

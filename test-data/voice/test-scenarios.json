@@ -1,0 +1,12 @@
+[
+  {"name": "enrollment_success", "description": "All 5 phrases submitted with valid audio", "expected": "profile_created"},
+  {"name": "enrollment_partial", "description": "3 phrases submitted then cancelled", "expected": "profile_incomplete"},
+  {"name": "verification_match", "description": "Same voice as enrollment", "expected": "match_true"},
+  {"name": "verification_mismatch", "description": "Different voice from enrollment", "expected": "match_false"},
+  {"name": "verification_low_confidence", "description": "Same voice but low quality audio", "expected": "match_partial"},
+  {"name": "wake_detection_oww", "description": "Wake phrase detected by OWW engine", "expected": "wake_triggered"},
+  {"name": "wake_detection_personal", "description": "Speaker verified by personal engine", "expected": "wake_triggered"},
+  {"name": "command_execution", "description": "Voice command executed after wake", "expected": "command_success"},
+  {"name": "tts_synthesis", "description": "Text converted to speech with voice clone", "expected": "audio_generated"},
+  {"name": "embedding_training", "description": "Audio sample converted to embedding", "expected": "embedding_saved"}
+]

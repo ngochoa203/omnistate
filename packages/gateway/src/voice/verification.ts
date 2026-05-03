@@ -62,7 +62,11 @@ export async function extractEmbedding(audio: Buffer, _format: string): Promise<
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
+  if (a.length !== b.length) {
+    console.error(`[cosineSimilarity] length mismatch: ${a.length} vs ${b.length}`);
+    return 0;
+  }
+  if (a.length === 0) return 0;
   let dot = 0, normA = 0, normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i]! * b[i]!;
@@ -70,7 +74,11 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     normB += b[i]! * b[i]!;
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
+  // Bug fix: handle zero vectors properly
+  if (denom === 0) {
+    return normA === 0 && normB === 0 ? 1.0 : 0.0;
+  }
+  return dot / denom;
 }
 
 export async function verifySpeaker(

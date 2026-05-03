@@ -621,6 +621,12 @@ export class VoiceStreamManager {
     const bytes = audioBuffer.length;
     const attempts: Array<{ provider: string; status: "ok" | "empty" | "error"; error?: string }> = [];
 
+    // Bug fix: Check for empty providers array
+    if (dedupedProviders.length === 0) {
+      logger.error("[VoiceStream] No STT providers configured");
+      return { text: "", provider: "", attempts: [{ provider: "none", status: "error", error: "No providers" }] };
+    }
+
     // Race all providers in low-latency mode, first non-empty wins.
     if (voice.lowLatency) {
       try {

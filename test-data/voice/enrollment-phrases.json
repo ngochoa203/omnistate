@@ -1,0 +1,7 @@
+[
+  {"phrase": "Trợ lý, hãy bắt đầu phiên làm việc hôm nay", "lang": "vi", "category": "work"},
+  {"phrase": "Tôi cần bạn tìm kiếm thông tin cho tôi", "lang": "vi", "category": "search"},
+  {"phrase": "Hãy đọc lại nội dung vừa nhận được", "lang": "vi", "category": "read"},
+  {"phrase": "Hey assistant, open my task list", "lang": "en", "category": "task"},
+  {"phrase": "Read the last message out loud", "lang": "en", "category": "read"}
+]

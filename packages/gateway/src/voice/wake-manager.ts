@@ -32,6 +32,7 @@ export class WakeManager {
   private static readonly MAX_RESTARTS = 3;
   private static readonly RESTART_WINDOW_MS = 60_000;
   private firstExitTime = 0;
+  private stopped = false; // Bug fix: track if stop() was called
 
   isRunning(): boolean {
     return this.child !== null;
@@ -53,6 +54,7 @@ export class WakeManager {
   }
 
   start(options: WakeManagerOptions): void {
+    this.stopped = false;
     this.stop();
     this.lastOptions = options;
     this.restartCount = 0;
@@ -240,7 +242,8 @@ export class WakeManager {
   }
 
   private scheduleRestart(): void {
-    if (!this.lastOptions) return;
+    // Bug fix: Don't restart if stop() was called
+    if (!this.lastOptions || this.stopped) return;
     const now = Date.now();
     if (this.firstExitTime === 0) this.firstExitTime = now;
     if (now - this.firstExitTime > WakeManager.RESTART_WINDOW_MS) {
@@ -262,6 +265,7 @@ export class WakeManager {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
