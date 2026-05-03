@@ -42,67 +42,66 @@ export class PermissionGuard {
   }
 
   checkAll(required: PluginPermission[]): void {
-    for (const perm of required) {
-      this.check(perm);
+    const denied = required.filter((p) => !this.allowedPermissions.includes(p));
+    if (denied.length > 0) {
+      throw new PermissionDeniedError(this.pluginId, denied[0]!);
     }
   }
 
   wrapApi(api: OmniStatePluginAPI): OmniStatePluginAPI {
-    const guard = this;
-
     const wrappedDeep: DeepLayerAccess = {
       exec: (command: string) => {
-        guard.check("system:write");
+        this.check("system:write");
         return api.deep.exec(command);
       },
       readFile: (path: string) => {
-        guard.check("filesystem:read");
+        this.check("filesystem:read");
         return api.deep.readFile(path);
       },
       writeFile: (path: string, content: string) => {
-        guard.check("filesystem:write");
+        this.check("filesystem:write");
         return api.deep.writeFile(path, content);
       },
       isProcessRunning: (name: string) => {
-        guard.check("system:read");
+        this.check("system:read");
         return api.deep.isProcessRunning(name);
       },
     };
 
     const wrappedSurface: SurfaceLayerAccess = {
       capture: () => {
-        guard.check("ui:read");
+        this.check("ui:read");
         return api.surface.capture();
       },
       findElement: (screenshot, description) => {
-        guard.check("ui:read");
+        this.check("ui:read");
         return api.surface.findElement(screenshot, description);
       },
       click: (target) => {
-        guard.check("ui:click");
+        this.check("ui:click");
         return api.surface.click(target);
       },
       type: (text) => {
-        guard.check("ui:type");
+        this.check("ui:type");
         return api.surface.type(text);
       },
       waitFor: (condition, options) => {
-        guard.check("ui:read");
+        this.check("ui:read");
         return api.surface.waitFor(condition, options);
       },
       pressKey: (key) => {
-        guard.check("ui:type");
+        this.check("ui:type");
         return api.surface.pressKey(key);
       },
     };
 
     const wrappedVision: VisionAccess = {
       verify: (screenshot, expected) => {
-        guard.check("ui:read");
+        this.check("ui:read");
         return api.vision.verify(screenshot, expected);
       },
       detectElements: (screenshot, query) => {
-        guard.check("ui:read");
+        this.check("ui:read");
         return api.vision.detectElements(screenshot, query);
       },
     };

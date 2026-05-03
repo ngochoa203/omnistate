@@ -13,17 +13,14 @@ export const browserOpen: IntentHandler = async (args, ctx) => {
 
 export const browserNewTab: IntentHandler = async (args, ctx) => {
   const browser = args.browser as string | undefined;
+  const url = String(args.url ?? 'about:blank');
   if (browser) {
-    const tab = await ctx.layers.browser.newTab(args.url as string | undefined, browser);
-    return { speak: "New tab opened.", data: { tab } };
+    const tab = await ctx.layers.browser.newTab(url, browser);
+    return { speak: 'New tab opened.', data: { tab } };
   }
-  const url = String(args.url ?? "about:blank");
-  await ctx.layers.deep.runAppleScript(`
-tell application "Google Chrome"
-  activate
-  make new tab at end of tabs of front window with properties {URL:"${url}"}
-end tell`);
-  return { speak: "New tab opened.", data: { success: true, url } };
+  // Default: use browser layer's newTab (Safari auto-detected)
+  const tab = await ctx.layers.browser.newTab(url, browser);
+  return { speak: 'New tab opened.', data: { tab } };
 };
 
 export const browserCloseTab: IntentHandler = async (args, ctx) => {
@@ -310,4 +307,12 @@ export const browserGetNetworkRequests: IntentHandler = async (args, ctx) => {
 export const browserBlockUrls: IntentHandler = async (args, ctx) => {
   await ctx.layers.browser.blockUrls(args.patterns as string[]);
   return { speak: "URLs blocked.", data: { success: true } };
+};
+
+export const browserClickFirstVideo: IntentHandler = async (args, ctx) => {
+  const videoUrl = await ctx.layers.browser.clickFirstVideo(args.browser as string | undefined);
+  return {
+    speak: videoUrl ? 'First video opened.' : 'Could not find video.',
+    data: { success: !!videoUrl, videoUrl }
+  };
 };

@@ -4,9 +4,8 @@ import { Orchestrator } from "../executor/orchestrator.js";
 // Minimal stub — only the parts openChatWithPerson needs
 function makeOrchestrator() {
   const execAsync = vi.fn().mockResolvedValue("");
-  // @ts-expect-error — we're providing only what's needed
-  const orc = new Orchestrator({} as never);
-  // @ts-expect-error
+  // @ts-expect-error — constructor currently takes no args; stub what's needed
+  const orc = new Orchestrator({} as never) as any;
   orc.deep = { execAsync };
   return { orc, execAsync };
 }

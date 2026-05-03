@@ -1,5 +1,9 @@
 import type { IntentHandler } from "./types.js";
 
+function shellQuoteSafe(s: string): string {
+  return s.replace(/"/g, '\\"').replace(/`/g, "'").replace(/\$/g, '');
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 
 export const shellType: IntentHandler = async (_args, ctx) => {
@@ -48,11 +52,11 @@ export const nlToCommand: IntentHandler = async (args, ctx) => {
   const text = String(args.text ?? args.query ?? "");
   const { classifyIntent } = await import("../planner/intent.js");
   const intent = await classifyIntent(text);
-  const cmdEntity = Object.values(intent.entities ?? {}).find((e: any) => e.type === "command");
-  const nlCmd = (cmdEntity as any)?.value ?? intent.rawText ?? "";
+  const cmdEntity = Object.values(intent.entities ?? {}).find((e: { type: string; value: string }) => e.type === "command");
+  const nlCmd = cmdEntity?.value ?? intent.rawText ?? "";
   if (
     nlCmd &&
-    /^[.\/~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|python3|node|make|brew|docker|kubectl|tmutil|osascript)\b/i.test(
+    /^[./~]|^(ls|cd|cat|echo|grep|find|ps|df|du|top|kill|rm|cp|mv|mkdir|chmod|curl|wget|git|npm|pnpm|yarn|cargo|python|python3|node|make|brew|docker|kubectl|tmutil|osascript)\b/i.test(
       nlCmd.trim(),
     )
   ) {
@@ -77,14 +81,14 @@ export const gitCommit: IntentHandler = async (args, ctx) => {
   if (addAll) {
     await ctx.layers.deep.execAsync(`cd "${dir}" && git add -A`, 10000);
   }
-  const { stdout } = await ctx.layers.deep.execAsync(`cd "${dir}" && git commit -m "${message}"`, 10000);
+  const { stdout } = await ctx.layers.deep.execAsync(`cd "${dir}" && git commit -m "${shellQuoteSafe(message)}"`, 10000);
   return { speak: "Committed.", data: { success: true, message, output: stdout } };
 };
 
 export const gitPush: IntentHandler = async (args, ctx) => {
   const dir = String(args.dir ?? ".");
   const branch = String(args.branch ?? "");
-  const cmd = branch ? `cd "${dir}" && git push origin "${branch}"` : `cd "${dir}" && git push`;
+  const cmd = branch ? `cd "${dir}" && git push origin "${shellQuoteSafe(branch)}"` : `cd "${dir}" && git push`;
   const { stdout } = await ctx.layers.deep.execAsync(cmd, 30000);
   return { speak: "Pushed.", data: { success: true, output: stdout } };
 };
@@ -101,9 +105,9 @@ export const gitBranch: IntentHandler = async (args, ctx) => {
   const action = String(args.action ?? "create");
   let cmd: string;
   switch (action) {
-    case "create": cmd = `cd "${dir}" && git checkout -b "${name}"`; break;
-    case "switch": cmd = `cd "${dir}" && git checkout "${name}"`; break;
-    case "delete": cmd = `cd "${dir}" && git branch -d "${name}"`; break;
+    case "create": cmd = `cd "${dir}" && git checkout -b "${shellQuoteSafe(name)}"`; break;
+    case "switch": cmd = `cd "${dir}" && git checkout "${shellQuoteSafe(name)}"`; break;
+    case "delete": cmd = `cd "${dir}" && git branch -d "${shellQuoteSafe(name)}"`; break;
     default: cmd = `cd "${dir}" && git branch -a`; break;
   }
   const { stdout } = await ctx.layers.deep.execAsync(cmd, 10000);
@@ -136,7 +140,7 @@ export const dockerCompose: IntentHandler = async (args, ctx) => {
   const dir = String(args.dir ?? ".");
   const action = String(args.action ?? "up");
   const detach = action === "up" ? "-d" : "";
-  const { stdout } = await ctx.layers.deep.execAsync(`cd "${dir}" && docker compose ${action} ${detach}`, 60000);
+  const { stdout } = await ctx.layers.deep.execAsync(`cd "${dir}" && docker compose ${shellQuoteSafe(action)} ${detach}`, 60000);
   return { speak: "Docker Compose operation complete.", data: { success: true, action, output: stdout } };
 };
 

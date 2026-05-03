@@ -1,7 +1,10 @@
 import { detectLanguage, pickVoice, synthesize } from "./edge-tts.js";
 
-/** Regex that matches sentence-ending boundaries for flush decisions */
-const SENTENCE_END = /[.!?…。！？]\s|[\n]{2,}/;
+/**
+ * Regex that matches sentence-ending boundaries for flush decisions.
+ * Uses a lookahead so split() keeps the punctuation with the preceding part.
+ */
+const SENTENCE_END = /(?<=[.!?…。！？])\s+|[\n]{2,}/;
 
 /** Flush buffer when accumulated text exceeds this many characters */
 const FLUSH_CHAR_THRESHOLD = 200;
@@ -33,7 +36,6 @@ export class StreamingTTS {
 
     // Queue of synthesis promises in arrival order — emitted in seq order.
     const synthQueue: Array<Promise<Buffer | null>> = [];
-    let nextSeq = 0;
     let aborted = false;
 
     signal.addEventListener("abort", () => { aborted = true; }, { once: true });
@@ -48,7 +50,6 @@ export class StreamingTTS {
         synthQueue.push(
           synthesize(text, { lang: resolvedLang, voice: resolvedVoice, signal }).catch(() => null),
         );
-        nextSeq++;
       };
 
       for await (const delta of text$) {

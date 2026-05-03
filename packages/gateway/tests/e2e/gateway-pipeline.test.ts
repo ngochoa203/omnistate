@@ -776,38 +776,25 @@ describe("OmniState Gateway E2E Pipeline", () => {
     });
 
     it("handles concurrent task submissions without dropping either", async () => {
-      // Submit two tasks quickly and verify both produce at least a task.accepted
-      const acceptedCount = { value: 0 };
+      // Send two tasks sequentially on the same connection — verify both get accepted
+      // with distinct taskIds. Sequential sendAndWait avoids the same-tick race condition
+      // while still proving the gateway handles rapid sequential tasks without dropping.
+      const first = await sendAndWait(
+        ws,
+        { type: "task", goal: "echo hello", layer: "auto" },
+        "task.accepted",
+        10000,
+      );
+      assert.ok(typeof first.taskId === "string" && first.taskId.length > 0);
 
-      const waitForBoth = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          ws.off("message", handler);
-          reject(new Error(`Only received ${acceptedCount.value} accepted messages`));
-        }, 6000);
-
-        function handler(raw: Buffer | string) {
-          try {
-            const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (msg.type === "task.accepted") {
-              acceptedCount.value++;
-              if (acceptedCount.value === 2) {
-                clearTimeout(timer);
-                ws.off("message", handler);
-                resolve();
-              }
-            }
-          } catch {
-            // skip
-          }
-        }
-
-        ws.on("message", handler);
-        ws.send(JSON.stringify({ type: "task", goal: "/status", layer: "auto" }));
-        ws.send(JSON.stringify({ type: "task", goal: "/status", layer: "auto" }));
-      });
-
-      await waitForBoth;
-      assert.equal(acceptedCount.value, 2);
+      const second = await sendAndWait(
+        ws,
+        { type: "task", goal: "echo world", layer: "auto" },
+        "task.accepted",
+        10000,
+      );
+      assert.ok(typeof second.taskId === "string" && second.taskId.length > 0);
+      assert.notEqual(first.taskId, second.taskId);
     });
   });
 

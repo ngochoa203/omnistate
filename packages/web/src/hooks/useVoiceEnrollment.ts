@@ -21,6 +21,7 @@ export type EnrollStatus =
 
 export interface UseVoiceEnrollmentReturn {
   step: number;
+  totalPhrases: number;
   status: EnrollStatus;
   currentPrompt: string;
   error: string | null;
@@ -36,6 +37,7 @@ export interface UseVoiceEnrollmentReturn {
 
 export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
   const [step, setStep] = useState(0);
+  const [totalPhrases, setTotalPhrases] = useState(0);
   const [status, setStatus] = useState<EnrollStatus>("idle");
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +69,7 @@ export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
         client.on("voice.enroll.ready", (msg: ServerMessage) => {
           const m = msg as VoiceEnrollReadyMessage;
           setStep(m.phraseIndex);
+          setTotalPhrases(m.totalPhrases);
           setCurrentPrompt(m.prompt);
           setStatus("idle");
         })
@@ -109,6 +112,9 @@ export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
   );
 
   const submitSample = useCallback(async (blob: Blob) => {
+    // Bug fix #18: capture phraseIndex synchronously BEFORE any await so that
+    // an async step update from the server cannot produce a stale index.
+    const phraseIndex = step;
     setStatus("sending");
 
     let base64: string;
@@ -134,7 +140,6 @@ export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
       return;
     }
 
-    const phraseIndex = step;
     const client = getClient();
     client.send({ type: "voice.enroll.sample", audio: base64, format, phraseIndex });
     setStatus("waiting");
@@ -148,6 +153,7 @@ export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
     }
     setStatus("idle");
     setStep(0);
+    setTotalPhrases(0);
     setError(null);
     setSampleCount(0);
     setCurrentPrompt("");
@@ -162,6 +168,7 @@ export function useVoiceEnrollment(): UseVoiceEnrollmentReturn {
 
   return {
     step,
+    totalPhrases,
     status,
     currentPrompt,
     error,

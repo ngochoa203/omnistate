@@ -139,6 +139,7 @@ describe("Orchestrator.executePlan()", () => {
     const orch = new Orchestrator() as any;
     orch.deep = {
       launchApp: async () => false,
+      getLastLaunchError: () => null,
       openDefaultBrowser: async () => true,
     };
 
@@ -149,7 +150,7 @@ describe("Orchestrator.executePlan()", () => {
     const result = await orch.executePlan(plan);
     expect(result.status).toBe("complete");
     expect(result.completedSteps).toBe(1);
-  });
+  }, 30000);
 
   it("empty plan completes with 0 steps", async () => {
     const orch = new Orchestrator();

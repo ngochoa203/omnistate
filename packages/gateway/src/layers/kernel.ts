@@ -692,7 +692,7 @@ export class KernelLayer {
 
       const results: LaunchctlJob[] = [];
       for (const line of out.split("\n")) {
-        if (!line.trim() || /^PID/.test(line)) continue;
+        if (!line.trim() || line.trimStart().startsWith("PID")) continue;
         // Columns: PID  Status  Label
         const cols = line.split(/\t/);
         if (cols.length < 3) continue;

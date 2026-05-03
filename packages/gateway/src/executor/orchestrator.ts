@@ -1912,7 +1912,8 @@ end tell`);
       // UC12.3: Kill memory leaks
       case "maintenance.killMemoryLeaks": {
         const threshold = Number(params.threshold ?? 500); // MB
-        const topProcs = await this.deepSystem.getTopMemoryProcesses(20);
+        const topProcsRaw = await this.deepSystem.getTopMemoryProcesses(20);
+        const topProcs = topProcsRaw as Array<{ pid: number; name: string; memRSS: string }>;
         const killed: string[] = [];
 
         for (const proc of topProcs) {
@@ -3298,3 +3299,6 @@ export interface ExecutionResult {
   error?: string;
   stepResults?: StepResult[];
 }
+
+// Re-export helper utilities from split modules for backward compatibility
+export { classifyExecutionError } from "./orchestrator-errors.js";

@@ -13,11 +13,20 @@ export interface VerifyResult {
 
 // ---------------------------------------------------------------------------
 // Lazy-initialized singletons — created once on first use, then reused.
+// Bug fix #11: expose _resetVerifySingletons() so tests can clear shared state
+// between runs and avoid cross-test pollution.
 // ---------------------------------------------------------------------------
 
 let _surface: SurfaceLayer | null = null;
 let _vision: VisionEngine | null = null;
 let _deep: DeepLayer | null = null;
+
+/** @internal — for test teardown only */
+export function _resetVerifySingletons(): void {
+  _surface = null;
+  _vision = null;
+  _deep = null;
+}
 
 function getSurface(): SurfaceLayer {
   if (!_surface) _surface = new SurfaceLayer();

@@ -66,8 +66,9 @@ export class GatewayClient {
       }
     };
 
-    this.ws.onerror = () => {
-      // onclose will fire after this
+    this.ws.onerror = (event) => {
+      // onclose fires after this in browser, but may not in all environments
+      console.warn('[GatewayClient] WebSocket error', event);
     };
   }
 
@@ -81,10 +82,13 @@ export class GatewayClient {
     this.ws = null;
   }
 
-  send(msg: ClientMessage): void {
+  send(msg: ClientMessage): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      return true;
     }
+    console.warn('[GatewayClient] send() called while not connected — message dropped', msg);
+    return false;
   }
 
   sendTask(goal: string, options?: { attachments?: TaskAttachment[] }): void {
@@ -127,7 +131,18 @@ export class GatewayClient {
       | "voice.siri.mode"
       | "voice.siri.shortcutName"
       | "voice.siri.endpoint"
-      | "voice.siri.token",
+      | "voice.siri.token"
+      | "vad.silenceThresholdMs"
+      | "vad.speechThreshold"
+      | "vad.minSpeechMs"
+      | "tts.provider"
+      | "tts.voiceVi"
+      | "tts.voiceEn"
+      | "speakerVerification.enabled"
+      | "speakerVerification.threshold"
+      | "speakerVerification.onMismatch"
+      | "voice.sttProvider"
+      | "voice.whisperLocalModel",
     value: string | boolean | number,
   ): void {
     this.send({ type: "runtime.config.set", key, value } as ClientMessage);
@@ -260,6 +275,10 @@ export class GatewayClient {
 
   queryKGEntities(query?: { type?: string; name?: string }): void {
     this.send({ type: "memory.kg.query", ...query } as unknown as ClientMessage);
+  }
+
+  requestToolsList(): void {
+    this.send({ type: "tools.list" } as unknown as ClientMessage);
   }
 
   on(event: string, handler: EventHandler): () => void {

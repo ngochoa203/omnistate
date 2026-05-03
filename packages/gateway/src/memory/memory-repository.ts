@@ -13,7 +13,7 @@ function clampLimit(limit: unknown, fallback = 50): number {
 }
 
 function text(value: unknown, limit = TEXT_LIMIT): string {
-  return String(value ?? "").replace(/\0/g, "").trim().slice(0, limit);
+  return String(value ?? "").split("\u0000").join("").trim().slice(0, limit);
 }
 
 function stringList(value: unknown): string[] {
@@ -47,10 +47,22 @@ function iso(value: unknown): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
 }
 
-function rowToRecord(row: any): MemoryRecord {
+interface MemoryRow {
+  id: string;
+  scope: string;
+  conversation_id: string | null;
+  title: string;
+  content: string;
+  tags_json: string;
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToRecord(row: MemoryRow): MemoryRecord {
   return {
     id: String(row.id),
-    scope: SCOPES.has(row.scope) ? row.scope : "global",
+    scope: SCOPES.has(row.scope as MemoryRecord["scope"]) ? (row.scope as MemoryRecord["scope"]) : "global",
     conversationId: row.conversation_id ? String(row.conversation_id) : undefined,
     title: String(row.title),
     content: String(row.content),
@@ -108,15 +120,16 @@ export class MemoryRepository {
       const needle = `%${text(input.text, 200)}%`;
       values.push(needle, needle);
     }
-    for (const tag of stringList(input.tagsAny)) {
-      where.push("tags_json LIKE ?");
-      values.push(`%${tag}%`);
+    const tags = stringList(input.tagsAny);
+    if (tags.length > 0) {
+      where.push('(' + tags.map(() => 'tags_json LIKE ?').join(' OR ') + ')');
+      for (const tag of tags) values.push(`%${tag}%`);
     }
     values.push(clampLimit(input.limit));
 
     try {
       const sql = `SELECT * FROM memory_records${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY updated_at DESC LIMIT ?`;
-      return (this.db.prepare(sql).all(...values) as any[]).map(rowToRecord);
+      return (this.db.prepare(sql).all(...values) as MemoryRow[]).map(rowToRecord);
     } catch {
       throw new Error("MEMORY_QUERY_FAILED");
     }
@@ -133,7 +146,7 @@ export class MemoryRepository {
   }
 
   private get(id: string): MemoryRecord | null {
-    const row = this.db.prepare("SELECT * FROM memory_records WHERE id = ?").get(id) as any;
+    const row = this.db.prepare("SELECT * FROM memory_records WHERE id = ?").get(id) as MemoryRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 }

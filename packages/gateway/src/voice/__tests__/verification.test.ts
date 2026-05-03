@@ -124,8 +124,8 @@ describe("verifySpeaker threshold boundary", () => {
     // Strategy: use a high-dim embedding where we can rotate by a known angle.
     // cos(θ) = 0.74 → θ ≈ 42.3°. Build orthogonal pair and combine.
     const dim = 256;
-    const e1 = new Array(dim).fill(0);
-    const e2 = new Array(dim).fill(0);
+    const e1 = Array.from({ length: dim }, () => 0);
+    const e2 = Array.from({ length: dim }, () => 0);
     e1[0] = 1; // unit vector along dim 0
     e2[1] = 1; // unit vector along dim 1 (orthogonal)
 
@@ -154,8 +154,8 @@ describe("verifySpeaker threshold boundary", () => {
 
   it("score 0.76 → accept (above threshold 0.75)", async () => {
     const dim = 256;
-    const e1 = new Array(dim).fill(0);
-    const e2 = new Array(dim).fill(0);
+    const e1 = Array.from({ length: dim }, () => 0);
+    const e2 = Array.from({ length: dim }, () => 0);
     e1[0] = 1;
     e2[1] = 1;
 

@@ -50,8 +50,30 @@ function forceKillPid(pid) {
   return true;
 }
 
+// ─── Port availability helpers ─────────────────────────────────────────────────
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Poll a port until it is no longer in LISTEN state, up to maxMs.
+ * Returns true if freed, false if still occupied after timeout.
+ */
+async function waitForPort(port, maxMs = 3000) {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    if (!isListening(port)) return true;
+    await sleep(100);
+  }
+  return !isListening(port);
+}
+
+/**
+ * Returns true if the given port has no TCP listener on 127.0.0.1.
+ */
+function checkPortFree(port) {
+  return !isListening(port);
 }
 
 async function collectPortPids(ports) {
@@ -192,8 +214,10 @@ async function main() {
     execSync('pkill -9 -f "omnistate" 2>/dev/null || true', { stdio: "pipe" });
     execSync('pkill -9 -f "gateway/dist/index" 2>/dev/null || true', { stdio: "pipe" });
     execSync('pkill -9 -f "packages/gateway/dist/index" 2>/dev/null || true', { stdio: "pipe" });
-    // 3. Wait for OS to release sockets (SIGKILL is instant but socket release takes ~100-300ms)
-    await new Promise((r) => setTimeout(r, 1000));
+    // 3. Wait for OS to release sockets — SIGKILL is instant but
+    //    macOS TIME_WAIT can linger ~60s, so poll with a generous timeout.
+    await waitForPort(19800, 3000);
+    await waitForPort(19801, 3000);
   } catch {}
 
   // freePorts() will SIGTERM → wait → SIGKILL any remaining stragglers on all required ports

@@ -60,7 +60,7 @@ describe("Vietnamese intent recognition — heuristic path", () => {
   it("phát nhạc → audio-management or app-control (play/music keyword)", async () => {
     // "phát nhạc" = play music → audio-management (preLlmRule) or app-control fallback
     const r = await classifyIntent("phát nhạc");
-    expect(["audio-management", "app-control", "app-launch", "multi-step"]).toContain(r.type);
+    expect(["media.play", "audio-management", "app-control", "app-launch", "multi-step"]).toContain(r.type);
   });
 
   it("đóng tất cả tab → app-control or multi-step", async () => {

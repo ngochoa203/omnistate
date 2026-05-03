@@ -148,10 +148,23 @@ export async function startGateway(): Promise<void> {
     logger.warn("[OmniState] Continuing in degraded mode; LLM-backed tasks may fail until credentials are fixed.");
   }
 
-  const available = await isPortAvailable(config.gateway.bind, config.gateway.port);
+  // 3.6. Retry port availability check with exponential backoff
+  const MAX_ATTEMPTS = 5;
+  let available = false;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    available = await isPortAvailable(config.gateway.bind, config.gateway.port);
+    if (available) break;
+    if (attempt < MAX_ATTEMPTS) {
+      const delay = 500 * attempt;
+      logger.warn(
+        `[OmniState] Port ${config.gateway.port} still in use (attempt ${attempt}/${MAX_ATTEMPTS}). Retrying in ${delay}ms…`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
   if (!available) {
     logger.error(
-      `[OmniState] Port ${config.gateway.port} on ${config.gateway.bind} is already in use. ` +
+      `[OmniState] Port ${config.gateway.port} on ${config.gateway.bind} is already in use after ${MAX_ATTEMPTS} attempts. ` +
         "Stop the existing daemon or start with --port <other-port>."
     );
     return;

@@ -21,6 +21,10 @@ export class RetryEngine {
     const maxRetries =
       node.onFailure.maxRetries ?? this.defaultMaxRetries;
 
+    // Bug fix #1 & #2: track the most recent result so the final error message
+    // and durationMs reflect the last retry attempt, not the original failure.
+    let latestResult: StepResult = lastResult;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       // Wait with backoff
       const delay =
@@ -28,18 +32,19 @@ export class RetryEngine {
       await this.sleep(delay);
 
       const result = await executor(node);
+      latestResult = result;
       if (result.status === "ok") {
         return result;
       }
     }
 
-    // All retries exhausted
+    // All retries exhausted — report error and timing from the final attempt
     return {
       nodeId: node.id,
       status: "failed",
-      layer: lastResult.layer,
-      durationMs: lastResult.durationMs,
-      error: `Failed after ${maxRetries} retries: ${lastResult.error}`,
+      layer: latestResult.layer,
+      durationMs: latestResult.durationMs,
+      error: `Failed after ${maxRetries} retries: ${latestResult.error}`,
     };
   }
 
