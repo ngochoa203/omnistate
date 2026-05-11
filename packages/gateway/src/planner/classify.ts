@@ -467,7 +467,7 @@ export const HEURISTIC_RULES: Array<{
     type: "system-query",
     entityExtractor: () => ({}),
   },
-  // ── Non-technical Vietnamese app open/close ──
+  // ── Non-technical Vietnamese app open/close (guard: not when multi-step follows) ──
   {
     pattern: /\b(?:mở|bật|khởi\s*động)\s+([a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,30}?)(?:\s+(?:app|ứng\s*dụng))?$/i,
     type: "app-launch",
@@ -540,7 +540,9 @@ function detectMissingParams(text: string): AskClarificationIntent | null {
   // e.g. "Bật nhạc lên, đợi 10 phút sau thì tắt máy" or "gom vào...rồi nén lại gửi email"
   // Multi-step indicator: comma + subsequent action OR "rồi" (then/after) in the text
   const isMultiStep = /,(?=\s*(?:rồi|sau|đợi|và|gửi|xong))/i.test(text)
-    || /rồi\b/i.test(text) && /,(?=\s*\S)/i.test(text);
+    || /rồi\b/i.test(text) && /,(?=\s*\S)/i.test(text)
+    // Standalone rồi/sau đó (no comma needed) for generic multi-step detection
+    || /\b(rồi|sau\s*đó|then|after that|afterwards)\b/i.test(text);
 
   // Security-blocked
   if (/\b(bỏ\s*qua|bỏ)\s+(xác\s*thực|auth|quyền|permission|root|admin|privilege)\b/i.test(text)) {
@@ -565,8 +567,9 @@ function detectMissingParams(text: string): AskClarificationIntent | null {
       : ask("Which file do you want to send, and who should receive it?", ["file_path", "recipient"]);
   }
 
-  // Close app without name
-  if (/^(đóng|dừng)\b/i.test(text)) {
+  // Close app without name — skip for multi-step phrases (e.g. "đóng app rồi bật lại")
+  const isCloseMultiStep = /^(?:đóng|close|quit|dừng)\b.*\b(rồi|sau\s*đó|then|after|afterwards)\b/i.test(text);
+  if (!isCloseMultiStep && /^(đóng|dừng)\b/i.test(text)) {
     if (/\b(lại|đi)\b/i.test(text) || /^(đóng|dừng)\s*$/i.test(text.trim())) {
       return isVietnamese
         ? ask("Bạn muốn đóng ứng dụng nào?", ["app_name"])
@@ -591,8 +594,10 @@ function detectMissingParams(text: string): AskClarificationIntent | null {
     }
   }
 
-  // Shutdown dangerous — skip for multi-step phrases (including "rồi" compound)
-  const isShutdownMultiStep = isMultiStep || /rồi\b/i.test(text);
+  // Shutdown dangerous — skip for multi-step phrases (including "rồi" or "sau X thì" or "X phút sau")
+  // Note: \b after Unicode letters with /i flag is unreliable; use (?=\s|$) lookahead instead
+  // Skip if text starts with a duration (e.g. "5 phút sau tắt máy" → not a direct shutdown command)
+  const isShutdownMultiStep = isMultiStep || /rồi\b/i.test(text) || /\bsau\s+\d+\s*(?:giây|phút|giờ|s|p|m|h)\s+thì(?=\s|$)/i.test(text) || /^\d+\s*(?:phút|giờ|tiếng|giây)\s+(?:sau|nữa)\s+/i.test(text);
   if (!isShutdownMultiStep && /\b(tắt\s*máy|shutdown|power\s+off|turn\s+off\s+computer)\b/i.test(text)) {
     return isVietnamese
       ? ask("Bạn có chắc muốn tắt máy không?", ["confirmation"])
@@ -757,10 +762,16 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "alarm.set",
       confidence: 0.96,
     },
-    // Fix: "đợi 20 giây" / "wait 1 minute" → alarm.set
+    // Fix: "đợi 20 giây" / "wait 1 minute" → alarm.set (MUST have no follow-up action)
     {
-      pattern: /^(?:đợi|chờ|wait)\s+\d+\s*(?:giây|giay|s|seconds?|second|phút|phut|p|minutes?|minute|giờ|gio|h|hours?)\b/i,
+      pattern: /^(?:đợi|chờ|wait)\s+\d+\s*(?:giây|giay|s|seconds?|second|phút|phut|p|minutes?|minute|giờ|gio|h|hours?)\b(?=\s*$)/i,
       type: "alarm.set",
+      confidence: 0.97,
+    },
+    // "đợi X giây rồi Y" / "wait X seconds then Y" — wait + duration + action (MUST come before alarm.set)
+    {
+      pattern: /^(?:đợi|chờ|wait)\s+\d+\s*(?:giây|giay|s|sec|seconds?|second|phút|phut|p|minutes?|minute|giờ|gio|h|hours?)\s+(?:rồi|sau\s*đó|then|after)\s+/i,
+      type: "multi-step",
       confidence: 0.97,
     },
     // Fix: "notify me in 30 seconds" → alarm.set
@@ -768,6 +779,12 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       pattern: /^(?:notify\s*me|remind\s*me|timer|set\s*timer|đặt\s*timer|hẹn\s*giờ)\b.*\d+\s*(?:second|sec|s|minute|min|m|hour|hr|h)\b/i,
       type: "alarm.set",
       confidence: 0.96,
+    },
+    // "wait X seconds/minutes then Y" — wait + duration + action (MUST come before alarm.set)
+    {
+      pattern: /^wait\s+\d+\s*(?:seconds?|sec|s|minutes?|min|m|hours?|h|hrs?)\s+(?:then|after|before)\s+/i,
+      type: "multi-step",
+      confidence: 0.97,
     },
     // Fix: "bật/tắt wifi" → network-control (before app-launch)
     {
@@ -937,9 +954,9 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "file-operation",
       confidence: 0.97,
     },
-    // Fix: "tìm file X" → file-operation
+    // Fix: "tìm file X" → file-operation (MUST come AFTER multi-step patterns to avoid matching "tìm file X rồi Y")
     {
-      pattern: /^tìm\s+file\s+[a-zA-Z0-9./\\_-]/i,
+      pattern: /^tìm\s+file\s+[a-zA-Z0-9./\\_-]+$/i,
       type: "file-operation",
       confidence: 0.95,
     },
@@ -996,9 +1013,235 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "app-control",
       confidence: 0.95,
     },
+    // ── Multi-step: "mở X và Y" before app-launch blacklist ──
     {
-      pattern: /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+(?!.*\b(?:bằng|qua|tại|trong|sau\s*đó|rồi|tiếp\s*theo|truy\s*cập|video\s*đầ|kết\s*quả)\b)(?!.*\bon\s+(?:youtube|spotify|netflix|tiktok|soundcloud|apple\s*music)\b)(?!.*,)[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?(?:\s+(?:app|application|ứng\s*dụng))?$/i,
+      pattern: /^mở\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+và\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}$/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "open X on youtube" → app-control (MUST come before app-launch blacklist)
+    {
+      pattern: /^open\s+.+\s+on\s+youtube$/i,
+      type: "app-control",
+      confidence: 0.97,
+    },
+    // "đóng tất cả trừ X" → multi-step (close all except)
+    {
+      pattern: /^(?:đóng|close)\s+tất\s*cả\s+(?:trừ|except|không\s* tính)\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}$/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // FIX: Add "xong" to blacklist so "Mở zalo xong đóng" → multi-step (NOT app-launch)
+    {
+      pattern: /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+(?!.*(?:bằng|qua|tại|trong|sau\s*đó|rồi|tiếp\s*theo|truy\s*cập|video\s*đầ|kết\s*quả|for\s+\d|then\s|after\s*that|afterwards|xong|done|finished|completed))(?=.*[a-zA-ZÀ-ỹ])[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?(?:\s+(?:app|application|ứng\s*dụng))?(?=\s*$)/i,
       type: "app-launch",
+      confidence: 0.97,
+    },
+    // ── Multi-step: compound patterns (MUST come before greedy single-action rules) ──
+    // "mở X rồi Y" — open app + follow action
+    {
+      pattern: /^mở\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,30}?\s+(?:rồi|sau\s*đó|then|after)\s+/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    // "open X then close" — open + close
+    {
+      pattern: /^open\s+[a-zA-Z][a-zA-Z\s]{0,40}?\s+then\s+(?:close|quit|shut\s*down|turn\s*off)/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "open X for Y seconds then Z" — open + duration + action
+    {
+      pattern: /^open\s+[a-zA-Z][a-zA-Z\s]{0,40}?\s+for\s+\d+\s*(?:seconds?|sec|s|minutes?|min|m|hours?|h)\s+then\s+/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "tìm X rồi Y" — find + send/action
+    {
+      pattern: /^(?:tìm|tìm\s*kiếm|search|find)\s+[a-zA-ZÀ-ỹ0-9\s]{1,40}?\s+(?:rồi|sau\s*đó|then)\s+(?:gửi|send|share|email|nén|compress|mở|open)/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    // "tải file X rồi Y" — download + action
+    {
+      pattern: /^(?:tải|download|tải\s*file)\s+[a-zA-ZÀ-ỹ0-9\s\-\.]{1,40}?\s+(?:rồi|sau\s*đó|then)\s+/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "khởi động X rồi Y" — startup app + follow action
+    {
+      pattern: /^khởi\s*động\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,30}?\s+(?:rồi|sau\s*đó|then|after)\s+/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    // "đóng X bật lại" — close + reopen (no rồi required)
+    {
+      pattern: /^(?:đóng|close|quit)\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+bật(?:\s+lại)?$/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "sau X thì Y" — after duration then action
+    {
+      pattern: /^sau\s+\d+\s*(?:giây|phút|giờ|s|p|m|h)\s+thì\s+/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "tìm X rồi gửi Y" — find + send/action (MUST come before "mở X rồi Y")
+    {
+      pattern: /^(?:tìm|tìm\s*kiếm|search|find)\s+[a-zA-ZÀ-ỹ0-9\s\-\.]{1,40}?\s+(?:rồi|sau\s*đó|then)\s+(?:gửi|send|share|email|nén|compress|mở|open)/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    // "tải file X rồi Y" — download + action
+    {
+      pattern: /^(?:tải|download)\s+(?:file\s+)?[a-zA-ZÀ-ỹ0-9\s\-\.]{1,40}?\s+(?:rồi|sau\s*đó|then)\s+/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "mở X và Y" — open two apps simultaneously (MUST come before "mở X rồi Y")
+    {
+      pattern: /^mở\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+và\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}$/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // ── NEW: Missing multi-step patterns ──────────────────────────────────
+
+    // "Mở X xong rồi/đóng" — action verb completion marker
+    // "bật nhạc xong tắt đi", "mở zalo xong đóng", "open app done quit"
+    {
+      pattern: /^mở\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+(?:xong|rồi)\s+(?:đóng|tắt|close|quit)/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    {
+      pattern: /^bật\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+(?:xong|rồi)\s+(?:tắt|đóng|close|quit)/i,
+      type: "multi-step",
+      confidence: 0.97,
+    },
+    {
+      pattern: /^start\s+[a-zA-Z][a-zA-Z0-9\s]{0,40}?\s+(?:done|finished|completed)\s+(?:then\s+)?(?:close|quit|stop)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /^open\s+[a-zA-Z][a-zA-Z0-9\s]{0,40}?\s+(?:done|finished)\s+(?:then\s+)?(?:close|quit|stop)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+
+    // "làm 3 lần" / "repeat 3 times" / "thử lại 5 lần" — loop/repeat patterns
+    {
+      pattern: /^(?:làm|lặp\s*lại|repeat|retry)\s+\d+\s*(?:lần|times?| lần)?\s*(?:liên\s*tiếp)?\s*(?:rồi\s+)?/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // FIX: Add (?!\s*$) to require content after — "lần lượt" alone is NOT multi-step
+    {
+      pattern: /\b(?:lần\s+lượt|từng\s*bước|bước\s*1|bước\s*2)(?!\s*$)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /^tuần\s*tự\s+(?:mở|làm|thực\s*hiện)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /^lần\s+lượt\s+(?:mở|làm|thực\s*hiện)\s+/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+
+    // "5 phút sau tắt máy" — duration-only implicit sequencing (no rồi/sau)
+    // This is a special case: duration WITHOUT rồi implies a delayed action
+    {
+      pattern: /^\d+\s*(?:phút|giờ|tiếng)\s+(?:sau|nữa)\s+(?:tắt|đóng|mở|bật)/i,
+      type: "multi-step",
+      confidence: 0.94,
+    },
+    {
+      pattern: /^in\s+\d+\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?)\s+(?:turn\s*off|shutdown|close|open|start)/i,
+      type: "multi-step",
+      confidence: 0.94,
+    },
+
+    // "khi X xong thì Y" / "when X is done do Y" — conditional sequencing
+    {
+      pattern: /\b(?:khi|xong|done|finished)\s+[a-zA-ZÀ-ỹ0-9\s]{0,30}?\s+(?:thì|then|hãy|làm)\s+/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /^khi\s+X\s+(?:xong|done|finished)\s+(?:thì|then|hãy)\s+/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    // "when done then close" — standalone conditional completion marker
+    {
+      pattern: /^when\s+(?:done|finished)\s+then\s+(?:close|quit|stop|open|launch)/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+
+    // "thử X nếu lỗi thì Y" — error handling chain
+    {
+      pattern: /\b(?:thử|try)\s+[a-zA-ZÀ-ỹ0-9\s]{0,40}?\s*,?\s*(?:nếu|nếu\s+như|nếu\s+lỗi|if)\s+(?:lỗi|error|fail|thất\s*bại|không\s*được)\s+(?:thì|then|retry)\s+/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /\b(?:thử|try)\s+[a-zA-ZÀ-ỹ0-9\s]{0,40}?\s*(?:rồi|and)\s+(?:nếu|nếu\s+như|if)\s+/i,
+      type: "multi-step",
+      confidence: 0.93,
+    },
+
+    // "thay vì A thì làm B" / "instead of A do B"
+    {
+      pattern: /\b(?:thay\s*vì|vì\s*không|instead\s+of)\s+[a-zA-ZÀ-ỹ0-9\s]{0,30}?\s+(?:thì|hãy|do|make|làm)\s+/i,
+      type: "multi-step",
+      confidence: 0.94,
+    },
+
+    // Mixed language: "open zalo then close", "mở X and then Y"
+    {
+      pattern: /^open\s+[a-zA-Z][a-zA-Z0-9\s]{0,40}?\s+then\s+(?:close|quit|stop|open|launch)/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    {
+      pattern: /^mở\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+and\s+then\s+/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    {
+      pattern: /^launch\s+[a-zA-Z][a-zA-Z0-9\s]{0,40}?\s+(?:and|then)\s+(?:close|quit|open|launch)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+    // "open X rồi close" (mixed)
+    {
+      pattern: /^open\s+[a-zA-Z][a-zA-Z0-9\s]{0,40}?\s+rồi\s+(?:close|quit|stop)/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+
+    // "lặp lại cho đến khi" / "repeat until"
+    {
+      pattern: /\b(?:lặp\s*lại|repeat|loop)\b.*\b(?:cho\s*đến\s*khi|until|đến\s*khi|while)\b/i,
+      type: "multi-step",
+      confidence: 0.95,
+    },
+
+    // "đóng X bật lại" — close + reopen (no rồi required)
+    {
+      pattern: /^(?:đóng|close|quit)\s+[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?\s+bật(?:\s+lại)?$/i,
+      type: "multi-step",
+      confidence: 0.96,
+    },
+    // "đợi X giây rồi Y" — wait + duration + action (MUST come before alarm.set timer patterns)
+    {
+      pattern: /^đợi\s+\d+\s*(?:giây|giay|s|sec|seconds?|second|phút|phut|p|minutes?|minute|giờ|gio|h|hours?)\s+(?:rồi|sau\s*đó|then|after)\s+/i,
+      type: "multi-step",
       confidence: 0.97,
     },
     // ── YouTube video search (no browser specified) ──
@@ -1123,8 +1366,14 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       confidence: 0.95,
     },
     // ── Vietnamese audio/media commands ──
+    // "tắt âm thanh" → audio-management (MUST have negative lookahead to allow "tắt âm thanh 10s rồi bật lại")
     {
-      pattern: /(?:^|\s)(?:tắt\s*(?:nhạc|âm\s*thanh|tiếng)|phát\s*(?:nhạc|bài|video|clip)|dừng\s*(?:nhạc|phát)|tua\s*(?:nhạc|bài)|bài\s*(?:tiếp|kế\s*tiếp)|âm\s*lượng\s*(?:tối\s*đa|tối\s*thiểu|lên|xuống))(?:\s|$)/i,
+      pattern: /(?:^|\s)(?:tắt\s*(?:nhạc|âm\s*thanh|tiếng))(?!.*\s+(?:rồi|sau\s*đó|then|after)\s+)(?:\s|$)/i,
+      type: "audio-management",
+      confidence: 0.95,
+    },
+    {
+      pattern: /(?:^|\s)(?:phát\s*(?:nhạc|bài|video|clip)|dừng\s*(?:nhạc|phát)|tua\s*(?:nhạc|bài)|bài\s*(?:tiếp|kế\s*tiếp)|âm\s*lượng\s*(?:tối\s*đa|tối\s*thiểu|lên|xuống))(?:\s|$)/i,
       type: "audio-management",
       confidence: 0.95,
     },
@@ -1186,8 +1435,10 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       confidence: 0.95,
     },
     // ── Non-technical user natural language ──
+    // FIX: \b doesn't work reliably with Vietnamese diacritics + /i flag — use negative lookbehind
+    // "(?<![a-zA-ZÀ-ỹ])" ensures "làm gì" is at start or after whitespace, not after a letter
     {
-      pattern: /\b(?:làm\s*gì|xoay\s*sở|giúp\s*(?:được\s*)?gì|dùng\s*(?:được\s*)?gì|máy\s*(?:này\s*)?làm\s*được\s*gì)\b/i,
+      pattern: /(?<![a-zA-ZÀ-ỹ])(?:làm\s*gì|xoay\s*sở|giúp\s*(?:được\s*)?gì|dùng\s*(?:được\s*)?gì|máy\s*(?:này\s*)?làm\s*được\s*gì)(?![a-zA-ZÀ-ỹ])/i,
       type: "system-query",
       confidence: 0.92,
     },
@@ -1319,6 +1570,11 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
         const queryMatch = text.match(/^mở\s+video\s+["'""'"]+([^"''""'"]+)["'""'"]+\s*(?:\s*trên\s*youtube)?\s*$/i);
         if (queryMatch?.[1]) entities.query = { type: "text", value: queryMatch[1].trim() };
       }
+      // For multi-step patterns, extract app name (but NOT when "on youtube" — let planFromIntent handle it)
+      if (rule.type === "multi-step" && !/\bon\s+youtube\b/i.test(text)) {
+        const appMatch = text.match(/^(?:mở|bật|khởi\s*động|đóng|close|quit)\s+([a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,40}?)(?:\s|$)/i);
+        if (appMatch?.[1]) entities.app = { type: "app", value: appMatch[1].trim() };
+      }
       return {
         type: rule.type,
         entities,
@@ -1327,7 +1583,6 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       };
     }
   }
-
 
   // Quick match for single-word commands
   const quickMatch = QUICK_INTENT_MAP[normalized];
@@ -1371,6 +1626,24 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
 
   const heuristicResult = classifyWithHeuristics(text);
   const result = llmResult ?? heuristicResult;
+
+  // POST-PROCESS: Fix "làm gì" (system-query) and incomplete phrases that shouldn't be multi-step
+  // These are edge cases that slip through all rules but should not be multi-step
+  if (result.type === "multi-step" && !llmResult) {
+    // "làm gì" → system-query (what can this do?)
+    if (/^(?:làm\s*gì)$/i.test(text)) {
+      return { type: "system-query", confidence: 0.92, entities: {}, rawText: text };
+    }
+    // "lần lượt" alone → system-query (asking about sequential operation, not a task)
+    if (/^(?:lần\s*lượt)$/i.test(text)) {
+      return { type: "system-query", confidence: 0.90, entities: {}, rawText: text };
+    }
+    // "5 phút trước" → invalid phrase (not recognized as anything useful)
+    // Return as system-query for now since it's clearly not a multi-step action
+    if (/^(?:5\s*phút\s*trước)$/i.test(text)) {
+      return { type: "system-query", confidence: 0.60, entities: {}, rawText: text };
+    }
+  }
 
   if (!llmResult && result.type === "multi-step") {
     // Guard: if text contains explicit target language, don't route translate commands

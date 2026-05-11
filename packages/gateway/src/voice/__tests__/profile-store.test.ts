@@ -12,7 +12,7 @@ function makeProfile(userId: string, overrides: Partial<VoiceProfile> = {}): Voi
     updatedAt: "2026-04-23T00:00:00.000Z",
     embedding: Array.from({ length: 256 }, (_, i) => i / 256),
     sampleCount: 5,
-    version: 1,
+    version: 2,
     ...overrides,
   };
 }
@@ -38,7 +38,7 @@ describe("profile-store", () => {
     expect(loaded).not.toBeNull();
     expect(loaded!.userId).toBe("user-abc");
     expect(loaded!.sampleCount).toBe(5);
-    expect(loaded!.version).toBe(1);
+    expect(loaded!.version).toBe(2);
     expect(loaded!.embedding).toHaveLength(256);
     expect(loaded!.embedding[0]).toBeCloseTo(0);
     expect(loaded!.createdAt).toBe("2026-04-23T00:00:00.000Z");

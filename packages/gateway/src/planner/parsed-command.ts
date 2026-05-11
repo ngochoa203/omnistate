@@ -54,4 +54,5 @@ export interface ParsedCommand {
   parameters: Record<string, string | number | boolean | null>;
   context_dependencies: string[];  // e.g. "screen-tree", "file:/path/to/file"
   entities: Record<string, EntityInfo>;
+  duration_seconds?: number | null;  // For app open with auto-close
 }

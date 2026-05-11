@@ -72,3 +72,5 @@ packages/gateway/vendor/
 # macOS app build output
 apps/macos/OmniState/dist/
 apps/macos/OmniState/OmniState/Resources/web-dist/
+
+llm.runtime.json

@@ -205,7 +205,7 @@ describe("Profile Store", () => {
       updatedAt: new Date().toISOString(),
       embedding: Array(256).fill(0).map(() => Math.random() * 2 - 1),
       sampleCount: 5,
-      version: 1 as const,
+      version: 2 as const,
     };
 
     await saveProfile(profile);
@@ -229,7 +229,7 @@ describe("Profile Store", () => {
       updatedAt: new Date().toISOString(),
       embedding: Array(256).fill(0.5),
       sampleCount: 3,
-      version: 1 as const,
+      version: 2 as const,
     };
 
     await saveProfile(profile);
@@ -250,7 +250,7 @@ describe("Profile Store", () => {
         updatedAt: new Date().toISOString(),
         embedding: Array(256).fill(0),
         sampleCount: 1,
-        version: 1 as const,
+        version: 2 as const,
       });
     } catch (err) {
       errorThrown = true;

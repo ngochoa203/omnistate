@@ -240,7 +240,29 @@ async function* callOpenAICompatibleStream(
         const trimmed = line.trim();
         if (!trimmed.startsWith("data:")) continue;
         const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") break outer;
+        if (data === "[DONE]") {
+          // Process any remaining buffered text before exiting stream
+          if (buf.trim()) {
+            try {
+              const leftover = JSON.parse(buf.trim()) as typeof chunk;
+              const leftoverDelta = leftover.choices?.[0]?.delta;
+              if (leftoverDelta && typeof leftoverDelta.content === "string" && leftoverDelta.content) {
+                const raw = leftoverDelta.content;
+                if (!inThinkingBlock) {
+                  const cleaned = raw
+                    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                    .replace(/<\/think>[\s\S]*$/gi, "")
+                    .replace(/^[\s\S]*?<think>/gi, "")
+                    .replace(/^<\/think>\s*/gi, "")
+                    .replace(/<think>[\s\S]*$/gi, "")
+                    .replace(/^[\s\S]*?<think>/gi, "");
+                  if (cleaned) yield { kind: "text", delta: cleaned };
+                }
+              }
+            } catch { /* ignore parse errors for partial buffer */ }
+          }
+          break outer;
+        }
         if (!data) continue;
 
         let chunk: { choices?: Array<{ delta?: OaiDelta; finish_reason?: string | null }> };

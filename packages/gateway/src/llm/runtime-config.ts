@@ -132,7 +132,7 @@ function defaultConfig(): LlmRuntimeConfig {
   const minimaxProvider: LlmProviderConfig = {
     id: "minimax",
     kind: "openai-compatible",
-    baseURL: process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1",
+    baseURL: process.env.MINIMAX_BASE_URL ?? "https://api.minimax.io",
     apiKey: process.env.MINIMAX_API_KEY ?? "",
     model: process.env.MINIMAX_MODEL ?? "MiniMax-M2.7",
     models: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
@@ -149,9 +149,9 @@ function defaultConfig(): LlmRuntimeConfig {
     fastPathThreshold: 0.92,
     tokenBudget: {
       compactPrompt: true,
-      intentMaxTokens: 220,
-      decomposeMaxTokens: 360,
-      maxInputChars: 1400,
+      intentMaxTokens: 320,
+      decomposeMaxTokens: 500,
+      maxInputChars: 1800,
     },
     voice: {
       tts: {
@@ -214,9 +214,9 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
     ? raw.providers.map((p) => ({
         id: p.id ?? "provider",
         kind: p.kind === "openai-compatible" ? "openai-compatible" : "anthropic",
-        baseURL: p.baseURL ?? def.providers[0]!.baseURL,
-        apiKey: p.apiKey ?? "",
-        model: p.model ?? def.providers[0]!.model,
+        baseURL: p.baseURL || process.env.MINIMAX_BASE_URL || def.providers[0]!.baseURL,
+        apiKey: p.apiKey || process.env.MINIMAX_API_KEY || "",
+        model: p.model || process.env.MINIMAX_MODEL || def.providers[0]!.model,
         models: Array.isArray(p.models)
           ? p.models.map((m) => String(m).trim()).filter(Boolean)
           : undefined,
@@ -396,13 +396,33 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
   try {
     const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as Partial<LlmRuntimeConfig>;
     const conf = mergeWithDefaults(raw);
-    saveLlmRuntimeConfig(conf);
+    // apiKey sourced from env var — redact before persisting to avoid
+    // writing secrets back into the JSON config file.
+    const redacted = pruneSecrets(conf);
+    saveLlmRuntimeConfig(redacted);
     return conf;
   } catch {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
     return conf;
   }
+}
+
+/**
+ * Replace apiKey values that came from env vars with null so they are
+ * never stored in the on-disk config.  Consumers of loadLlmRuntimeConfig()
+ * always get the resolved value (env var wins), but the file on disk
+ * never holds sensitive material.
+ */
+function pruneSecrets(conf: LlmRuntimeConfig): LlmRuntimeConfig {
+  return {
+    ...conf,
+    providers: conf.providers.map((p) => ({
+      ...p,
+      // null signals "read from env var at runtime" — never write secrets to disk
+      apiKey: null as unknown as string,
+    })),
+  };
 }
 
 export function saveLlmRuntimeConfig(config: LlmRuntimeConfig): void {

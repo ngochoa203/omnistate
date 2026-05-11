@@ -44,8 +44,12 @@ export const EXTRACT_INTENT_TOOL: AnthropicTool = {
         type: "object",
         description: "Named entities extracted from command (app, file, url, person, text, command)",
       },
+      duration_seconds: {
+        type: "number",
+        description: "Duration in seconds for timed actions, or null if not applicable",
+      },
     },
-    required: ["action", "intent_type", "confidence", "platform"],
+    required: ["action", "intent_type", "confidence", "platform", "duration_seconds"],
   },
 };
 
@@ -73,6 +77,7 @@ export function normalizeParsedCommand(input: Record<string, unknown>): ParsedCo
     parameters: (input.parameters as Record<string, string | number | boolean | null>) ?? {},
     context_dependencies: Array.isArray(input.context_dependencies) ? input.context_dependencies : [],
     entities: (input.entities as Record<string, ParsedCommand["entities"][string]>) ?? {},
+    duration_seconds: (input.duration_seconds as number) ?? null,
   };
 }
 

@@ -698,7 +698,11 @@ export async function handleSiriBridgeRequest(
     const allowLocalVoiceWithoutToken =
       isVoiceApi && isLocalRequest && process.env.OMNISTATE_LOCAL_VOICE_API_NO_TOKEN !== "0";
 
-    if ((!siri.token || token !== siri.token) && !allowLocalVoiceWithoutToken) {
+    // For wake events, skip the siri bridge token check and use separate wake token check.
+    // Wake events use /api/wake/event path (NOT /siri/command).
+    if (requestPath === "/api/wake/event") {
+      // Wake handler is below; don't block here
+    } else if ((!siri.token || token !== siri.token) && !allowLocalVoiceWithoutToken) {
       json(401, { ok: false, error: "Invalid token" });
       return;
     }
@@ -812,8 +816,11 @@ export async function handleSiriBridgeRequest(
         return;
       }
 
-      const expectedToken = process.env.OMNISTATE_SIRI_TOKEN ?? siri.token ?? "";
-      if (expectedToken && body.token !== expectedToken) {
+      const expectedToken = siri.token ?? "";
+      // For wake events, use the runtime-configured token (siri.token).
+      // If no token is configured in runtime, allow wake events through.
+      const hasValidToken = !expectedToken || body.token === expectedToken;
+      if (!hasValidToken) {
         json(401, { error: "unauthorized" });
         return;
       }
@@ -1117,7 +1124,7 @@ export async function handleMessage(
             system:
               "You are OmniState chat assistant. Reply naturally, concise, and helpful. If user asks simple math, answer directly with result.",
             user: userGoal,
-            maxTokens: 220,
+            maxTokens: 800,
           });
 
           gateway.safeSend(ws, {

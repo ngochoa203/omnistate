@@ -1051,6 +1051,32 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         }
       }
 
+      // ── Pre-built: "Mở X rồi đóng" / "Open X then close" multi-step ──
+      const openThenCloseMatch = intent.rawText.match(/^mở\s+([a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s]{0,30}?)\s*(?:rồi|sau\s*đó)\s+(?:đóng|tắt|close|quit)/i);
+      if (openThenCloseMatch) {
+        const appName = openThenCloseMatch[1]?.trim() ?? "";
+        const appNorm = normalizeAppName(appName);
+        const textLower = intent.rawText.toLowerCase();
+        const durationMatch = textLower.match(/\b(\d+)\s*(giây|giay|s|phút|phut|p|giờ|gio|h)\b/);
+        let waitSeconds = 0;
+        if (durationMatch) {
+          const num = parseInt(durationMatch[1]);
+          const unit = durationMatch[2].toLowerCase();
+          if (["giây", "giay", "s"].includes(unit)) waitSeconds = num;
+          else if (["phút", "phut", "p"].includes(unit)) waitSeconds = num * 60;
+          else if (["giờ", "gio", "h"].includes(unit)) waitSeconds = num * 3600;
+        }
+        if (waitSeconds > 0) {
+          nodes.push(actionNode("step-0", `Launch ${appNorm || appName}`, "app.launch", "deep", { name: appNorm || appName }));
+          nodes.push(actionNode("step-1", `Wait ${waitSeconds}s before closing`, "alarm.set", "deep", { seconds: waitSeconds }, ["step-0"]));
+          nodes.push(actionNode("step-2", `Quit ${appNorm || appName}`, "app.quit", "deep", { name: appNorm || appName }, ["step-1"]));
+        } else {
+          nodes.push(actionNode("step-0", `Launch ${appNorm || appName}`, "app.launch", "deep", { name: appNorm || appName }));
+          nodes.push(actionNode("step-1", `Quit ${appNorm || appName}`, "app.quit", "deep", { name: appNorm || appName }, ["step-0"]));
+        }
+        break;
+      }
+
       const steps = await decomposeMultiStep(intent.rawText, episodicContext || undefined, kgContext || undefined);
 
       if (steps && steps.length > 0) {

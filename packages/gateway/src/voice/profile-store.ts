@@ -9,7 +9,7 @@ export interface VoiceProfile {
   updatedAt: string;
   embedding: number[];
   sampleCount: number;
-  version: 1;
+  version: 2;
 }
 
 function getEnrollmentDir(): string {
@@ -42,8 +42,8 @@ function validateProfileShape(data: unknown): VoiceProfile {
   ) {
     throw new Error("Invalid profile shape");
   }
-  // Bug fix: Add version migration support
-  if (d.version === 1) {
+  // Version migration support
+  if (d.version === 1 || d.version === 2) {
     return data as VoiceProfile;
   }
   if (typeof d.version === 'number' && d.version < 1) {
