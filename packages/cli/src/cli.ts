@@ -1477,6 +1477,18 @@ async function main(): Promise<void> {
       await cmdRepl(rest);
       break;
 
+    // Additional useful commands that route to gateway
+    case "providers":
+    case "fallback":
+    case "compact":
+    case "logs":
+    case "events":
+    case "rules":
+    case "memory":
+    case "triggers":
+      await cmdGatewaySlash(`/${command}${rest.length > 0 ? " " + rest.join(" ") : ""}`);
+      break;
+
     case "stop":
       await cmdStop();
       break;

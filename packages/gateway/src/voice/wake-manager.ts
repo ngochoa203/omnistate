@@ -16,6 +16,9 @@ export interface WakeConfig {
   aliases?: string[];
   modelPath?: string;
   threshold?: number;
+  maxRestarts?: number;
+  phrases?: string[];
+  phraseEndpoints?: Record<string, string>;
 }
 
 export interface WakeManagerOptions {
@@ -24,26 +27,59 @@ export interface WakeManagerOptions {
   token: string;
 }
 
+export interface RestartEntry {
+  timestamp: number;
+  reason: string;
+}
+
+export interface HealthStatus {
+  detectionRate: number;
+  falsePositiveRate: number;
+  isHealthy: boolean;
+  issue?: string;
+  currentThreshold: number;
+  totalDetections: number;
+  recentDetections: number;
+  recentFalsePositives: number;
+  restartHistory: RestartEntry[];
+}
+
 export class WakeManager {
   private child: ChildProcess | null = null;
   private lastOptions: WakeManagerOptions | null = null;
   private restartCount = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly MAX_RESTARTS = 3;
-  private static readonly RESTART_WINDOW_MS = 60_000;
+  private stopped = false;
   private firstExitTime = 0;
-  private stopped = false; // Bug fix: track if stop() was called
+
+  // Adaptive threshold state
+  private detectionWindow: Array<{ timestamp: number; isFalsePositive: boolean }> = [];
+  private currentThreshold = 0.5;
+
+  // Health monitoring counters
+  private totalDetections = 0;
+  private recentDetections = 0;
+  private recentFalsePositives = 0;
+
+  // Restart history
+  private restartHistory: RestartEntry[] = [];
+
+  // Command window validation
+  private _lastWakeTimestamp = 0;
+  private commandWindowSec = 30;
 
   isRunning(): boolean {
     return this.child !== null;
   }
 
+  private get maxRestarts(): number {
+    return this.lastOptions?.config.maxRestarts ?? 3;
+  }
+
   private resolvePythonExecutable(): string {
-    // Allow explicit override to avoid launchd PATH/env mismatches.
     const explicit = process.env.OMNISTATE_WAKE_PYTHON?.trim();
     if (explicit) return explicit;
 
-    // Fallback for pyenv users where launchd may not resolve shims correctly.
     const pyenvVersion = process.env.PYENV_VERSION?.trim();
     const pyenvRoot = process.env.PYENV_ROOT?.trim() || `${process.env.HOME ?? ""}/.pyenv`;
     if (pyenvVersion && pyenvRoot) {
@@ -53,12 +89,141 @@ export class WakeManager {
     return "python3";
   }
 
+  /**
+   * Get the endpoint for a specific phrase, or return the default endpoint.
+   */
+  getEndpointForPhrase(phrase: string): string {
+    if (this.lastOptions?.config.phraseEndpoints?.[phrase]) {
+      return this.lastOptions.config.phraseEndpoints[phrase];
+    }
+    return this.lastOptions?.endpoint ?? "http://127.0.0.1:19801/api/wake/event";
+  }
+
+  /**
+   * Check if a command timestamp is within the valid command window.
+   */
+  isCommandWithinWindow(lastWakeTime: number): boolean {
+    return (Date.now() - lastWakeTime) / 1000 <= this.commandWindowSec;
+  }
+
+  /**
+   * Record a detected wake phrase timestamp.
+   */
+  recordWakeTimestamp(): void {
+    this._lastWakeTimestamp = Date.now();
+  }
+
+  /**
+   * Get the last wake timestamp.
+   */
+  getLastWakeTimestamp(): number {
+    return this._lastWakeTimestamp;
+  }
+
+  /**
+   * Extend the command window by 2 seconds when still speaking.
+   */
+  extendWindowIfStillSpeaking(): void {
+    this.commandWindowSec += 2;
+    logger.info(`[Wake] Command window extended to ${this.commandWindowSec}s`);
+  }
+
+  /**
+   * Adjust threshold based on false positive rate over the sliding window.
+   */
+  adjustThreshold(): void {
+    const now = Date.now();
+    const windowMs = 5 * 60 * 1000; // 5 minutes
+
+    // Remove old entries outside the window
+    this.detectionWindow = this.detectionWindow.filter(
+      (entry) => now - entry.timestamp < windowMs
+    );
+
+    if (this.detectionWindow.length === 0) return;
+
+    const recentFP = this.detectionWindow.filter((e) => e.isFalsePositive).length;
+    const fpRate = recentFP / this.detectionWindow.length;
+
+    const oldThreshold = this.currentThreshold;
+
+    if (fpRate > 0.15) {
+      // Increase threshold by 0.05, max 0.9
+      this.currentThreshold = Math.min(0.9, this.currentThreshold + 0.05);
+      logger.info(`[Wake] High FP rate (${(fpRate * 100).toFixed(1)}%), increasing threshold: ${oldThreshold.toFixed(2)} -> ${this.currentThreshold.toFixed(2)}`);
+    } else if (fpRate < 0.05) {
+      // Decrease threshold by 0.02, min 0.3
+      this.currentThreshold = Math.max(0.3, this.currentThreshold - 0.02);
+      logger.info(`[Wake] Low FP rate (${(fpRate * 100).toFixed(1)}%), decreasing threshold: ${oldThreshold.toFixed(2)} -> ${this.currentThreshold.toFixed(2)}`);
+    }
+  }
+
+  /**
+   * Record a detection event and update health metrics.
+   */
+  recordDetection(isFalsePositive = false): void {
+    const now = Date.now();
+    this.detectionWindow.push({ timestamp: now, isFalsePositive });
+    this.totalDetections++;
+    this.recentDetections++;
+
+    if (isFalsePositive) {
+      this.recentFalsePositives++;
+    }
+
+    // Adjust threshold based on recent performance
+    this.adjustThreshold();
+  }
+
+  /**
+   * Get current health status of the wake manager.
+   */
+  getHealthStatus(): HealthStatus {
+    const now = Date.now();
+    const windowMs = 5 * 60 * 1000;
+
+    // Clean old entries for rate calculation
+    const recentEntries = this.detectionWindow.filter(
+      (entry) => now - entry.timestamp < windowMs
+    );
+
+    const detectionRate = recentEntries.length > 0
+      ? recentEntries.filter((e) => !e.isFalsePositive).length / recentEntries.length
+      : 0;
+    const falsePositiveRate = recentEntries.length > 0
+      ? recentEntries.filter((e) => e.isFalsePositive).length / recentEntries.length
+      : 0;
+
+    // Detect "not firing when should be" issue
+    let issue: string | undefined;
+    const isHealthy = this.recentDetections > 0 || recentEntries.length === 0;
+
+    if (this.recentDetections === 0 && this.totalDetections > 0) {
+      issue = "not_firing_when_should_be";
+    }
+
+    return {
+      detectionRate,
+      falsePositiveRate,
+      isHealthy,
+      issue,
+      currentThreshold: this.currentThreshold,
+      totalDetections: this.totalDetections,
+      recentDetections: this.recentDetections,
+      recentFalsePositives: this.recentFalsePositives,
+      restartHistory: [...this.restartHistory],
+    };
+  }
+
   start(options: WakeManagerOptions): void {
     this.stopped = false;
     this.stop();
     this.lastOptions = options;
     this.restartCount = 0;
     this.firstExitTime = 0;
+
+    // Initialize adaptive threshold from config or defaults
+    this.currentThreshold = options.config.threshold ?? 0.5;
 
     if (!options.config.enabled) return;
     if (!options.token) {
@@ -76,9 +241,6 @@ export class WakeManager {
       ? options.config.modelPath
       : `${homeDir}/.omnistate/wake-samples/personal_template.json`;
 
-    // oww requires a custom ONNX model — without one it silently fell back to legacy
-    // STT-keyword matching, which is NOT a real wake engine and never fires reliably.
-    // We now refuse to start so the UI/operator sees a clear error.
     const hasCustomModel = !!(options.config.modelPath && existsSync(options.config.modelPath))
       || !!(process.env.OMNISTATE_WAKE_MODEL_PATH && existsSync(process.env.OMNISTATE_WAKE_MODEL_PATH));
     const hasPersonalTemplate = existsSync(personalTemplate);
@@ -168,8 +330,6 @@ export class WakeManager {
     const threshold = options.config.threshold ?? (resolvedEngine === "personal" ? 0.88 : 0.5);
 
     // Personal listener targets the wake-event broadcast endpoint, NOT the Siri command bridge.
-    // Wake is a UI trigger; executing the literal phrase as a goal would confuse the planner
-    // (e.g. "hey mimi" → Safari search). The /api/wake/event handler broadcasts to WS clients.
     const personalEndpoint = options.endpoint.includes("/api/wake/event")
       ? options.endpoint
       : "http://127.0.0.1:19801/api/wake/event";
@@ -196,8 +356,6 @@ export class WakeManager {
             "--command-window-sec", String(options.config.commandWindowSec),
           ];
 
-    // For oww: pass aliases as JSON + threshold + model-path.
-    // For legacy: pass aliases as comma-separated string (no threshold; script doesn't accept it).
     const engineExtras =
       resolvedEngine === "oww"
         ? [
@@ -242,22 +400,31 @@ export class WakeManager {
   }
 
   private scheduleRestart(): void {
-    // Bug fix: Don't restart if stop() was called
     if (!this.lastOptions || this.stopped) return;
     const now = Date.now();
     if (this.firstExitTime === 0) this.firstExitTime = now;
-    if (now - this.firstExitTime > WakeManager.RESTART_WINDOW_MS) {
-      // Reset window
+    if (now - this.firstExitTime > 60_000) {
       this.restartCount = 0;
       this.firstExitTime = now;
     }
     this.restartCount++;
-    if (this.restartCount > WakeManager.MAX_RESTARTS) {
-      logger.error(`[Wake] Exceeded ${WakeManager.MAX_RESTARTS} restarts in ${WakeManager.RESTART_WINDOW_MS / 1000}s, giving up`);
+    if (this.restartCount > this.maxRestarts) {
+      logger.error(`[Wake] Exceeded ${this.maxRestarts} restarts in 60s, giving up`);
       return;
     }
-    const delayMs = Math.min(2000 * Math.pow(2, this.restartCount - 1), 15000);
-    logger.info(`[Wake] Restarting in ${delayMs}ms (attempt ${this.restartCount}/${WakeManager.MAX_RESTARTS})`);
+
+    // Apply jitter: delay * (0.5 + random)
+    const baseDelayMs = Math.min(2000 * Math.pow(2, this.restartCount - 1), 15000);
+    const delayMs = Math.floor(baseDelayMs * (0.5 + Math.random()));
+
+    logger.info(`[Wake] Restarting in ${delayMs}ms (attempt ${this.restartCount}/${this.maxRestarts})`);
+
+    // Record restart in history
+    this.restartHistory.push({
+      timestamp: now,
+      reason: `exit_code_non_zero_restart_${this.restartCount}`,
+    });
+
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       if (this.lastOptions) this.start(this.lastOptions);

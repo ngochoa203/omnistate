@@ -110,7 +110,7 @@ describe("verifySpeaker threshold boundary", () => {
       updatedAt: new Date().toISOString(),
       embedding,
       sampleCount: 5,
-      version: 1,
+      version: 2,
     };
     await saveProfile(profile);
 
@@ -139,7 +139,7 @@ describe("verifySpeaker threshold boundary", () => {
       updatedAt: new Date().toISOString(),
       embedding: e1,
       sampleCount: 5,
-      version: 1,
+      version: 2,
     };
     await saveProfile(profile);
 
@@ -199,7 +199,7 @@ describe("verifySpeaker onMismatch mode return shape", () => {
       updatedAt: new Date().toISOString(),
       embedding,
       sampleCount: 5,
-      version: 1,
+      version: 2,
     };
     await saveProfile(profile);
   }

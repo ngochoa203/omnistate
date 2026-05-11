@@ -111,6 +111,239 @@ describe("classifyIntent() — regex heuristic fallback (no API key)", () => {
     expect(intent.confidence).toBeLessThanOrEqual(1);
   });
 
+  // ── Multi-step: one-step vs multi-step classification ──────────────────────
+
+  it("should classify 'Mở zalo 10s rồi đóng nó' as multi-step", async () => {
+    const intent = await classifyIntent("Mở zalo 10s rồi đóng nó");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+    expect(intent.entities.app?.value).toBe("zalo");
+  });
+
+  it("should classify 'Mở zalo rồi đóng' as multi-step", async () => {
+    const intent = await classifyIntent("Mở zalo rồi đóng");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'Open zalo then close' as multi-step", async () => {
+    const intent = await classifyIntent("Open zalo then close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'Mở Safari rồi đóng nó' as multi-step", async () => {
+    const intent = await classifyIntent("Mở Safari rồi đóng nó");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'mở slack rồi bật telegram' as multi-step", async () => {
+    const intent = await classifyIntent("mở slack rồi bật telegram");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'đợi 10 giây rồi đóng zalo' as multi-step", async () => {
+    const intent = await classifyIntent("đợi 10 giây rồi đóng zalo");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'wait 30 seconds then close the app' as multi-step", async () => {
+    const intent = await classifyIntent("wait 30 seconds then close the app");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'Mở telegram, đợi 5 phút, rồi đóng' as multi-step", async () => {
+    const intent = await classifyIntent("Mở telegram, đợi 5 phút, rồi đóng");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'Open X for 10 seconds then close' as multi-step", async () => {
+    const intent = await classifyIntent("Open zalo for 10 seconds then close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'screenshot then send to zalo' as multi-step", async () => {
+    const intent = await classifyIntent("screenshot then send to zalo");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'chụp màn hình rồi gửi slack' as multi-step", async () => {
+    const intent = await classifyIntent("chụp màn hình rồi gửi slack");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'Mở X, sau đó nhấn vào Y' as multi-step", async () => {
+    const intent = await classifyIntent("Mở Safari, sau đó nhấn vào nút đăng nhập");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should NOT classify 'Mở zalo' as multi-step (one-step app launch)", async () => {
+    const intent = await classifyIntent("Mở zalo");
+    expect(intent.type).toBe("app-launch");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should NOT classify 'bật nhạc' as multi-step (one-step media)", async () => {
+    const intent = await classifyIntent("bật nhạc");
+    expect(intent.type).toBe("media.play");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.90);
+  });
+
+  it("should classify 'sau 5 phút thì tắt máy' as multi-step", async () => {
+    const intent = await classifyIntent("sau 5 phút thì tắt máy");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'bật nhạc lên, đợi 10 phút rồi tắt' as multi-step", async () => {
+    const intent = await classifyIntent("bật nhạc lên, đợi 10 phút rồi tắt");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+
+  it("should classify 'tìm file report rồi gửi email' as multi-step", async () => {
+    const intent = await classifyIntent("tìm file report rồi gửi email");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'tải file rồi nén lại' as multi-step", async () => {
+    const intent = await classifyIntent("tải file rồi nén lại");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'đóng tất cả trừ Safari' as multi-step", async () => {
+    const intent = await classifyIntent("đóng tất cả trừ Safari");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("should classify 'mở Slack và Telegram' as multi-step", async () => {
+    const intent = await classifyIntent("mở Slack và Telegram");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+
+  // ── NEW: Imperative chain (xong/rồi as completion marker) ───────────────
+  it("should classify 'Mở zalo xong đóng' as multi-step", async () => {
+    const intent = await classifyIntent("Mở zalo xong đóng");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+    expect(intent.entities.app?.value).toBe("zalo");
+  });
+  it("should classify 'bật nhạc xong tắt đi' as multi-step", async () => {
+    const intent = await classifyIntent("bật nhạc xong tắt đi");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+  it("should classify 'open app done then close' as multi-step", async () => {
+    const intent = await classifyIntent("open app done then close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+
+  // ── NEW: Loop/repeat patterns ────────────────────────────────────────────
+  it("should classify 'làm 3 lần' as multi-step", async () => {
+    const intent = await classifyIntent("làm 3 lần");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'repeat 5 times then stop' as multi-step", async () => {
+    const intent = await classifyIntent("repeat 5 times then stop");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'làm gì' as system-query (not multi-step)", async () => {
+    const intent = await classifyIntent("làm gì");
+    expect(intent.type).toBe("system-query");
+  });
+
+  // ── NEW: Duration-only implicit sequencing ───────────────────────────────
+  it("should classify '5 phút sau tắt máy' as multi-step", async () => {
+    const intent = await classifyIntent("5 phút sau tắt máy");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'in 10 minutes turn off' as multi-step", async () => {
+    const intent = await classifyIntent("in 10 minutes turn off");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should NOT classify '5 phút trước' as multi-step (invalid phrasing)", async () => {
+    const intent = await classifyIntent("5 phút trước");
+    expect(intent.type).not.toBe("multi-step");
+  });
+
+  // ── NEW: Conditional sequencing ─────────────────────────────────────────
+  it("should classify 'khi xong thì đóng' as multi-step", async () => {
+    const intent = await classifyIntent("khi xong thì đóng");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'when done then close' as multi-step", async () => {
+    const intent = await classifyIntent("when done then close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+
+  // ── NEW: Error-handling chains ──────────────────────────────────────────
+  it("should classify 'thử mở app nếu lỗi thì báo' as multi-step", async () => {
+    const intent = await classifyIntent("thử mở app nếu lỗi thì báo");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'try open if fail then retry' as multi-step", async () => {
+    const intent = await classifyIntent("try open if fail then retry");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.92);
+  });
+
+  // ── NEW: Mixed language multi-step ──────────────────────────────────────
+  it("should classify 'open zalo then close' as multi-step", async () => {
+    const intent = await classifyIntent("open zalo then close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
+  });
+  it("should classify 'mở X and then Y' as multi-step", async () => {
+    const intent = await classifyIntent("mở slack and then telegram");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should classify 'open X rồi close' as multi-step", async () => {
+    const intent = await classifyIntent("open zalo rồi close");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+
+  // ── NEW: Implicit sequential ─────────────────────────────────────────────
+  it("should classify 'lần lượt mở A và B' as multi-step", async () => {
+    const intent = await classifyIntent("lần lượt mở A và B");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+  it("should NOT classify 'lần lượt' alone as multi-step", async () => {
+    // "lần lượt" alone should NOT be multi-step (incomplete phrase without an action verb)
+    const intent = await classifyIntent("lần lượt");
+    expect(intent.type).not.toBe("multi-step");
+  });
+
+  // ── NEW: Loop/until ──────────────────────────────────────────────────────
+  it("should classify 'lặp lại cho đến khi xong' as multi-step", async () => {
+    const intent = await classifyIntent("lặp lại cho đến khi xong");
+    expect(intent.type).toBe("multi-step");
+    expect(intent.confidence).toBeGreaterThanOrEqual(0.93);
+  });
+
   it("unknown text falls back to multi-step with low confidence", async () => {
     const intent = await classifyIntent("do something weird and indescribable xyz123");
     expect(["multi-step", "automation-macro"]).toContain(intent.type);

@@ -346,6 +346,110 @@ export const TOOLS: AnthropicTool[] = [
     description: "Run a basic security audit: check open ports, firewall status, Wi-Fi security, SSH status, and generate recommendations.",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "manage_application",
+    description: "Open, close or manage a specific application with optional duration.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["open", "close"],
+          description: "Action: open or close"
+        },
+        app_name: {
+          type: "string",
+          description: "Exact app name (zalo, chrome, safari). Only the app name, NO duration."
+        },
+        duration_seconds: {
+          type: "integer",
+          description: "If user wants to open app for a duration then close, set this. null if not specified."
+        }
+      },
+      required: ["action", "app_name"]
+    }
+  },
+  {
+    name: "orchestrate",
+    description: "Execute a sequence of UI automation steps on macOS. Use for apps without API (Zalo, LINE, etc.). Steps execute in order. Return results for each step.",
+    input_schema: {
+      type: "object",
+      properties: {
+        steps: {
+          type: "array",
+          description: "Ordered list of steps to execute. Each step has action + params.",
+          items: {
+            type: "object",
+            properties: {
+              action: {
+                type: "string",
+                enum: [
+                  // App lifecycle
+                  "app.open", "app.close", "app.wait", "app.focus",
+                  // Mouse actions
+                  "click", "double_click", "right_click",
+                  // Keyboard actions
+                  "type", "paste", "key", "enter", "tab", "escape", "select.all",
+                  // Search in app
+                  "search.find", "search.type", "contact.search",
+                  // Messaging
+                  "message.send",
+                  // UI wait/exists
+                  "ui.wait_for", "ui.exists", "ui.wait_for_element",
+                  // File operations
+                  "file.list_images", "file.classify_image", "file.move", "file.copy", "file.delete",
+                  "file.find", "file.create_folder",
+                  // Vision/AI
+                  "vision.detect_cat", "vision.detect_objects", "vision.classify",
+                  // Misc
+                  "screenshot", "sleep"
+                ],
+                description: "Action type: app.* for app control, click/type for UI, file.* for files, vision.* for AI"
+              },
+              params: {
+                type: "object",
+                description: "Action parameters (varies by action type)",
+                properties: {
+                  // App control
+                  app: { type: "string", description: "App name (e.g. 'Zalo', 'Safari')" },
+                  seconds: { type: "number", description: "Seconds to wait" },
+                  button: { type: "string", enum: ["left", "right"], description: "Mouse button" },
+                  // Mouse coordinates
+                  x: { type: "number", description: "X coordinate" },
+                  y: { type: "number", description: "Y coordinate" },
+                  // UI elements
+                  element: { type: "string", description: "UI element identifier (AX role, label, title)" },
+                  timeout: { type: "number", description: "Timeout in seconds" },
+                  // Keyboard
+                  key: { type: "string", description: "Key name (e.g. 'return', 'tab', 'f')" },
+                  modifiers: { type: "array", items: { type: "string" }, description: "Modifier keys (command, shift, option, control)" },
+                  // Search/contact
+                  contact: { type: "string", description: "Contact name or phone" },
+                  // File operations
+                  path: { type: "string", description: "File or directory path" },
+                  source: { type: "string", description: "Source path for file operations" },
+                  destination: { type: "string", description: "Destination path for file operations" },
+                  filter: { type: "string", enum: ["cat", "dog", "all"], description: "Image filter (for vision classification)" },
+                  recursive: { type: "boolean", description: "Recursively process directories" },
+                  dry_run: { type: "boolean", description: "Preview without making changes" },
+                  // Messaging
+                  message: { type: "string", description: "Message text to send" },
+                  // Vision
+                  confidence: { type: "number", description: "Minimum confidence threshold (0-1)" },
+                  selector: { type: "string", description: "CSS/AX selector for element" }
+                }
+              }
+            }
+          }
+        },
+        session_id: {
+          type: "string",
+          description: "Optional session ID for multi-step workflows (for context continuity)"
+        }
+      },
+      required: ["steps"]
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------------

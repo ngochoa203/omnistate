@@ -88,6 +88,20 @@ function commandHelpText(): string {
     "/voice [show|providers <p1,p2,...>|siri <on|off>]",
     "/wake [show|on|off|phrase <text>]",
     "/config ...",
+    "/health (run health check)",
+    "/doctor (run diagnostics)",
+    "/app <build|run|open|reset-permissions>",
+    "/install [--no-open]",
+    "/voiceprint <enroll|verify>",
+    "/logs [limit] (recent gateway logs)",
+    "/events [limit] (recent events)",
+    "/rules (event rules)",
+    "/memory (memory/knowledge graph)",
+    "/triggers [list] (automation triggers)",
+    "/compact (force token budget compaction)",
+    "/providers (list all providers)",
+    "/fallback (show fallback chain)",
+    "/repl, /chat (interactive mode)",
     "omnistate config ...",
   ].join("\n");
 }
@@ -607,6 +621,147 @@ function handleConfigCommand(args: string[]): CommandOutput {
   };
 }
 
+// ─── Additional Command Handlers ──────────────────────────────────────────────
+
+function handleHealthCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "Run: omnistate health (CLI-only, no daemon needed)",
+  };
+}
+
+function handleDoctorCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "Run: omnistate doctor (CLI-only, no daemon needed)",
+  };
+}
+
+function handleAppCommand(args: string[]): CommandOutput {
+  const sub = (args[0] ?? "").toLowerCase();
+  if (["build", "run", "open", "reset-permissions"].includes(sub)) {
+    return {
+      handled: true,
+      output: `Run: omnistate app ${sub} (CLI-only command)`,
+    };
+  }
+  return {
+    handled: true,
+    output: "Usage: /app <build|run|open|reset-permissions>",
+  };
+}
+
+function handleInstallCommand(args: string[]): CommandOutput {
+  const noOpen = args.includes("--no-open");
+  return {
+    handled: true,
+    output: `Run: omnistate install${noOpen ? " --no-open" : ""} (CLI-only command)`,
+  };
+}
+
+function handleVoiceprintCommand(args: string[]): CommandOutput {
+  const sub = (args[0] ?? "").toLowerCase();
+  if (sub === "enroll") {
+    return {
+      handled: true,
+      output: "Usage: omnistate voiceprint enroll --audio <path> --user-id <id> --display-name <name>",
+    };
+  }
+  if (sub === "verify") {
+    return {
+      handled: true,
+      output: "Usage: omnistate voiceprint verify --audio <path>",
+    };
+  }
+  return {
+    handled: true,
+    output: "Usage: /voiceprint <enroll|verify>",
+  };
+}
+
+function handleLogsCommand(args: string[]): CommandOutput {
+  const limitRaw = Number(args[0] ?? "20");
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 100)) : 20;
+  return {
+    handled: true,
+    output: `gateway logs (last ${limit} entries) — HTTP: GET /session/logs?limit=${limit}`,
+    data: { endpoint: `/session/logs?limit=${limit}`, hint: "curl gateway endpoint" },
+  };
+}
+
+function handleEventsCommand(args: string[]): CommandOutput {
+  const limitRaw = Number(args[0] ?? "100");
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 100;
+  return {
+    handled: true,
+    output: `recent events (last ${limit}) — HTTP: GET /api/events?limit=${limit}`,
+    data: { endpoint: `/api/events?limit=${limit}`, hint: "curl gateway endpoint" },
+  };
+}
+
+function handleRulesCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "event rules — HTTP: GET /api/events/rules (list) POST /api/events/rules (add)",
+  };
+}
+
+function handleMemoryCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "memory/knowledge graph — HTTP: GET /api/memory/query?q=<query>",
+  };
+}
+
+function handleTriggersCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "triggers — HTTP: GET /api/triggers (list triggers)",
+  };
+}
+
+function handleCompactCommand(): CommandOutput {
+  return { handled: true, output: "compact_prompt=true (run: omnistate config set compact_prompt true)" };
+}
+
+function handleProvidersCommand(): CommandOutput {
+  const config = loadLlmRuntimeConfig();
+  const lines = config.providers.map((p) => {
+    const active = p.id === config.activeProviderId ? "*" : " ";
+    const status = p.enabled ? "enabled" : "disabled";
+    return `${active} ${p.id} [${p.kind}] ${status} model=${p.model}`;
+  });
+  return {
+    handled: true,
+    output: lines.join("\n") || "No providers configured",
+    data: { providers: config.providers, active: config.activeProviderId },
+  };
+}
+
+function handleFallbackCommand(): CommandOutput {
+  const config = loadLlmRuntimeConfig();
+  const chain = config.fallbackProviderIds.join(", ") || "(none)";
+  return {
+    handled: true,
+    output: `fallback chain: ${chain}`,
+    data: { fallbackProviderIds: config.fallbackProviderIds },
+  };
+}
+
+function handleReplCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "Run: omnistate repl (interactive REPL mode)",
+  };
+}
+
+function handleChatCommand(): CommandOutput {
+  return {
+    handled: true,
+    output: "Run: omnistate chat (interactive chat mode, same as repl)",
+  };
+}
+
 export function tryHandleGatewayCommand(
   goal: string,
   ctx: CommandContext,
@@ -780,6 +935,23 @@ export function tryHandleGatewayCommand(
   if (first === "omnistate" && parts[1]?.toLowerCase() === "session") {
     return handleSessionCommand(parts.slice(2));
   }
+
+  // Additional useful commands
+  if (first === "/health") return handleHealthCommand();
+  if (first === "/doctor") return handleDoctorCommand();
+  if (first === "/app") return handleAppCommand(parts.slice(1));
+  if (first === "/install") return handleInstallCommand(parts.slice(1));
+  if (first === "/voiceprint") return handleVoiceprintCommand(parts.slice(1));
+  if (first === "/logs") return handleLogsCommand(parts.slice(1));
+  if (first === "/events") return handleEventsCommand(parts.slice(1));
+  if (first === "/rules") return handleRulesCommand();
+  if (first === "/memory") return handleMemoryCommand();
+  if (first === "/triggers") return handleTriggersCommand();
+  if (first === "/compact") return handleCompactCommand();
+  if (first === "/providers") return handleProvidersCommand();
+  if (first === "/fallback") return handleFallbackCommand();
+  if (first === "/repl") return handleReplCommand();
+  if (first === "/chat") return handleChatCommand();
 
   return null;
 }

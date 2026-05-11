@@ -9,8 +9,8 @@
  *   B28 Backup/Restore  B29 OS Update       B30 Swap/Memory
  */
 
-import { promisify } from "node:util";
 import { exec } from "node:child_process";
+import { promisify } from "node:util";
 
 export const execAsync = promisify(exec);
 

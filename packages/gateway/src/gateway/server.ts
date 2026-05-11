@@ -275,11 +275,15 @@ export class OmniStateGateway {
     const startMs = Date.now();
     this.cancellationRegistry.create(taskId);
 
+    let intent: Awaited<ReturnType<typeof classifyIntent>> | null = null;
+    let planFailedBecauseLlM = false;
+    let llmErrorMessage = "";
+
     try {
       this.cancellationRegistry.throwIfCancelled(taskId);
 
-      // 1. Classify intent
-      const intent = await classifyIntent(goal);
+      // 1. Classify intent via LLM
+      intent = await classifyIntent(goal);
       this.cancellationRegistry.throwIfCancelled(taskId);
 
       // If the intent is ask-clarification, send a question back instead of executing
@@ -445,9 +449,191 @@ export class OmniStateGateway {
         this.safeSend(ws, { type: "task.cancelled", taskId, reason: "cancelled" } as ServerMessage);
         return;
       }
-      throw err;
+      // Detect LLM errors during intent classification or planning
+      const errMsg = err instanceof Error ? err.message : String(err ?? "");
+      const isLlmError =
+        /401|unauthorized|Invalid API|api.?key|login fail/i.test(errMsg) ||
+        /LLM API error|All LLM providers failed/i.test(errMsg);
+      if (isLlmError) {
+        planFailedBecauseLlM = true;
+        llmErrorMessage = errMsg;
+      } else {
+        throw err;
+      }
     } finally {
       this.cancellationRegistry.complete(taskId);
+    }
+
+    // LLM failed — retry with heuristic-only classification (no LLM)
+    if (planFailedBecauseLlM) {
+      this.safeSend(ws, {
+        type: "task.step",
+        taskId,
+        step: 0,
+        status: "executing",
+        layer: "deep",
+        data: { note: "LLM unavailable, using heuristic fallback" },
+      } as unknown as ServerMessage);
+
+      // Re-classify without LLM
+      let heuristicIntent: Awaited<ReturnType<typeof classifyIntent>> | null = null;
+      let originalRequireLlm: string | undefined;
+      try {
+        // Force heuristic-only by temporarily disabling LLM requirement
+        originalRequireLlm = process.env.OMNISTATE_REQUIRE_LLM;
+        process.env.OMNISTATE_REQUIRE_LLM = "false";
+        heuristicIntent = await classifyIntent(goal);
+        process.env.OMNISTATE_REQUIRE_LLM = originalRequireLlm ?? "";
+      } catch (heuristicErr) {
+        // Even heuristics failed
+        if (originalRequireLlm !== undefined) {
+          process.env.OMNISTATE_REQUIRE_LLM = originalRequireLlm;
+        }
+        this.safeSend(ws, {
+          type: "task.error",
+          taskId,
+          error: `Không thể xử lý yêu cầu: LLM gặp lỗi và heuristic cũng thất bại. Chi tiết: ${llmErrorMessage}`,
+          technicalError: llmErrorMessage,
+        } as unknown as ServerMessage);
+        return;
+      }
+
+      // If heuristic also returns ask-clarification, don't proceed
+      if (!heuristicIntent || heuristicIntent.type === 'ask-clarification' || heuristicIntent.is_valid === false) {
+        this.safeSend(ws, {
+          type: "task.complete",
+          taskId,
+          result: {
+            goal,
+            mode: "heuristic",
+            stepsCompleted: 0,
+            output: "Không thể xác định ý định. Vui lòng thử lại sau khi LLM được khôi phục.",
+            warning: llmErrorMessage,
+          },
+        } as ServerMessage);
+        return;
+      }
+
+      // Execute with heuristic intent
+      intent = heuristicIntent;
+      try {
+        let plan = await planFromIntent(intent);
+        plan = { ...plan, taskId };
+        plan = optimizePlan(plan);
+
+        // Execute plan with heuristic intent
+        const heuristicTotalSteps = plan.nodes.length;
+        let heuristicStepNum = 0;
+        const heuristicAllStepData: Record<string, unknown>[] = [];
+
+        for (const node of plan.nodes) {
+          this.cancellationRegistry.throwIfCancelled(taskId);
+          heuristicStepNum++;
+          const resolvedLayer = node.layer === "auto" ? "deep" : node.layer;
+
+          this.safeSend(ws, {
+            type: "task.step",
+            taskId,
+            step: heuristicStepNum,
+            status: "executing",
+            layer: resolvedLayer,
+          } as ServerMessage);
+
+          const singlePlan = { ...plan, nodes: [node] };
+          const result = await this.orchestrator.executePlan(singlePlan);
+          this.cancellationRegistry.throwIfCancelled(taskId);
+          const stepData = result.stepResults?.[0]?.data ?? {};
+
+          if (result.status === "failed") {
+            this.safeSend(ws, {
+              type: "task.step",
+              taskId,
+              step: heuristicStepNum,
+              status: "failed",
+              layer: resolvedLayer,
+              data: stepData,
+            } as ServerMessage);
+            this.safeSend(ws, {
+              type: "task.error",
+              taskId,
+              error: result.error ?? "Step execution failed",
+              technicalError: result.error,
+            } as unknown as ServerMessage);
+            this.taskHistory.unshift({
+              taskId,
+              goal,
+              status: "failed",
+              intentType: intent.type,
+              timestamp: new Date().toISOString(),
+              durationMs: Date.now() - startMs,
+            });
+            if (this.taskHistory.length > 100) this.taskHistory.pop();
+            incrementSessionUsage();
+            return;
+          }
+
+          heuristicAllStepData.push(stepData);
+          this.safeSend(ws, {
+            type: "task.step",
+            taskId,
+            step: heuristicStepNum,
+            status: "completed",
+            layer: resolvedLayer,
+            data: stepData,
+          } as ServerMessage);
+
+          if (node.verify) {
+            this.safeSend(ws, {
+              type: "task.verify",
+              taskId,
+              step: heuristicStepNum,
+              result: "pass",
+              confidence: 0.9,
+            } as ServerMessage);
+          }
+        }
+
+        // Heuristic plan completed successfully
+        const heuristicOutputs = heuristicAllStepData.flatMap((d) => this.extractUserFacingTexts(d));
+        const heuristicCombined = heuristicOutputs.join("\n").trim() || this.fallbackUserFacingOutput(goal, intent.type);
+
+        this.safeSend(ws, {
+          type: "task.complete",
+          taskId,
+          result: {
+            goal,
+            mode: "heuristic",
+            stepsCompleted: heuristicTotalSteps,
+            intentType: intent.type,
+            confidence: intent.confidence,
+            output: heuristicCombined || undefined,
+            stepData: heuristicAllStepData,
+            warning: llmErrorMessage,
+          },
+        } as ServerMessage);
+
+        this.taskHistory.unshift({
+          taskId,
+          goal,
+          status: "complete",
+          output: heuristicCombined || undefined,
+          intentType: intent.type,
+          timestamp: new Date().toISOString(),
+          durationMs: Date.now() - startMs,
+        });
+        if (this.taskHistory.length > 100) this.taskHistory.pop();
+        incrementSessionUsage();
+        return;
+      } catch (heuristicExecErr) {
+        // Even heuristic plan execution failed
+        this.safeSend(ws, {
+          type: "task.error",
+          taskId,
+          error: `Heuristic fallback also failed: ${heuristicExecErr instanceof Error ? heuristicExecErr.message : String(heuristicExecErr)}`,
+          technicalError: llmErrorMessage,
+        } as unknown as ServerMessage);
+        return;
+      }
     }
   }
 
@@ -626,7 +812,7 @@ Rules:
         system:
           "Classify user input into TASK or MODE. TASK means perform system actions or fetch machine/runtime data. MODE means conversational Q&A, greeting, explanation, or general chat. Reply exactly one token: TASK or MODE.",
         user: text,
-        maxTokens: 4,
+        maxTokens: 12,
       });
       const label = classify.text.trim().toUpperCase();
       if (label.startsWith("TASK")) {
@@ -673,6 +859,12 @@ Rules:
     }
 
     return `Đã hoàn tất xử lý cho yêu cầu: ${userGoal}`;
+  }
+
+  // Refresh wake listener if voice/wake config changed
+  public shouldRefreshWakeListener(goal: string): boolean {
+    const text = goal.toLowerCase();
+    return /wake|voice|siri|listen|microphone|hotword|hot.?word/i.test(text);
   }
 
   // Clear task history (available for future use)
