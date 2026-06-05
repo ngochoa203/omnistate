@@ -157,8 +157,8 @@ impl WhisperEngine {
 
             full_text.push_str(&text);
             segments.push(TranscriptionSegment {
-                start_ms: start_ts as i64 * 10, // whisper timestamps are in centiseconds
-                end_ms: end_ts as i64 * 10,
+                start_ms: start_ts * 10, // whisper timestamps are in centiseconds
+                end_ms: end_ts * 10,
                 text,
             });
         }

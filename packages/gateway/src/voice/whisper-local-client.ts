@@ -235,7 +235,8 @@ class WhisperLocalClient {
     if (this.batchQueue.length >= BATCH_SIZE) {
       this.flushBatch();
     } else if (!this.batchTimer) {
-      this.batchTimer = setTimeout(() => this.flushBatch(), BATCH_INTERVAL_MS);
+      const flushDelayMs = this.ready ? 0 : BATCH_INTERVAL_MS;
+      this.batchTimer = setTimeout(() => this.flushBatch(), flushDelayMs);
     }
   }
 

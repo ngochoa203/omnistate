@@ -15,7 +15,7 @@ describe("BrowserTools", () => {
     it("should construct Google search URL", async () => {
       const query = "SePay API";
       const encoded = encodeURIComponent(query);
-      expect(`https://www.google.com/search?q=${encoded}`).toContain("SePay+API");
+      expect(`https://www.google.com/search?q=${encoded}`).toContain("SePay%20API");
     });
   });
 

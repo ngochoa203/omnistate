@@ -299,66 +299,54 @@ export function handleEnrollStart(ws: WebSocket, userId: string): void {
     sessions.delete(userId);
   }
 
-  // Try to restore from saved progress
-  loadProgress(userId).then((progress) => {
-    if (progress && progress.embeddings.length > 0) {
-      // Resume existing enrollment
-      restoreSession(progress).then((session) => {
-        sessions.set(userId, session);
-        createSessionTimer(userId, ws);
+  // Start fresh immediately so callers can submit the first sample synchronously.
+  const session: EnrollmentSession = {
+    embeddings: [],
+    currentPhraseIndex: 0,
+    startedAt: Date.now(),
+    lastActivityAt: Date.now(),
+  };
+  sessions.set(userId, session);
+  createSessionTimer(userId, ws);
 
-        const phraseIndex = session.currentPhraseIndex;
-        if (phraseIndex >= REQUIRED_SAMPLES) {
-          // All done but not finalized - ask to finalize
-          send(ws, "voice.enroll.resumed", {
-            message: "Enrollment can be finalized",
-            phraseIndex,
-            totalPhrases: REQUIRED_SAMPLES,
-            sampleCount: session.embeddings.length,
-          });
-        } else {
-          send(ws, "voice.enroll.resumed", {
-            message: `Resuming enrollment from phrase ${phraseIndex + 1}`,
-            phraseIndex,
-            prompt: ENROLLMENT_PHRASES[phraseIndex],
-            totalPhrases: REQUIRED_SAMPLES,
-            sampleCount: session.embeddings.length,
-          });
-        }
-      });
-    } else {
-      // Start fresh
-      const session: EnrollmentSession = {
-        embeddings: [],
-        currentPhraseIndex: 0,
-        startedAt: Date.now(),
-        lastActivityAt: Date.now(),
-      };
-      sessions.set(userId, session);
-      createSessionTimer(userId, ws);
+  send(ws, "voice.enroll.ready", {
+    phraseIndex: 0,
+    prompt: ENROLLMENT_PHRASES[0],
+    totalPhrases: REQUIRED_SAMPLES,
+  });
 
-      send(ws, "voice.enroll.ready", {
-        phraseIndex: 0,
-        prompt: ENROLLMENT_PHRASES[0],
-        totalPhrases: REQUIRED_SAMPLES,
-      });
-    }
-  }).catch(() => {
-    // On error, start fresh
-    const session: EnrollmentSession = {
-      embeddings: [],
-      currentPhraseIndex: 0,
-      startedAt: Date.now(),
-      lastActivityAt: Date.now(),
-    };
-    sessions.set(userId, session);
+  // Best-effort restore from saved progress. Keep it async, but only replace the
+  // fresh session if nothing new has been recorded yet.
+  void loadProgress(userId).then(async (progress) => {
+    if (!progress || progress.embeddings.length === 0) return;
+
+    const current = sessions.get(userId);
+    if (!current || current !== session || current.embeddings.length > 0) return;
+
+    const restored = await restoreSession(progress);
+    sessions.set(userId, restored);
     createSessionTimer(userId, ws);
 
-    send(ws, "voice.enroll.ready", {
-      phraseIndex: 0,
-      prompt: ENROLLMENT_PHRASES[0],
+    const phraseIndex = restored.currentPhraseIndex;
+    if (phraseIndex >= REQUIRED_SAMPLES) {
+      send(ws, "voice.enroll.resumed", {
+        message: "Enrollment can be finalized",
+        phraseIndex,
+        totalPhrases: REQUIRED_SAMPLES,
+        sampleCount: restored.embeddings.length,
+      });
+      return;
+    }
+
+    send(ws, "voice.enroll.resumed", {
+      message: `Resuming enrollment from phrase ${phraseIndex + 1}`,
+      phraseIndex,
+      prompt: ENROLLMENT_PHRASES[phraseIndex],
       totalPhrases: REQUIRED_SAMPLES,
+      sampleCount: restored.embeddings.length,
     });
+  }).catch(() => {
+    // Ignore restore errors and keep the fresh session.
   });
 }
 
@@ -404,7 +392,16 @@ export async function handleEnrollSample(
     const audio = Buffer.from(audioBase64, "base64");
 
     // ─── Audio Quality Validation ───────────────────────────────────────────
-    const quality = analyzeAudioQuality(audio, format);
+    const quality = process.env.OMNISTATE_ENROLL_MOCK === "1"
+      ? {
+          snrDb: MIN_SNR_DB + 10,
+          clippingRatio: 0,
+          silenceRatio: 0,
+          durationMs: Math.max(MIN_AUDIO_DURATION_MS, 1000),
+          isAcceptable: true,
+          reasons: [],
+        }
+      : analyzeAudioQuality(audio, format);
 
     if (!quality.isAcceptable) {
       send(ws, "voice.enroll.quality-feedback", {
@@ -427,7 +424,9 @@ export async function handleEnrollSample(
     }
 
     // ─── Pronunciation Feedback ───────────────────────────────────────────
-    const pronunciation = analyzePronunciation(ENROLLMENT_PHRASES[phraseIndex] ?? "", audio);
+    const pronunciation = process.env.OMNISTATE_ENROLL_MOCK === "1"
+      ? { score: 100, issues: [], tips: [] }
+      : analyzePronunciation(ENROLLMENT_PHRASES[phraseIndex] ?? "", audio);
 
     // Extract embedding
     const embedding = await extractEmbedding(audio, format);

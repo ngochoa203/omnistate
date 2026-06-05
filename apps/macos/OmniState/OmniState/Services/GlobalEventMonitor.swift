@@ -35,8 +35,9 @@ final class GlobalEventMonitor: ObservableObject {
         fomoActive = true
         lastFomoPosition = NSEvent.mouseLocation
         fomoTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.updateFomoPosition()
+                self.updateFomoPosition()
             }
         }
     }
@@ -88,8 +89,9 @@ final class GlobalEventMonitor: ObservableObject {
     private func startClipboardMonitor() {
         lastClipboardChangeCount = NSPasteboard.general.changeCount
         clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.checkClipboard()
+                self.checkClipboard()
             }
         }
     }

@@ -7,7 +7,7 @@ vi.mock("../llm/router.js", () => ({
   resolveEffectiveBudget: vi.fn().mockReturnValue({ maxInputChars: 2000, intentMax: 128, compactPrompt: false }),
 }));
 
-const VALID = ["file-operation","shell-command","file-organization","multi-step","file-search","system-query","file-convert","file-encrypt","ask-clarification","disk-cleanup","app-control","app-launch","self-healing","maintenance.diskCleanup"];
+const VALID = ["file-operation","shell-command","file-organization","multi-step","file-search","file.search","system-query","file-convert","file-encrypt","ask-clarification","disk-cleanup","app-control","app-launch","self-healing","maintenance.diskCleanup"];
 
 function ok(t: string, p: string) {
   return it(t, async () => {

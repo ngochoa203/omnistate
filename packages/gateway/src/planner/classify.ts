@@ -1018,6 +1018,12 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "file-operation",
       confidence: 0.95,
     },
+    // Fix: "tìm file trùng" / "find duplicate files" → file.search
+    {
+      pattern: /^(?:tìm\s+file\s+trùng|find\s+duplicate\s+files?)$/i,
+      type: "file.search",
+      confidence: 0.97,
+    },
     // Fix: "tìm kiếm file" → file.search
     {
       pattern: /^tìm\s*kiếm\s+file/i,
