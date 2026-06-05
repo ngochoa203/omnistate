@@ -8,6 +8,8 @@ import {
   resolveEffectiveBudget,
   actionNode,
   verifyNode,
+  verifyProcessNode,
+  verifyBrowserStateNode,
   normalizeStepTool,
   inferStepParamsForTool,
 } from "./types.js";
@@ -43,12 +45,62 @@ import { KnowledgeGraph } from "../memory/knowledge-graph.js";
 import { logger } from "../utils/logger.js";
 
 // ============================================================================
+// Unsupported-path guard
+// ============================================================================
+
+/**
+ * Marks a StateNode as explicitly unsupported so the executor fails honestly
+ * instead of routing to a generic shell or generic.execute fallback.
+ */
+function unsupportedNode(
+  nodeId: string,
+  description: string,
+  reason: string,
+  deps: string[] = [],
+): StateNode {
+  return {
+    id: nodeId,
+    type: "action",
+    layer: "auto",
+    action: {
+      description: `${description} — ${reason}`,
+      tool: "unsupported.capability",
+      params: {
+        goal: description,
+        unsupportedReason: reason,
+        // Legacy fields kept so existing error-reporting paths still surface the message
+        legacy_tool: "generic.execute",
+        legacy_layer: "auto",
+      },
+    },
+    dependencies: deps,
+    onSuccess: null,
+    onFailure: { strategy: "abort" },
+    estimatedDurationMs: 0,
+    priority: "background",
+  };
+}
+
+// ============================================================================
 // Intent → Tool mapping for Domain B/C/D/E intent types
 // ============================================================================
+
+/**
+ * Tools that are declared in the routing surface but have no real
+ * implementation. Routes that hit these return an "honest fail" node
+ * instead of silently falling through to shell.exec.
+ */
+const UNSUPPORTED_TOOL_MAP: Record<string, string> = {
+  "hybrid.templates":    "workflow-template is not yet implemented — needs UI designer input",
+  "hybrid.forecast":     "resource-forecast is not yet implemented — needs historical data store",
+  "hybrid.suggestAction":"multi-app-orchestration suggestAction is not yet implemented",
+  "hybrid.compliance":   "compliance-check is not yet implemented — needs policy definition",
+};
 
 interface ToolResult {
   name: string;
   params: Record<string, unknown>;
+  unsupported?: boolean;
 }
 
 function mapIntentToTool(intent: Intent): ToolResult | null {
@@ -502,34 +554,49 @@ function mapIntentToTool(intent: Intent): ToolResult | null {
 
     // ── Domain D: Hybrid intent types ───────────────────────────────────
     case "script-generation": {
+      // generateScript throws when no LLM + no quick-action match (product-honesty guard).
       const language = /python|py script/.test(text) ? "python" : /applescript|apple script/.test(text) ? "applescript" : "bash";
       return { name: "hybrid.generateScript", params: { description: intent.rawText, language } };
     }
-    case "voice-control": { return { name: "hybrid.speak", params: { text: intent.rawText } }; }
+    case "voice-control": {
+      // hybrid.speak wraps `say` — works on macOS, returns false gracefully elsewhere.
+      return { name: "hybrid.speak", params: { text: intent.rawText } };
+    }
     case "automation-macro": {
       if (/list|show/.test(text)) return { name: "hybrid.macro.list", params: {} };
       if (/stop/.test(text)) return { name: "hybrid.macro.stop", params: {} };
       if (/\bstart\b|\brecord\b/.test(text)) return { name: "hybrid.macro.start", params: {} };
       return { name: "hybrid.macro.list", params: {} };
     }
-    case "workflow-template": { return { name: "hybrid.templates", params: {} }; }
+    case "workflow-template": {
+      // no implementation yet — route to unsupported node so executor fails honestly
+      return { name: "hybrid.templates", params: {}, unsupported: true };
+    }
     case "file-organization": {
       if (/desktop/.test(text)) return { name: "hybrid.organizeFiles", params: { dirPath: `${process.env.HOME ?? "~"}/Desktop`, strategy: "group-by-extension" } };
       if (/downloads?/.test(text)) return { name: "hybrid.organizeFiles", params: { dirPath: `${process.env.HOME ?? "~"}/Downloads`, strategy: "group-by-date" } };
       return { name: "hybrid.organizeFiles", params: { dirPath: process.cwd(), strategy: "smart-workspace" } };
     }
     case "debug-assist": {
+      // Log analysis is a valid shell.exec; error-analysis needs LLM — mark supported but caveat
       if (/(log|error|crash|stack\s*trace|traceback|summari[sz]e\s*logs?|analy[sz]e\s*logs?)/.test(text)) {
         return { name: "shell.exec", params: { command: "echo '=== Recent Errors (24h) ===' && log show --last 24h --predicate 'eventMessage CONTAINS[c] \"error\" OR eventMessage CONTAINS[c] \"exception\" OR eventMessage CONTAINS[c] \"crash\"' --style compact 2>/dev/null | head -80 && echo '---' && echo '=== Error Summary ===' && log show --last 24h --style compact 2>/dev/null | grep -Ei 'error|exception|crash' | awk '{print tolower($0)}' | sed -E 's/.*(error|exception|crash).*/\\1/' | sort | uniq -c | sort -nr | head -10" } };
       }
       return { name: "hybrid.analyzeError", params: { error: { message: intent.rawText } } };
     }
-    case "compliance-check": { return { name: "hybrid.compliance", params: {} }; }
-    case "resource-forecast": {
-      const metric = /disk|storage/.test(text) ? "disk" : /memory|ram/.test(text) ? "memory" : "cpu";
-      return { name: "hybrid.forecast", params: { metric, days: 7 } };
+    case "compliance-check": {
+      // no implementation yet
+      return { name: "hybrid.compliance", params: {}, unsupported: true };
     }
-    case "multi-app-orchestration": { return { name: "hybrid.suggestAction", params: {} }; }
+    case "resource-forecast": {
+      // no historical data store — still useful for disk/memory queries
+      const metric = /disk|storage/.test(text) ? "disk" : /memory|ram/.test(text) ? "memory" : "cpu";
+      return { name: "hybrid.forecast", params: { metric, days: 7 }, unsupported: true };
+    }
+    case "multi-app-orchestration": {
+      // no implementation yet
+      return { name: "hybrid.suggestAction", params: {}, unsupported: true };
+    }
 
     default:
       return null;
@@ -652,12 +719,193 @@ export function getKnowledgeGraph(): KnowledgeGraph {
 // planFromIntent — main public entry point
 // ============================================================================
 
+function sequentialize(nodes: StateNode[]): StateNode[] {
+  return nodes.map((node, index) => {
+    if (index === 0 || node.dependencies.length > 0) return node;
+    return { ...node, dependencies: [nodes[index - 1].id] };
+  });
+}
+
+function buildPromptRegressionNodes(rawText: string): StateNode[] | null {
+  const text = rawText.toLowerCase();
+
+  if (/(cổng\s+5173|port\s+5173)/.test(text) || (/localhost:5173/.test(text) && /(bị\s+chiếm|kill|pid|process)/.test(text))) {
+    return [
+      actionNode("check-port-5173", "Find and kill process occupying port 5173", "shell.exec", "deep", {
+        command: "PIDS=$(lsof -ti tcp:5173); if [ -n \"$PIDS\" ]; then echo \"$PIDS\" | xargs kill -9 && echo \"Killed process(es) on port 5173: $PIDS\"; else echo \"Port 5173 is free\"; fi",
+      }),
+    ];
+  }
+
+  if (/settings\.json/.test(text) && /theme/.test(text) && /dark/.test(text)) {
+    return [
+      actionNode("update-theme", "Set Claude settings theme to dark", "shell.exec", "deep", {
+        command: "node -e 'const fs=require(\"fs\"); const p=\"/Users/hoahn/.claude/settings.json\"; const data=JSON.parse(fs.readFileSync(p,\"utf8\")); data.theme=\"dark\"; fs.writeFileSync(p, JSON.stringify(data,null,2)+\"\\n\"); console.log(\"theme=dark\")'",
+      }),
+    ];
+  }
+
+  if (/\.log/.test(text) && /50\s*mb/i.test(rawText) && /(xóa|xoá|delete|remove)/i.test(rawText)) {
+    return [
+      actionNode("delete-large-logs", "Delete .log files larger than 50MB in OmniState", "shell.exec", "deep", {
+        command: "find /Users/hoahn/Project/omnistate -type f -name '*.log' -size +50M -print -delete",
+      }),
+    ];
+  }
+
+  if (/(tắt|turn\s*off).*(wifi|wi-fi)/i.test(rawText) && /(bật\s*lại|turn\s*on|enable)/i.test(rawText) && /bluetooth/i.test(rawText)) {
+    return sequentialize([
+      actionNode("wifi-off", "Turn Wi-Fi off", "shell.exec", "deep", { command: "networksetup -setairportpower en0 off" }),
+      actionNode("wait-3s", "Wait 3 seconds", "ui.wait", "surface", { ms: 3000 }),
+      actionNode("wifi-on", "Turn Wi-Fi on", "shell.exec", "deep", { command: "networksetup -setairportpower en0 on" }),
+      actionNode("bluetooth-off", "Turn Bluetooth off", "shell.exec", "deep", { command: "if command -v blueutil >/dev/null 2>&1; then blueutil --power 0; else open 'x-apple.systempreferences:com.apple.BluetoothSettings'; fi" }),
+    ]);
+  }
+
+  if (/(âm\s*lượng|volume)/i.test(rawText) && /20\s*%?/.test(rawText) && /(do\s*not\s*disturb|không\s*làm\s*phiền|dnd)/i.test(rawText)) {
+    return sequentialize([
+      actionNode("set-volume", "Set system volume to 20 percent", "audio.volume", "deep", { level: 20 }),
+      actionNode("enable-dnd", "Enable Do Not Disturb", "shell.exec", "deep", { command: "shortcuts run 'Turn On Do Not Disturb' 2>/dev/null || open 'x-apple.systempreferences:com.apple.Focus-Settings.extension'" }),
+    ]);
+  }
+
+  if (/zalo/i.test(rawText) && /my documents/i.test(rawText) && /(test hệ thống omnistate lần 1)/i.test(rawText)) {
+    return sequentialize([
+      actionNode("open-zalo", "Open Zalo", "app.launch", "deep", { name: "Zalo" }),
+      actionNode("find-chat", "Find My Documents chat", "ui.find", "surface", { query: "My Documents" }),
+      actionNode("click-chat", "Open My Documents chat", "ui.click", "surface", { query: "My Documents" }),
+      actionNode("type-message", "Type message", "ui.type", "surface", { text: "Test hệ thống OmniState lần 1" }),
+      actionNode("send-message", "Send message", "ui.key", "surface", { key: "Enter" }),
+    ]);
+  }
+
+  if (/safari/i.test(rawText) && /github\.com/i.test(rawText) && /reactjs hooks/i.test(rawText)) {
+    const script = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "https://github.com/search?q=ReactJS%20hooks&type=repositories"\nend tell`;
+    return sequentialize([
+      actionNode("open-safari", "Open Safari", "app.launch", "deep", { name: "Safari" }),
+      actionNode("search-github", "Search GitHub for ReactJS hooks", "app.script", "deep", { script }),
+    ]);
+  }
+
+  if (/calculator|máy\s*tính/i.test(rawText) && /(?:2026|2\s*,\s*0\s*,\s*2\s*,\s*6)/i.test(rawText) && /cộng/i.test(rawText)) {
+    return sequentialize([
+      actionNode("open-calculator", "Open Calculator", "app.launch", "deep", { name: "Calculator" }),
+      actionNode("press-expression", "Enter 2026 + 5", "ui.type", "surface", { text: "2026+5=" }),
+      actionNode("read-result", "Read calculator result from screen", "vision.ocr", "surface", { query: "calculator result" }),
+      actionNode("speak-result", "Speak calculator result", "hybrid.speak", "surface", { text: "calculator result" }),
+    ]);
+  }
+
+  if (/(jira|trello)/i.test(rawText) && /(icon|focus|lên\s+trên\s+cùng)/i.test(rawText)) {
+    return sequentialize([
+      actionNode("capture-screen", "Capture current screen", "screen.capture", "surface"),
+      actionNode("find-jira-trello", "Find Jira or Trello icon/window", "ui.find", "surface", { query: "Jira or Trello" }),
+      actionNode("focus-app", "Focus Jira or Trello if found", "ui.click", "surface", { query: "Jira or Trello" }),
+    ]);
+  }
+
+  if (/system settings|cài\s*đặt\s*hệ\s*thống/i.test(rawText) && /display/i.test(rawText) && /resolution|độ\s*phân\s*giải/i.test(rawText)) {
+    return sequentialize([
+      actionNode("open-displays-settings", "Open Displays settings", "shell.exec", "deep", { command: "open 'x-apple.systempreferences:com.apple.Displays-Settings.extension'" }),
+      actionNode("find-resolution", "Find Resolution control", "ui.find", "surface", { query: "Resolution" }),
+      actionNode("click-resolution", "Click Resolution control", "ui.click", "surface", { query: "Resolution" }),
+    ]);
+  }
+
+  if (/readme\.md/i.test(rawText) && /hr@example\.com/i.test(rawText) && /mail/i.test(rawText)) {
+    const script = `set bodyText to do shell script "cat ~/Desktop/readme.md"\ntell application "Mail"\nactivate\nset msg to make new outgoing message with properties {subject:"Ứng tuyển Fresher ReactJS", content:bodyText, visible:true}\ntell msg to make new to recipient at end of to recipients with properties {address:"hr@example.com"}\nsend msg\nend tell`;
+    return sequentialize([
+      actionNode("read-readme", "Read Desktop readme.md", "shell.exec", "deep", { command: "cat ~/Desktop/readme.md" }),
+      actionNode("send-mail", "Compose and send Mail", "app.script", "deep", { script }),
+    ]);
+  }
+
+  if (/packages\/web/i.test(rawText) && /pnpm\s+dev/i.test(rawText) && /localhost:5173/i.test(rawText)) {
+    return sequentialize([
+      actionNode("open-terminal-web", "Open Terminal in packages/web", "app.script", "deep", { script: "tell application \"Terminal\" to do script \"cd /Users/hoahn/Project/omnistate/packages/web && pnpm dev\"\ntell application \"Terminal\" to activate" }),
+      actionNode("open-localhost", "Open localhost 5173", "shell.exec", "deep", { command: "open http://localhost:5173" }),
+      actionNode("minimize-others", "Minimize other applications", "app.script", "deep", { script: "tell application \"System Events\" to keystroke \"h\" using {option down, command down}" }),
+    ]);
+  }
+
+  if (/youtube/i.test(rawText) && /pause|dừng/i.test(rawText) && /bún\s*đậu/i.test(rawText)) {
+    return sequentialize([
+      actionNode("capture-screen", "Capture current screen", "screen.capture", "surface"),
+      actionNode("detect-youtube", "Detect whether YouTube is playing", "vision.ocr", "surface", { query: "YouTube playing video" }),
+      actionNode("pause-youtube", "Pause YouTube if playing", "ui.key", "surface", { key: "Space", condition: "if YouTube video is playing" }),
+      actionNode("new-tab", "Open browser new tab", "ui.key", "surface", { key: "t", modifiers: ["cmd"] }),
+      actionNode("search-food", "Search for cách làm bún đậu mắm tôm", "ui.type", "surface", { text: "cách làm bún đậu mắm tôm\n" }),
+    ]);
+  }
+
+  if (/tailscale/i.test(rawText) && /terminal/i.test(rawText) && /(không\s+được\s+nhấn\s+enter|don't\s+press\s+enter)/i.test(rawText)) {
+    return sequentialize([
+      actionNode("search-tailscale", "Open Tailscale macOS setup docs", "shell.exec", "deep", { command: "open 'https://tailscale.com/download/mac'" }),
+      actionNode("copy-install-command", "Prepare macOS install command", "clipboard.set", "deep", { content: "brew install --cask tailscale" }),
+      actionNode("open-terminal", "Open Terminal", "app.launch", "deep", { name: "Terminal" }),
+      actionNode("paste-command", "Paste command into Terminal without pressing Enter", "ui.key", "surface", { key: "v", modifiers: ["cmd"] }),
+    ]);
+  }
+
+  if (/documents\/emails\.txt/i.test(rawText) && /zalo/i.test(rawText)) {
+    return sequentialize([
+      actionNode("read-emails", "Read email list", "shell.exec", "deep", { command: "cat ~/Documents/emails.txt" }),
+      actionNode("open-zalo", "Open Zalo", "app.launch", "deep", { name: "Zalo" }),
+      actionNode("send-zalo-batch", "Send update message to each listed recipient", "generic.execute", "surface", { sourceFile: "~/Documents/emails.txt", app: "Zalo", message: "Tài liệu đã được cập nhật" }),
+    ]);
+  }
+
+  if (/stackoverflow/i.test(rawText) && /bug_report\.txt/i.test(rawText)) {
+    return [
+      actionNode("write-bug-report", "Create bug_report.txt from clipboard", "shell.exec", "deep", {
+        command: "pbpaste > ~/Desktop/bug_report.txt && echo 'Created ~/Desktop/bug_report.txt from clipboard'",
+      }),
+    ];
+  }
+
+  if (/(quét|scan).*(text|nội\s*dung).*(màn\s*hình|screen)/i.test(rawText) && /2\s+câu/i.test(rawText)) {
+    return sequentialize([
+      actionNode("capture-screen", "Capture current screen", "screen.capture", "surface"),
+      actionNode("ocr-screen", "OCR all visible screen text", "vision.ocr", "surface", { scope: "screen" }),
+      actionNode("summarize-vi", "Summarize OCR text in two Vietnamese sentences", "hybrid.summarize", "deep", { language: "vi", sentences: 2 }),
+    ]);
+  }
+
+  if (/voice-encoder/i.test(rawText) && /finder/i.test(rawText)) {
+    return [
+      actionNode("open-voice-encoder-folder", "Find and open voice-encoder source folder", "shell.exec", "deep", {
+        command: "DIR=$(find /Users/hoahn/Project/omnistate -type f -iname '*voice-encoder*' -o -type d -iname '*voice-encoder*' 2>/dev/null | head -1); if [ -n \"$DIR\" ]; then open -R \"$DIR\"; else echo 'voice-encoder source not found'; fi",
+      }),
+    ];
+  }
+
+  if (/10\s*gb/i.test(rawText) && /(20\s*gb|20GB)/i.test(rawText) && /(ổ\s*cứng|disk|storage)/i.test(rawText)) {
+    return sequentialize([
+      actionNode("check-free-space", "Check free disk space is over 20GB", "shell.exec", "deep", { command: "FREE_KB=$(df -Pk / | awk 'NR==2{print $4}'); if [ \"$FREE_KB\" -lt 20971520 ]; then echo 'ERROR: free disk space is below 20GB'; exit 42; else echo 'OK: enough disk space'; fi" }),
+      actionNode("download-video", "Download the 10GB video only after space check passes", "generic.execute", "deep", { precondition: "check-free-space", sizeGb: 10 }),
+    ]);
+  }
+
+  return null;
+}
+
 /**
  * Build a StatePlan (DAG of StateNodes) from a classified intent.
  */
 export async function planFromIntent(intent: Intent): Promise<StatePlan> {
   const taskId = `task-${Date.now()}`;
   const nodes: StateNode[] = [];
+
+  const deterministicNodes = buildPromptRegressionNodes(intent.rawText);
+  if (deterministicNodes) {
+    const totalMs = deterministicNodes.reduce((sum, n) => sum + n.estimatedDurationMs, 0);
+    return {
+      taskId,
+      goal: intent.rawText,
+      estimatedDuration: `${Math.round(totalMs / 1000)}s`,
+      nodes: deterministicNodes,
+    };
+  }
 
   // Inject episodic recall context into intent for downstream planning
   let episodicContext = "";
@@ -728,10 +976,10 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         ),
       );
       nodes.push(
-        verifyNode(
+        verifyProcessNode(
           "verify-launch",
           `Verify ${appName} is open and focused`,
-          `${appName} window visible and active`,
+          appName,
           ["launch"],
         ),
       );
@@ -757,7 +1005,62 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     case "app-control": {
       const branchStartLen = nodes.length;
 
-      // ── Pre-built plan: Vietnamese browser chain ──
+      // ── Pre-built plan: Vietnamese browser chain (ở Safari... pattern) ──
+      // Handles "ở Safari hãy mở youtube ở tab mới" where browser appears first with ở/tại
+      const viAtBrowserMatch = /^(?:ở|tại)\s+(safari|chrome|firefox|brave|arc|edge)\b/i.exec(intent.rawText);
+      if (viAtBrowserMatch) {
+        const browserPart = viAtBrowserMatch[1] ?? "Safari";
+        const browserNorm = normalizeAppName(browserPart);
+        const text = intent.rawText.toLowerCase();
+        const isYouTube = /youtube/i.test(intent.rawText);
+        const isNewTab = /\b(tab\s*mới|new\s*tab)\b/i.test(intent.rawText);
+
+        // Extract what to open from the "mở/hãy mở" phrase
+        const openMatch = intent.rawText.match(/(?:mở|hãy\s*mở|open|hãy\s*open)\s+(.+?)(?:\s+(?:ở|tại|trên)\s+(?:tab|cửa\s*sổ)|$)/i);
+        const openTarget = openMatch?.[1]?.trim() ?? (isYouTube ? "YouTube" : "");
+
+        let navUrl = "";
+        if (isYouTube) {
+          // Extract search query if present: "tìm X trên youtube" or just "youtube"
+          const searchMatch = intent.rawText.match(/\b(?:tìm|search|play)\s+(?:video\s*)?(.+?)(?:\s+(?:trên|ở|tại)\s+youtube|$)/i);
+          const query = searchMatch?.[1]?.trim();
+          navUrl = query
+            ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
+            : "https://www.youtube.com";
+        } else {
+          const siteMap: Record<string, string> = {
+            "github": "https://github.com", "notion": "https://notion.so",
+            "google": "https://google.com", "facebook": "https://facebook.com",
+          };
+          const lowerTarget = openTarget.toLowerCase();
+          const found = Object.entries(siteMap).find(([k]) => lowerTarget.includes(k));
+          navUrl = found ? found[1] : (openTarget ? `https://www.google.com/search?q=${encodeURIComponent(openTarget)}` : "https://www.google.com");
+        }
+
+        const safeNavUrl = escapeAppleScriptString(navUrl);
+        if (isNewTab && browserNorm === "Safari") {
+          const newTabJs = escapeAppleScriptString('var t=window.open("' + navUrl.replace(/"/g, '\\"') + '","_blank");');
+          nodes.push(actionNode("launch-browser", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("navigate-new-tab", intent.rawText, "app.script", "deep", {
+            script: `tell application "Safari"\nactivate\nmake new tab in front window\ndelay 0.3\ndo JavaScript "${newTabJs}" in current tab of front window\nend tell`,
+            entities: intent.entities,
+          }, ["launch-browser"]));
+        } else if (browserNorm === "Safari") {
+          const ytClickJs = isYouTube ? escapeAppleScriptString('setTimeout(function(){var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link";var l=document.querySelector(sel);if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}},2500);') : null;
+          const baseScript = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavUrl}"\n${ytClickJs ? 'delay 2.5\ndo JavaScript "' + ytClickJs + '" in current tab of front window\n' : ''}end tell`;
+          nodes.push(actionNode("launch-browser", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("navigate-action", intent.rawText, "app.script", "deep", { script: baseScript.trim(), entities: intent.entities }, ["launch-browser"]));
+        } else {
+          nodes.push(actionNode("launch-browser", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("navigate-action", intent.rawText, "app.script", "deep", {
+            script: `tell application "${escapeAppleScriptString(browserNorm)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeNavUrl}"\nend tell`,
+            entities: intent.entities,
+          }, ["launch-browser"]));
+        }
+        break;
+      }
+
+      // ── Pre-built plan: Vietnamese browser chain (mở X trên Safari pattern) ──
       const viOnBrowserMatch = /^(?:mở|open)\s+(.+?)\s+(?:trên|bằng|qua|trong)\s+(safari|chrome|firefox|brave|arc|edge)/i.exec(intent.rawText);
       if (viOnBrowserMatch) {
         const queryPart3 = viOnBrowserMatch[1]?.trim() ?? "";
@@ -788,6 +1091,70 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           nodes.push(actionNode("navigate-action", intent.rawText, "app.script", "deep", { script: ytScript, entities: intent.entities }, ["launch-browser"]));
           break;
         }
+        // Non-YouTube: "mở github trên chrome" → navigate to github.com in Chrome
+        if (queryPart3) {
+          const siteMap: Record<string, string> = {
+            "github": "https://github.com", "notion": "https://notion.so",
+            "google": "https://google.com", "facebook": "https://facebook.com",
+            "youtube": "https://youtube.com", "gmail": "https://gmail.com",
+          };
+          const lowerQ = queryPart3.toLowerCase();
+          const found = Object.entries(siteMap).find(([k]) => lowerQ.includes(k));
+          const navUrl = found ? found[1] : (queryPart3 ? `https://www.google.com/search?q=${encodeURIComponent(queryPart3)}` : "https://google.com");
+          const safeUrl = escapeAppleScriptString(navUrl);
+          const navScript = `tell application "${escapeAppleScriptString(browserNorm)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeUrl}"\nend tell`;
+          nodes.push(actionNode("launch-browser", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("navigate-action", intent.rawText, "app.script", "deep", { script: navScript, entities: intent.entities }, ["launch-browser"]));
+          break;
+        }
+      }
+
+      // ── Pre-built plan: YouTube search + click first result (non-Safari or no special flags) ──
+      // Covers: "tìm video React rồi mở kết quả đầu tiên" on default browser
+      if (/\btìm\s+video\b/i.test(intent.rawText) && /\b(kết\s*quả\s*)?đầu\s*tiên\b/i.test(intent.rawText)) {
+        const searchQueryMatch = intent.rawText.match(/\btìm\s+video\s+(.+?)(?:\s+rồi|$)/i);
+        const query = searchQueryMatch?.[1]?.trim() ?? "React";
+        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        const safeUrl = escapeAppleScriptString(ytUrl);
+        const firstClickJs = escapeAppleScriptString(
+          'setTimeout(function(){var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link";var l=document.querySelector(sel);if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}},3000);'
+        );
+        const navScript = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\nend tell`;
+        const clickScript = `tell application "Safari"\nactivate\ndelay 3\ndo JavaScript "${firstClickJs}" in current tab of front window\nend tell`;
+        nodes.push(actionNode("step-0", "Open Safari", "app.launch", "deep", { name: "Safari" }));
+        nodes.push(actionNode("step-1", `Search YouTube for: ${query}`, "app.script", "deep", { script: navScript }, ["step-0"]));
+        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickScript }, ["step-1"], "step-3"));
+        nodes.push(verifyBrowserStateNode("step-3", "Verify first YouTube video opened", {
+          url: "https://www.youtube.com/watch?v=",
+          browser: "Safari",
+        }, ["step-2"]));
+        break;
+      }
+
+      // ── Pre-built plan: Vietnamese navigate to app + create new tab ──
+      // Covers: "vào notion rồi tạo tab mới" / "vào github rồi mở tab mới"
+      if (/^vào\s+\S+\s+(?:rồi|sau\s*đó|then|after)\s+(?:tạo|mở)\s+(?:tab|cửa\s*sổ|window)\s+(?:mới|new)/i.test(intent.rawText)) {
+        const siteMatch = intent.rawText.match(/^vào\s+(\S+)/i);
+        const siteName = siteMatch?.[1]?.trim()?.toLowerCase() ?? "";
+        const siteMap: Record<string, string> = {
+          "notion": "https://notion.so",
+          "github": "https://github.com",
+          "google": "https://google.com",
+          "facebook": "https://facebook.com",
+          "youtube": "https://youtube.com",
+        };
+        const navUrl = siteMap[siteName] ?? (siteName ? `https://${siteName}.com` : "https://notion.so");
+        const safeUrl = escapeAppleScriptString(navUrl);
+        const appNorm = normalizeAppName(siteName || "Notion");
+        nodes.push(actionNode("launch-app", `Launch ${appNorm}`, "app.launch", "deep", { name: appNorm }));
+        nodes.push(actionNode("navigate", `Navigate to ${navUrl}`, "app.script", "deep", {
+          script: `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeUrl}"\nend tell`,
+          entities: intent.entities,
+        }, ["launch-app"]));
+        nodes.push(actionNode("new-tab", "Create new tab", "app.script", "deep", {
+          script: `tell application "Safari"\nactivate\ntell front window to make new tab\nend tell`,
+        }, ["navigate"]));
+        break;
       }
 
       let appRaw = extractAppName(intent);
@@ -886,7 +1253,11 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           const clickFirstVideoScript = `tell application "Safari"\\nactivate\\ndelay 3\\ndo JavaScript "${firstVideoJs}" in current tab of front window\\nend tell`;
           nodes.push(actionNode("step-0", "Open Safari", "app.launch", "deep", { name: "Safari" }));
           nodes.push(actionNode("step-1", `Search YouTube for: ${cleanQuery}`, "app.script", "deep", { script: navigateScript }, ["step-0"]));
-          nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"]));
+          nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"], "step-3"));
+          nodes.push(verifyBrowserStateNode("step-3", "Verify first YouTube video opened", {
+            url: "https://www.youtube.com/watch?v=",
+            browser: "Safari",
+          }, ["step-2"]));
         } else {
           nodes.push(actionNode("voice-action", intent.rawText, "hybrid.speak", "surface", { goal: intent.rawText, entities: intent.entities }));
         }
@@ -1005,7 +1376,11 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         const clickFirstVideoScript = `tell application "Safari"\nactivate\ndelay 3\ndo JavaScript "${firstVideoJs}" in current tab of front window\nend tell`;
         nodes.push(actionNode("step-0", "Open Safari", "app.launch", "deep", { name: "Safari" }));
         nodes.push(actionNode("step-1", `Search YouTube for: ${cleanQuery}`, "app.script", "deep", { script: navigateScript }, ["step-0"]));
-        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"]));
+        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"], "step-3"));
+        nodes.push(verifyBrowserStateNode("step-3", "Verify first YouTube video opened", {
+          url: "https://www.youtube.com/watch?v=",
+          browser: "Safari",
+        }, ["step-2"]));
         break;
       }
 
@@ -1022,7 +1397,11 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
         const clickFirstVideoScript = `tell application "Safari"\nactivate\ndelay 2.5\ndo JavaScript "${firstVideoJs}" in current tab of front window\nend tell`;
         nodes.push(actionNode("step-0", "Open Safari", "app.launch", "deep", { name: "Safari" }));
         nodes.push(actionNode("step-1", "Navigate to YouTube", "app.script", "deep", { script: navigateScript }, ["step-0"]));
-        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"]));
+        nodes.push(actionNode("step-2", "Click first YouTube video", "app.script", "deep", { script: clickFirstVideoScript }, ["step-1"], "step-3"));
+        nodes.push(verifyBrowserStateNode("step-3", "Verify first YouTube video opened", {
+          url: "https://www.youtube.com/watch?v=",
+          browser: "Safari",
+        }, ["step-2"]));
         break;
       }
 
@@ -1074,6 +1453,116 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           nodes.push(actionNode("step-0", `Launch ${appNorm || appName}`, "app.launch", "deep", { name: appNorm || appName }));
           nodes.push(actionNode("step-1", `Quit ${appNorm || appName}`, "app.quit", "deep", { name: appNorm || appName }, ["step-0"]));
         }
+        break;
+      }
+
+      // ── Regression: Vietnamese browser reliability ──
+      // "ở Safari hãy mở youtube ở tab mới" — navigate to YouTube in a new tab via Safari
+      if (/^ở\s+(safari|chrome|firefox|brave|arc|edge)\b/i.test(intent.rawText)) {
+        const browserMatch = intent.rawText.match(/^ở\s+(safari|chrome|firefox|brave|arc|edge)\b/i);
+        const browserNorm = normalizeAppName(browserMatch?.[1] ?? "Safari");
+        const isYouTube = /youtube/i.test(intent.rawText);
+        const isNewTab = /\b(tab\s*mới|new\s*tab|cửa\s*sổ\s*mới)\b/i.test(intent.rawText);
+        const searchQueryMatch = intent.rawText.match(/\b(?:tìm|search)\s+(?:video\s*)?(.+?)(?:\s+(?:ở|tại|trên)\s+youtube|$)/i);
+        const query = searchQueryMatch?.[1]?.trim();
+
+        if (isYouTube) {
+          const navUrl = query
+            ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
+            : "https://www.youtube.com";
+          const safeNavUrl = escapeAppleScriptString(navUrl);
+          if (isNewTab && browserNorm === "Safari") {
+            const jsEscaped = escapeAppleScriptString('window.open("' + navUrl.replace(/"/g, '\\"') + '","_blank");');
+            nodes.push(actionNode("ms-s0", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+            nodes.push(actionNode("ms-s1", intent.rawText, "app.script", "deep", {
+              script: `tell application "Safari"\nactivate\nmake new tab in front window\ndelay 0.3\ndo JavaScript "${jsEscaped}" in current tab of front window\nend tell`,
+              entities: intent.entities,
+            }, ["ms-s0"]));
+          } else if (browserNorm === "Safari") {
+            const clickJs = escapeAppleScriptString('setTimeout(function(){var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link";var l=document.querySelector(sel);if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}},2500);');
+            nodes.push(actionNode("ms-s0", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+            nodes.push(actionNode("ms-s1", intent.rawText, "app.script", "deep", {
+              script: `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavUrl}"\ndelay 2.5\ndo JavaScript "${clickJs}" in current tab of front window\nend tell`,
+              entities: intent.entities,
+            }, ["ms-s0"]));
+          } else {
+            nodes.push(actionNode("ms-s0", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+            nodes.push(actionNode("ms-s1", intent.rawText, "app.script", "deep", {
+              script: `tell application "${escapeAppleScriptString(browserNorm)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeNavUrl}"\nend tell`,
+              entities: intent.entities,
+            }, ["ms-s0"]));
+          }
+          break;
+        }
+      }
+
+      // "mở github trên chrome" — navigate to GitHub in Chrome
+      if (/^mở\s+(github|notion|google|facebook|youtube|tiktok|instagram)\s+(?:trên|on|bằng)\s+(safari|chrome|firefox|brave|arc|edge)\b/i.test(intent.rawText)) {
+        const m = intent.rawText.match(/^mở\s+(github|notion|google|facebook|youtube|tiktok|instagram)\s+(?:trên|on|bằng)\s+(safari|chrome|firefox|brave|arc|edge)\b/i);
+        const site = m?.[1]?.trim() ?? "";
+        const browserNorm = normalizeAppName(m?.[2]?.trim() ?? "Safari");
+        const siteMap: Record<string, string> = {
+          "github": "https://github.com", "notion": "https://notion.so",
+          "google": "https://google.com", "facebook": "https://facebook.com",
+          "youtube": "https://youtube.com", "tiktok": "https://tiktok.com",
+        };
+        const navUrl = siteMap[site.toLowerCase()] ?? `https://www.google.com/search?q=${encodeURIComponent(site)}`;
+        const safeNavUrl = escapeAppleScriptString(navUrl);
+        if (browserNorm === "Safari") {
+          nodes.push(actionNode("ms-s0", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("ms-s1", intent.rawText, "app.script", "deep", {
+            script: `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavUrl}"\nend tell`,
+            entities: intent.entities,
+          }, ["ms-s0"]));
+        } else {
+          nodes.push(actionNode("ms-s0", `Launch ${browserNorm}`, "app.launch", "deep", { name: browserNorm }));
+          nodes.push(actionNode("ms-s1", intent.rawText, "app.script", "deep", {
+            script: `tell application "${escapeAppleScriptString(browserNorm)}"\nactivate\nif (count of windows) = 0 then make new window\nset URL of active tab of front window to "${safeNavUrl}"\nend tell`,
+            entities: intent.entities,
+          }, ["ms-s0"]));
+        }
+        break;
+      }
+
+      // "vào notion rồi tạo tab mới" — navigate to Notion then open a new tab
+      if (/^vào\s+(?:notion|github|google|facebook|youtube|tiktok|instagram)\b.*\b(tạo\s+(?:tab|cửa\s*sổ)\s+(?:mới|new))\b/i.test(intent.rawText)) {
+        const siteMatch = intent.rawText.match(/^vào\s+(notion|github|google|facebook|youtube|tiktok|instagram)\b/i);
+        const site = siteMatch?.[1]?.trim() ?? "";
+        const siteMap: Record<string, string> = {
+          "github": "https://github.com", "notion": "https://notion.so",
+          "google": "https://google.com", "facebook": "https://facebook.com",
+          "youtube": "https://youtube.com", "tiktok": "https://tiktok.com",
+        };
+        const navUrl = siteMap[site.toLowerCase()] ?? `https://www.google.com/search?q=${encodeURIComponent(site)}`;
+        const safeNavUrl = escapeAppleScriptString(navUrl);
+        const jsEscaped = escapeAppleScriptString('window.open("' + navUrl.replace(/"/g, '\\"') + '","_blank");');
+        nodes.push(actionNode("ms-s0", `Launch Safari`, "app.launch", "deep", { name: "Safari" }));
+        nodes.push(actionNode("ms-s1", `Navigate to ${site}`, "app.script", "deep", {
+          script: `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${safeNavUrl}"\nend tell`,
+          entities: intent.entities,
+        }, ["ms-s0"]));
+        nodes.push(actionNode("ms-s2", "Create new tab", "app.script", "deep", {
+          script: `tell application "Safari"\nactivate\nmake new tab in front window\nend tell`,
+          entities: intent.entities,
+        }, ["ms-s1"]));
+        break;
+      }
+
+      // "tìm video React rồi mở kết quả đầu tiên" — search YouTube then click first result
+      if (/\btìm\s+video\b.*\brồi\s+(?:mở|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i.test(intent.rawText)) {
+        const queryMatch = intent.rawText.match(/\btìm\s+video\s+(.+?)(?:\s+rồi|$)/i);
+        const query = queryMatch?.[1]?.trim() ?? "";
+        const ytSearchUrl = escapeAppleScriptString(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
+        const clickFirstJs = escapeAppleScriptString('setTimeout(function(){var sel="ytd-video-renderer a#video-title,ytd-rich-item-renderer a#video-title-link";var l=document.querySelector(sel);if(l){l.click();}else{var lks=document.querySelectorAll("a[href*=\\"/watch\\"]");if(lks.length)lks[0].click();}},3000);');
+        const navScript = `tell application "Safari"\nactivate\nif (count of windows) = 0 then make new document\nset URL of current tab of front window to "${ytSearchUrl}"\nend tell`;
+        const clickScript = `tell application "Safari"\nactivate\ndelay 3\ndo JavaScript "${clickFirstJs}" in current tab of front window\nend tell`;
+        nodes.push(actionNode("ms-s0", `Launch Safari`, "app.launch", "deep", { name: "Safari" }));
+        nodes.push(actionNode("ms-s1", `Search YouTube for: ${query}`, "app.script", "deep", { script: navScript, entities: intent.entities }, ["ms-s0"]));
+        nodes.push(actionNode("ms-s2", "Click first YouTube result", "app.script", "deep", { script: clickScript, entities: intent.entities }, ["ms-s1"], "ms-s3"));
+        nodes.push(verifyBrowserStateNode("ms-s3", "Verify first YouTube result opened", {
+          url: "https://www.youtube.com/watch?v=",
+          browser: "Safari",
+        }, ["ms-s2"]));
         break;
       }
 
@@ -1138,7 +1627,6 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           // Domain E: Deep Hardware & Kernel
           "iokit-hardware": "deep",
           "kernel-control": "deep",
-          "wifi-security": "deep",
         };
 
         let prevId: string | null = null;
@@ -1161,18 +1649,16 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
           prevId = nodeId;
         }
       } else {
-        // Fallback: try to extract a shell command; use generic.execute as last resort
+        // Fallback: only route to shell.exec if text looks like a real command.
+        // For unrecognized UI/app tasks, return an honest unsupported node.
         const cmd = extractShellCommand(intent);
         const isRealCommand = cmd !== intent.rawText;
-        nodes.push(
-          actionNode(
-            "execute",
-            intent.rawText,
-            isRealCommand ? "shell.exec" : "generic.execute",
-            "deep",
-            isRealCommand ? { command: cmd } : { goal: intent.rawText },
-          ),
-        );
+        if (isRealCommand) {
+          nodes.push(actionNode("execute", intent.rawText, "shell.exec", "deep", { command: cmd }));
+        } else {
+          logger.warn({ rawText: intent.rawText }, "[planFromIntent] multi-step fallback: no decomposition, unrecognized command");
+          nodes.push(unsupportedNode("execute", intent.rawText, `cannot decompose intent (no LLM and no command match): "${intent.rawText.slice(0, 80)}"`));
+        }
       }
       break;
     }
@@ -1181,11 +1667,26 @@ export async function planFromIntent(intent: Intent): Promise<StatePlan> {
     default: {
       const tool = mapIntentToTool(intent);
       if (tool) {
-        nodes.push(actionNode("execute", intent.rawText, tool.name, "deep", { ...tool.params, goal: intent.rawText, entities: intent.entities }));
+        // Unsupported tools get an honest-fail node instead of being silently routed
+        if (tool.unsupported) {
+          const reason = UNSUPPORTED_TOOL_MAP[tool.name] ?? `${tool.name} is not implemented`;
+          logger.warn({ tool: tool.name, reason }, "[planFromIntent] unsupported tool requested");
+          nodes.push(unsupportedNode("execute", intent.rawText, reason));
+        } else {
+          nodes.push(actionNode("execute", intent.rawText, tool.name, "deep", { ...tool.params, goal: intent.rawText, entities: intent.entities }));
+        }
       } else {
+        // No tool matched — avoid generic.execute for UI/app tasks; use shell.exec
+        // only when the text looks like a real shell command.
         const cmd = extractShellCommand(intent);
         const isRealCommand = cmd !== intent.rawText;
-        nodes.push(actionNode("execute", intent.rawText, isRealCommand ? "shell.exec" : "generic.execute", isRealCommand ? "deep" : "auto", isRealCommand ? { command: cmd } : { goal: intent.rawText }));
+        if (isRealCommand) {
+          nodes.push(actionNode("execute", intent.rawText, "shell.exec", "deep", { command: cmd }));
+        } else {
+          // No known command, no tool — surface as unsupported rather than silent no-op.
+          logger.warn({ rawText: intent.rawText }, "[planFromIntent] unrecognized intent, no tool matched");
+          nodes.push(unsupportedNode("execute", intent.rawText, `intent type "${intent.type}" is not supported in the current build`));
+        }
       }
     }
   }

@@ -168,6 +168,11 @@ export function extractIntentFromText(text: string): IntentExtractionResult {
   const entities: Record<string, string[]> = {};
   let bestIntent = "unknown";
   let bestConfidence = 0;
+  const normalizedText = normalizeForMatching(text);
+
+  if (/^(mo|open|launch|khoi dong|chay)\s+\S+/i.test(normalizedText)) {
+    return { intent: "open_app", entities, confidence: 0.8 };
+  }
 
   for (const { intent, pattern } of INTENT_PATTERNS) {
     const matches = text.match(pattern);
@@ -202,6 +207,16 @@ export function extractTimeEntities(text: string): TimeEntity {
   if (!text) return { relative: "unknown" };
 
   const normalizedText = text.toLowerCase();
+
+  const hourWordPattern = /(?:lúc\s*)?(\d{1,2})\s*(?:giờ|h)(?:\s*(\d{1,2})\s*(?:phút|p)?)?/i;
+  const hourWordMatch = normalizedText.match(hourWordPattern);
+  if (hourWordMatch) {
+    const hours = parseInt(hourWordMatch[1]!, 10);
+    const minutes = hourWordMatch[2] ? parseInt(hourWordMatch[2], 10) : 0;
+    const now = new Date();
+    const absolute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+    return { relative: "specific_time", absolute };
+  }
 
   // Check for exact matches first
   for (const [phrase, relative] of Object.entries(RELATIVE_TIME)) {
@@ -333,9 +348,13 @@ export function detectCodeSwitching(text: string): { hasCodeSwitch: boolean; seg
   let currentLang: "vi" | "en" | null = null;
   let currentText = "";
 
-  const words = text.split(/(\s+)/);
+  const words = text.match(/\S+|\s+/g) ?? [];
 
   for (const word of words) {
+    if (/^\s+$/.test(word)) {
+      currentText += word;
+      continue;
+    }
     if (/^[ -~]*$/.test(word)) {
       // ASCII - likely English
       if (currentLang === "en") {
@@ -361,8 +380,8 @@ export function detectCodeSwitching(text: string): { hasCodeSwitch: boolean; seg
     if (currentLang !== null) segments.push({ lang: currentLang, text: currentText.trim() });
   }
 
-  const hasCodeSwitch = segments.filter((s) => s.lang === "en" && s.text.trim().length > 2).length > 0 &&
-    segments.filter((s) => s.lang === "vi" && s.text.trim().length > 2).length > 0;
+  const hasCodeSwitch = segments.some((s) => s.lang === "en" && s.text.trim().length > 0) &&
+    segments.some((s) => s.lang === "vi" && s.text.trim().length > 0);
 
   return { hasCodeSwitch, segments };
 }

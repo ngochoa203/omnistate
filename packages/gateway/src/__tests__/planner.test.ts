@@ -168,6 +168,30 @@ describe("classifyIntent() — regex heuristic fallback (no API key)", () => {
     expect(intent.confidence).toBeGreaterThanOrEqual(0.95);
   });
 
+  it("classifies 'ở Safari, hãy mở youtube ở tab mới' as browser control instead of app-launch fallback", async () => {
+    const intent = await classifyIntent("ở Safari, hãy mở youtube ở tab mới");
+    expect(intent.type).toBe("app-control");
+    expect(intent.entities.app?.value.toLowerCase()).toContain("safari");
+    expect(intent.entities.query?.value.toLowerCase()).toContain("youtube");
+  });
+
+  it("classifies 'mở github trên chrome' as browser app-control", async () => {
+    const intent = await classifyIntent("mở github trên chrome");
+    expect(intent.type).toBe("app-control");
+    expect(intent.entities.app?.value.toLowerCase()).toContain("chrome");
+    expect(intent.entities.query?.value.toLowerCase()).toContain("github");
+  });
+
+  it("classifies 'vào notion rồi tạo tab mới' as browser/app control without app-launch fallback", async () => {
+    const intent = await classifyIntent("vào notion rồi tạo tab mới");
+    expect(["multi-step", "app-control"]).toContain(intent.type);
+  });
+
+  it("classifies 'tìm video React rồi mở kết quả đầu tiên' as multi-step", async () => {
+    const intent = await classifyIntent("tìm video React rồi mở kết quả đầu tiên");
+    expect(intent.type).toBe("multi-step");
+  });
+
   it("should classify 'screenshot then send to zalo' as multi-step", async () => {
     const intent = await classifyIntent("screenshot then send to zalo");
     expect(intent.type).toBe("multi-step");
@@ -440,7 +464,8 @@ describe("planFromIntent() — plan structure", () => {
     expect(launchNode).toBeDefined();
     expect(launchNode!.layer).toBe("deep");
     expect(verifyNode).toBeDefined();
-    expect(verifyNode!.layer).toBe("surface");
+    expect(verifyNode!.layer).toBe("deep");
+    expect(verifyNode!.verify?.strategy).toBe("process");
   });
 
   it("system-query intent produces a deep-layer node", async () => {
@@ -1607,7 +1632,9 @@ describe("planFromIntent() — plan structure", () => {
     expect(String(scriptNode?.action.params?.script ?? "")).toContain("Zalo");
   });
 
-  it("multi-step fallback should pass plain goal string to generic.execute", async () => {
+  it("multi-step fallback returns unsupported.capability for unrecognized non-command text", async () => {
+    // Previously this returned generic.execute, but we now surface it as
+    // unsupported.capability for honest failure (no LLM + no command match).
     const intent = {
       type: "multi-step",
       entities: {},
@@ -1616,10 +1643,9 @@ describe("planFromIntent() — plan structure", () => {
     };
     const plan = await planFromIntent(intent);
 
-    expect(["generic.execute", "chat.ask"]).toContain(plan.nodes[0]?.action.tool);
-    if (plan.nodes[0]?.action.tool === "generic.execute") {
-      expect(plan.nodes[0]?.action.params?.goal).toBe("do something impossible xyz 123");
-    }
+    expect(plan.nodes[0]?.action.tool).toBe("unsupported.capability");
+    const params = plan.nodes[0]?.action.params as Record<string, unknown>;
+    expect(params?.unsupportedReason).toBeDefined();
   });
 
   // ── Social app tests ─────────────────────────────────────────────────────
@@ -1663,5 +1689,143 @@ describe("planFromIntent() — plan structure", () => {
     expect(intent.type).toBe("app-control");
     // preLlmRules may match "message" before entity extraction; rawText contains whatsapp
     expect(intent.rawText.toLowerCase()).toContain("whatsapp");
+  });
+
+  // ── Vietnamese browser reliability regression tests ─────────────────────────
+
+  it('"ở Safari hãy mở youtube ở tab mới" classifies as app-control (not app-launch fallback)', async () => {
+    const intent = await classifyIntent("ở Safari hãy mở youtube ở tab mới");
+    expect(intent.type).toBe("app-control");
+  });
+
+  it('"mở github trên chrome" classifies as app-control (not app-launch fallback)', async () => {
+    const intent = await classifyIntent("mở github trên chrome");
+    expect(intent.type).toBe("app-control");
+  });
+
+  it('"vào notion rồi tạo tab mới" classifies as app-control', async () => {
+    const intent = await classifyIntent("vào notion rồi tạo tab mới");
+    expect(intent.type).toBe("app-control");
+  });
+
+  it('"tìm video React rồi mở kết quả đầu tiên" → app-control or multi-step (both produce correct plan)', async () => {
+    // Classification may vary between app-control and multi-step depending on rule ordering,
+    // but the plan handler in planning.ts produces the correct 3-step YouTube chain for either.
+    const intent = await classifyIntent("tìm video React rồi mở kết quả đầu tiên");
+    expect(["app-control", "multi-step"]).toContain(intent.type);
+  });
+
+  it('"tìm video AI tools rồi mở kết quả đầu tiên" → app-control or multi-step (both produce correct plan)', async () => {
+    const intent = await classifyIntent("tìm video AI tools rồi mở kết quả đầu tiên");
+    expect(["app-control", "multi-step"]).toContain(intent.type);
+  });
+
+  it('"ở Chrome hãy mở youtube" classifies as app-control', async () => {
+    const intent = await classifyIntent("ở Chrome hãy mở youtube");
+    expect(intent.type).toBe("app-control");
+  });
+
+  it('"mở github trên firefox" classifies as app-control', async () => {
+    const intent = await classifyIntent("mở github trên firefox");
+    expect(intent.type).toBe("app-control");
+  });
+});
+
+// ── Vietnamese browser reliability regression tests ───────────────────────────
+describe("planFromIntent() — Vietnamese browser reliability regression", () => {
+  it('"ở Safari hãy mở youtube ở tab mới" produces launch + navigate nodes (not bogus app-launch)', async () => {
+    const intent = await classifyIntent("ở Safari hãy mở youtube ở tab mới");
+    const plan = await planFromIntent(intent);
+
+    // Must NOT produce a generic "app.launch" of something bogus like "Safari hãy mở youtube"
+    expect(plan.nodes.length).toBeGreaterThanOrEqual(2);
+    const launchNode = plan.nodes.find((n) => n.action.tool === "app.launch");
+    expect(launchNode).toBeDefined();
+    expect(launchNode!.action.params?.name).toBe("Safari");
+
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(scriptNode).toBeDefined();
+    const script = String(scriptNode?.action.params?.script ?? "");
+    expect(script).toContain("youtube.com");
+    expect(script).toContain("tab"); // new tab handling
+    // Should NOT contain the bogus "Safari hãy mở" as app name
+    expect(script.toLowerCase()).not.toContain("hãy");
+  });
+
+  it('"mở github trên chrome" produces GitHub URL in Chrome script (not generic app-launch)', async () => {
+    const intent = await classifyIntent("mở github trên chrome");
+    const plan = await planFromIntent(intent);
+
+    // planning.ts app-control case uses app.activate for browser commands (not app.launch)
+    const activateNode = plan.nodes.find((n) => n.action.tool === "app.activate");
+    const launchNode = plan.nodes.find((n) => n.action.tool === "app.launch");
+    expect(activateNode || launchNode).toBeDefined();
+    const node = activateNode || launchNode;
+    expect(String(node?.action.params?.name ?? "")).toMatch(/chrome|google chrome/i);
+
+    const scriptNode = plan.nodes.find((n) => n.action.tool === "app.script");
+    expect(scriptNode).toBeDefined();
+    const script = String(scriptNode?.action.params?.script ?? "");
+    expect(script).toContain("github.com");
+    expect(script.toLowerCase()).not.toContain("app.launch");
+  });
+
+  it('"vào notion rồi tạo tab mới" produces launch + navigate + new-tab nodes', async () => {
+    const intent = await classifyIntent("vào notion rồi tạo tab mới");
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBeGreaterThanOrEqual(3);
+    const tools = plan.nodes.map((n) => n.action.tool);
+    expect(tools).toContain("app.launch");
+    expect(tools).toContain("app.script");
+
+    // Verify script nodes contain notion.so
+    const scripts = plan.nodes
+      .filter((n) => n.action.tool === "app.script")
+      .map((n) => String(n.action.params?.script ?? ""))
+      .join(" ");
+    expect(scripts).toContain("notion.so");
+    // At least one script node should contain the new-tab command
+    expect(scripts.toLowerCase()).toMatch(/make\s+new\s+tab|new\s+tab/);
+  });
+
+  it('"tìm video React rồi mở kết quả đầu tiên" produces verification-backed YouTube search chain', async () => {
+    const intent = await classifyIntent("tìm video React rồi mở kết quả đầu tiên");
+    const plan = await planFromIntent(intent);
+
+    expect(plan.nodes.length).toBe(4);
+    const tools = plan.nodes.map((n) => n.action.tool);
+    expect(tools).toEqual(["app.launch", "app.script", "app.script", "verify.browser-state"]);
+
+    const navScript = String(plan.nodes[1]?.action.params?.script ?? "");
+    expect(navScript).toContain("youtube.com/results?search_query=React");
+    expect(navScript.toLowerCase()).toContain("safari");
+
+    const clickScript = String(plan.nodes[2]?.action.params?.script ?? "");
+    expect(clickScript).toContain("click");
+    expect(clickScript).toContain("ytd-video-renderer");
+
+    expect(plan.nodes[3]?.verify?.strategy).toBe("browser-state");
+    expect(String(plan.nodes[3]?.verify?.expected ?? "")).toContain("watch?v=");
+  });
+
+  it('"ở Safari hãy mở youtube ở tab mới" does NOT produce unsupported.capability fallback', async () => {
+    const intent = await classifyIntent("ở Safari hãy mở youtube ở tab mới");
+    const plan = await planFromIntent(intent);
+
+    const tools = plan.nodes.map((n) => n.action.tool);
+    expect(tools).not.toContain("unsupported.capability");
+    expect(tools).not.toContain("generic.execute");
+    expect(plan.nodes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('"tạo tab mới" alone classifies as app-control (not multi-step)', async () => {
+    const intent = await classifyIntent("tạo tab mới");
+    expect(intent.type).toBe("app-control");
+  });
+
+  it('"mở tab mới" alone classifies as app-control (not multi-step)', async () => {
+    const intent = await classifyIntent("mở tab mới");
+    expect(intent.type).toBe("app-control");
   });
 });

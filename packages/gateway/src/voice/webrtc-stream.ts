@@ -54,6 +54,8 @@ import { verifySpeaker } from "./verification.js";
 import { synthesize as edgeTtsSynthesize, detectLanguage, pickVoice } from "./edge-tts.js";
 import { whisperLocalClient } from "./whisper-local-client.js";
 import { AudioIngest } from "./audio-ingest.js";
+import { intentParser } from "./intent-parser.js";
+import { voiceCommandRouter, type ActionResult } from "./voice-command-router.js";
 
 import { logger } from "../utils/logger.js";
 // ─── Protocol types ────────────────────────────────────────────────────────────
@@ -106,6 +108,29 @@ export interface VoiceStreamTtsMessage {
   contentType: string;
 }
 
+export interface VoiceStreamDiagnosticsMessage {
+  type: "voice.stream.diagnostics";
+  sessionId: string;
+  stage: "started" | "chunk" | "finalizing" | "ended";
+  mimeType?: string;
+  sampleRate?: number;
+  chunkBytes?: number;
+  totalBytes?: number;
+  chunks?: number;
+  useStreamingStt?: boolean;
+  message?: string;
+}
+
+export interface VoiceCommandResultMessage {
+  type: "voice.command.result";
+  sessionId: string;
+  intent: string;
+  success: boolean;
+  message: string;
+  action?: string;
+  data?: unknown;
+}
+
 export interface VoiceStreamErrorMessage {
   type: "voice.stream.error";
   sessionId: string;
@@ -138,6 +163,8 @@ export type VoiceStreamServerMessage =
   | VoiceStreamStartedMessage
   | VoiceStreamResultMessage
   | VoiceStreamTtsMessage
+  | VoiceStreamDiagnosticsMessage
+  | VoiceCommandResultMessage
   | VoiceStreamErrorMessage
   | VoiceStreamEndedMessage
   | VoiceStreamBargeInMessage
@@ -263,6 +290,15 @@ export class VoiceStreamManager {
     session.chunks.push(chunk);
     session.totalBytes += chunk.length;
     session.lastActivityAt = Date.now();
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "chunk",
+      chunkBytes: chunk.length,
+      totalBytes: session.totalBytes,
+      chunks: session.chunks.length,
+      useStreamingStt: session.useStreamingStt,
+    });
 
     // Forward PCM16 chunk through AudioIngest (which gates VAD) to streaming STT
     if (session.useStreamingStt) {
@@ -358,6 +394,9 @@ export class VoiceStreamManager {
               text: ev.text,
               provider: "whisper-local",
             });
+            if (ev.kind === "final" && ev.text.trim()) {
+              await this.routeTranscriptAndRespond(session, ev.text);
+            }
           }
         } catch (err) {
           logger.warn(
@@ -420,6 +459,19 @@ export class VoiceStreamManager {
       sessionId: session.sessionId,
       maxChunkBytes: MAX_CHUNK_BYTES,
     });
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "started",
+      mimeType: session.mimeType,
+      sampleRate: session.sampleRate,
+      totalBytes: 0,
+      chunks: 0,
+      useStreamingStt,
+      message: useStreamingStt
+        ? "Streaming PCM STT path enabled"
+        : "Buffered audio path enabled; final STT runs after stop",
+    });
   }
 
   private stopSession(clientId: string, sessionId: string, send: SendFn): void {
@@ -459,6 +511,16 @@ export class VoiceStreamManager {
     }
 
     const { send } = session;
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "finalizing",
+      mimeType: session.mimeType,
+      sampleRate: session.sampleRate,
+      totalBytes: session.totalBytes,
+      chunks: session.chunks.length,
+      useStreamingStt: session.useStreamingStt,
+    });
 
     try {
       if (session.chunks.length === 0 && !session.useStreamingStt) {
@@ -499,6 +561,14 @@ export class VoiceStreamManager {
 
         // Speaker verification and TTS are handled after final transcript by the
         // async iterator listener started in startSession.  Emit ended here.
+        send({
+          type: "voice.stream.diagnostics",
+          sessionId: session.sessionId,
+          stage: "ended",
+          totalBytes: session.totalBytes,
+          chunks: session.chunks.length,
+          useStreamingStt: true,
+        });
         send({ type: "voice.stream.ended", sessionId: session.sessionId });
         return;
       }
@@ -540,6 +610,8 @@ export class VoiceStreamManager {
         text: transcript.text,
         provider: transcript.provider,
       });
+
+      await this.routeTranscriptAndRespond(session, transcript.text);
 
       // ── Speaker verification ──────────────────────────────────────────────
       const svConfig = loadLlmRuntimeConfig().voice.speakerVerification;
@@ -585,15 +657,57 @@ export class VoiceStreamManager {
         }
       }
 
-      // ── Optional TTS ──────────────────────────────────────────────────────
-      if (session.wantTts) {
-        await this.synthesizeAndSend(session, transcript.text);
-      }
-
+      send({
+        type: "voice.stream.diagnostics",
+        sessionId: session.sessionId,
+        stage: "ended",
+        totalBytes: session.totalBytes,
+        chunks: session.chunks.length,
+        useStreamingStt: false,
+      });
       send({ type: "voice.stream.ended", sessionId: session.sessionId });
     } finally {
       this.sessions.delete(clientId);
     }
+  }
+
+  private async routeTranscriptAndRespond(session: StreamSession, transcript: string): Promise<ActionResult> {
+    const candidate = intentParser.feed(transcript);
+    const appEntities = candidate.entities.filter((entity) =>
+      /^(safari|chrome|finder|notes|reminders|messages|mail|calendar|photos|camera|settings|facetime|music|clock|discord|slack|whatsapp|telegram|spotify|youtube|zalo)$/i.test(entity),
+    );
+
+    const result = await voiceCommandRouter.route({
+      userId: session.userId ?? "anonymous",
+      sessionId: session.sessionId,
+      transcript,
+      intent: candidate.label,
+      entities: {
+        text: [transcript],
+        value: candidate.entities,
+        ...(appEntities.length > 0 ? { app: appEntities } : {}),
+      },
+      language: /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]/i.test(transcript)
+        ? "vi"
+        : "en",
+      conversationContext: [],
+    });
+
+    session.send({
+      type: "voice.command.result",
+      sessionId: session.sessionId,
+      intent: candidate.label,
+      success: result.success,
+      message: result.message,
+      action: result.action,
+      data: result.data,
+    });
+
+    if (session.wantTts) {
+      await this.synthesizeAndSend(session, result.tts ?? result.message);
+    }
+
+    return result;
   }
 
   /**

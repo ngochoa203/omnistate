@@ -238,7 +238,7 @@ function parseDetectResponse(
   }
 }
 
-function parseVerifyResponse(
+export function parseVerifyResponse(
   response: Anthropic.Message
 ): VerifyResult {
   const text = response.content
@@ -246,26 +246,24 @@ function parseVerifyResponse(
     .map((b) => b.text)
     .join("");
 
-  // Guard: if text looks like a plain confirmation (success message, emoji, no JSON),
-  // treat it as verification PASSED — the LLM is confirming the action succeeded.
-  const trimmed = text.trim().toLowerCase();
+  // Verification must be explicit and structured. Plain text confirmations are
+  // too permissive and can report false success for UI actions.
   if (!text.includes("{") && !text.includes("[")) {
-    // No JSON structure detected — check for success signals
-    const successSignals = [
-      "success", "passed", "done", "completed", "opened", "đã", "thành", "mở",
-      "clicked", "show", "visible", "active", "working", "ok", "✓", "✅"
-    ];
-    if (successSignals.some((signal) => trimmed.includes(signal))) {
-      return { passed: true, confidence: 0.7, description: text.slice(0, 200) };
-    }
-    // Text-only response but no success signals — low confidence but not a failure
-    return { passed: false, confidence: 0.3, description: text.slice(0, 200) };
+    return {
+      passed: false,
+      confidence: 0.1,
+      description: `Unstructured verification response: ${text.slice(0, 200)}`,
+    };
   }
 
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return { passed: false, confidence: 0.3, description: text.slice(0, 200) };
+      return {
+        passed: false,
+        confidence: 0.1,
+        description: `Invalid verification JSON: ${text.slice(0, 200)}`,
+      };
     }
 
     const parsed = JSON.parse(jsonMatch[0]) as {
@@ -280,9 +278,11 @@ function parseVerifyResponse(
       description: parsed.description ?? text.slice(0, 200),
     };
   } catch {
-    const lower = text.toLowerCase();
-    const passed = lower.includes("yes") || lower.includes("passed") || lower.includes("matches");
-    return { passed, confidence: 0.4, description: text.slice(0, 200) };
+    return {
+      passed: false,
+      confidence: 0.1,
+      description: `Invalid verification JSON: ${text.slice(0, 200)}`,
+    };
   }
 }
 

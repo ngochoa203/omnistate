@@ -21,7 +21,7 @@ export * as HybridTooling from "./hybrid/tooling.js";
 
 // ─── Daemon entry point ───────────────────────────────────────────────────────
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
 import { loadConfig } from "./config/loader.js";
@@ -176,6 +176,11 @@ export async function startGateway(): Promise<void> {
 
   // 5. Start gateway
   gateway.start();
+
+  // Write PID so e2e-setup.mjs can verify ownership on the ports.
+  const PID_FILE = ".gateway.pid";
+  writeFileSync(PID_FILE, String(process.pid), "utf-8");
+
   logger.info(
     `[OmniState] Daemon started — pid=${process.pid} port=${config.gateway.port}`
   );

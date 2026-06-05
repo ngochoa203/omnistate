@@ -1,9 +1,9 @@
 /**
  * E2E tests for the Orchestrator.
  *
- * - Deep-layer tools (shell.exec, system.info) run against the real OS.
+ * - Read-only deep-layer tools (system.info, process.list) run against the real OS.
  * - Surface-layer tools are not tested here (require native bindings).
- * - Unknown tools fail gracefully.
+ * - Runtime-gated tools fail honestly before execution.
  */
 
 import { describe, it, expect } from "vitest";
@@ -42,7 +42,7 @@ function makeDeepNode(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("Orchestrator.executePlan()", () => {
-  it("single shell.exec node succeeds with real shell output", async () => {
+  it("runtime-gates shell.exec by default", async () => {
     const orch = new Orchestrator();
     const plan = makePlan([
       makeDeepNode("step1", "shell.exec", { command: "echo hello-orchestrator" }),
@@ -50,23 +50,21 @@ describe("Orchestrator.executePlan()", () => {
 
     const result = await orch.executePlan(plan);
 
-    expect(result.status).toBe("complete");
-    expect(result.completedSteps).toBe(1);
-    expect(result.totalSteps).toBe(1);
-    expect(result.error).toBeUndefined();
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("flagged and blocked by default");
+    expect(result.stepResults?.[0]?.verification?.status).toBe("unsupported");
   });
 
-  it("shell.exec node captures output with trailing newline", async () => {
+  it("runtime-gates non-default Wi-Fi security capabilities before execution", async () => {
     const orch = new Orchestrator();
-
-    // We verify via the plan result — the step data isn't returned in
-    // ExecutionResult, but we confirm completion and no error.
     const plan = makePlan([
-      makeDeepNode("echo", "shell.exec", { command: "echo omnistate" }),
+      makeDeepNode("wifi", "wifi.capture.handshake", { iface: "en0", bssid: "00:11:22:33:44:55" }),
     ]);
 
     const result = await orch.executePlan(plan);
-    expect(result.status).toBe("complete");
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("flagged and blocked by default");
+    expect(result.stepResults?.[0]?.verification?.status).toBe("unsupported");
   });
 
   it("system.info node returns system info data", async () => {
@@ -105,19 +103,19 @@ describe("Orchestrator.executePlan()", () => {
   it("taskId in result matches the plan's taskId", async () => {
     const orch = new Orchestrator();
     const plan = makePlan([
-      makeDeepNode("step1", "shell.exec", { command: "true" }),
+      makeDeepNode("step1", "system.info"),
     ]);
 
     const result = await orch.executePlan(plan);
     expect(result.taskId).toBe(plan.taskId);
   });
 
-  it("sequential nodes execute in order (dependency chain)", async () => {
+  it("sequential read-only nodes execute in order (dependency chain)", async () => {
     const orch = new Orchestrator();
 
-    const node1 = makeDeepNode("first", "shell.exec", { command: "echo first" });
+    const node1 = makeDeepNode("first", "system.info");
     const node2: StateNode = {
-      ...makeDeepNode("second", "shell.exec", { command: "echo second" }),
+      ...makeDeepNode("second", "process.list"),
       dependencies: ["first"],
     };
 

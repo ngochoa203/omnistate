@@ -1,0 +1,656 @@
+import type { TaskCapabilityRef } from "../gateway/protocol.js";
+import type { CapabilityRiskTier, CapabilityStatus } from "@omnistate/shared";
+
+export interface RuntimeCapabilityGate {
+  status: CapabilityStatus;
+  riskTier: CapabilityRiskTier;
+  allowedByDefault: boolean;
+  requiresPrivilege?: boolean;
+  requiresConfirmation?: boolean;
+}
+
+const CAPABILITY_REFS: Record<string, TaskCapabilityRef> = {
+  // ─── App Lifecycle ─────────────────────────────────────────────────────────
+  "app.launch": {
+    capabilityId: "app.launch",
+    label: "Launch Or Activate App",
+    version: "1.0.0",
+    tool: "app.launch",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "app.activate": {
+    capabilityId: "app.activate",
+    label: "Activate Existing App (Bring to Front)",
+    version: "1.0.0",
+    tool: "app.activate",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "app.quit": {
+    capabilityId: "app.quit",
+    label: "Quit App",
+    version: "1.0.0",
+    tool: "app.quit",
+    status: "implemented",
+    riskTier: "destructive",
+  },
+  "app.script": {
+    capabilityId: "app.script",
+    label: "Browser/App AppleScript Control",
+    version: "1.0.0",
+    tool: "app.script",
+    status: "implemented",
+    riskTier: "system-sensitive",
+  },
+
+  // ─── Browser — Tab Management ─────────────────────────────────────────────
+  "browser.open": {
+    capabilityId: "browser.open",
+    label: "Open Browser URL",
+    version: "1.0.0",
+    tool: "browser.open",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.newTab": {
+    capabilityId: "browser.newTab",
+    label: "Create Browser Tab",
+    version: "1.0.0",
+    tool: "browser.newTab",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.listTabs": {
+    capabilityId: "browser.listTabs",
+    label: "List Open Tabs",
+    version: "1.0.0",
+    tool: "browser.listTabs",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getActiveTab": {
+    capabilityId: "browser.getActiveTab",
+    label: "Get Active Tab Metadata",
+    version: "1.0.0",
+    tool: "browser.getActiveTab",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.switchTab": {
+    capabilityId: "browser.switchTab",
+    label: "Switch to Tab by Index",
+    version: "1.0.0",
+    tool: "browser.switchTab",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.closeTab": {
+    capabilityId: "browser.closeTab",
+    label: "Close Browser Tab",
+    version: "1.0.0",
+    tool: "browser.closeTab",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.reloadTab": {
+    capabilityId: "browser.reloadTab",
+    label: "Reload Active Tab",
+    version: "1.0.0",
+    tool: "browser.reloadTab",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.duplicateTab": {
+    capabilityId: "browser.duplicateTab",
+    label: "Duplicate Active Tab",
+    version: "1.0.0",
+    tool: "browser.duplicateTab",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+
+  // ─── Browser — Navigation ──────────────────────────────────────────────────
+  "browser.navigateTo": {
+    capabilityId: "browser.navigateTo",
+    label: "Navigate to URL in Active Tab",
+    version: "1.0.0",
+    tool: "browser.navigateTo",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.goBack": {
+    capabilityId: "browser.goBack",
+    label: "Navigate Back in Tab History",
+    version: "1.0.0",
+    tool: "browser.goBack",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.goForward": {
+    capabilityId: "browser.goForward",
+    label: "Navigate Forward in Tab History",
+    version: "1.0.0",
+    tool: "browser.goForward",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.getUrl": {
+    capabilityId: "browser.getUrl",
+    label: "Get Active Tab URL",
+    version: "1.0.0",
+    tool: "browser.getUrl",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getTitle": {
+    capabilityId: "browser.getTitle",
+    label: "Get Active Tab Title",
+    version: "1.0.0",
+    tool: "browser.getTitle",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getPageSource": {
+    capabilityId: "browser.getPageSource",
+    label: "Get Page HTML Source",
+    version: "1.0.0",
+    tool: "browser.getPageSource",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.executeJs": {
+    capabilityId: "browser.executeJs",
+    label: "Execute JavaScript in Browser",
+    version: "1.0.0",
+    tool: "browser.executeJs",
+    status: "implemented",
+    riskTier: "system-sensitive",
+  },
+
+  // ─── Browser — DOM / Element Interaction ──────────────────────────────────
+  "browser.querySelector": {
+    capabilityId: "browser.querySelector",
+    label: "Query Single DOM Element",
+    version: "1.0.0",
+    tool: "browser.querySelector",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.querySelectorAll": {
+    capabilityId: "browser.querySelectorAll",
+    label: "Query All DOM Elements",
+    version: "1.0.0",
+    tool: "browser.querySelectorAll",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.fillForm": {
+    capabilityId: "browser.fillForm",
+    label: "Fill Form Fields via JavaScript",
+    version: "1.0.0",
+    tool: "browser.fillForm",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.fillInput": {
+    capabilityId: "browser.fillInput",
+    label: "Fill Single Input Field",
+    version: "1.0.0",
+    tool: "browser.fillInput",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.clickElement": {
+    capabilityId: "browser.clickElement",
+    label: "Click DOM Element via JavaScript",
+    version: "1.0.0",
+    tool: "browser.clickElement",
+    status: "implemented",
+    riskTier: "system-sensitive",
+  },
+  "browser.submitForm": {
+    capabilityId: "browser.submitForm",
+    label: "Submit Form",
+    version: "1.0.0",
+    tool: "browser.submitForm",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.selectOption": {
+    capabilityId: "browser.selectOption",
+    label: "Select Option in Dropdown",
+    version: "1.0.0",
+    tool: "browser.selectOption",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.getElementText": {
+    capabilityId: "browser.getElementText",
+    label: "Get Element Text Content",
+    version: "1.0.0",
+    tool: "browser.getElementText",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getElementAttribute": {
+    capabilityId: "browser.getElementAttribute",
+    label: "Get Element Attribute Value",
+    version: "1.0.0",
+    tool: "browser.getElementAttribute",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+
+  // ─── Browser — Storage / Cookies ──────────────────────────────────────────
+  "browser.clearCookies": {
+    capabilityId: "browser.clearCookies",
+    label: "Clear Browser Cookies",
+    version: "1.0.0",
+    tool: "browser.clearCookies",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.getCookies": {
+    capabilityId: "browser.getCookies",
+    label: "Get Browser Cookies (Non-HttpOnly)",
+    version: "1.0.0",
+    tool: "browser.getCookies",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getLocalStorage": {
+    capabilityId: "browser.getLocalStorage",
+    label: "Get localStorage Value(s)",
+    version: "1.0.0",
+    tool: "browser.getLocalStorage",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.setLocalStorage": {
+    capabilityId: "browser.setLocalStorage",
+    label: "Set localStorage Value",
+    version: "1.0.0",
+    tool: "browser.setLocalStorage",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+
+  // ─── Browser — Screenshot / PDF ───────────────────────────────────────────
+  "browser.screenshot": {
+    capabilityId: "browser.screenshot",
+    label: "Capture Browser Screenshot",
+    version: "1.0.0",
+    tool: "browser.screenshot",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+  "browser.savePdf": {
+    capabilityId: "browser.savePdf",
+    label: "Save Page as PDF",
+    version: "1.0.0",
+    tool: "browser.savePdf",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+
+  // ─── Browser — Headless ────────────────────────────────────────────────────
+  "browser.startHeadless": {
+    capabilityId: "browser.startHeadless",
+    label: "Start Headless Chrome/Chromium",
+    version: "1.0.0",
+    tool: "browser.startHeadless",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+  "browser.stopHeadless": {
+    capabilityId: "browser.stopHeadless",
+    label: "Stop Headless Browser",
+    version: "1.0.0",
+    tool: "browser.stopHeadless",
+    status: "experimental",
+    riskTier: "destructive",
+  },
+  "browser.isHeadlessRunning": {
+    capabilityId: "browser.isHeadlessRunning",
+    label: "Check Headless Browser Status",
+    version: "1.0.0",
+    tool: "browser.isHeadlessRunning",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+  "browser.executeInHeadless": {
+    capabilityId: "browser.executeInHeadless",
+    label: "Execute Script in Headless Browser via CDP",
+    version: "1.0.0",
+    tool: "browser.executeInHeadless",
+    status: "experimental",
+    riskTier: "system-sensitive",
+  },
+
+  // ─── Browser — Advanced Tab ───────────────────────────────────────────────
+  "browser.pinTab": {
+    capabilityId: "browser.pinTab",
+    label: "Pin Tab",
+    version: "1.0.0",
+    tool: "browser.pinTab",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+  "browser.muteTab": {
+    capabilityId: "browser.muteTab",
+    label: "Mute Tab Audio",
+    version: "1.0.0",
+    tool: "browser.muteTab",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+  "browser.unmuteTab": {
+    capabilityId: "browser.unmuteTab",
+    label: "Unmute Tab Audio",
+    version: "1.0.0",
+    tool: "browser.unmuteTab",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+  "browser.getTabMemory": {
+    capabilityId: "browser.getTabMemory",
+    label: "Get Per-Tab Memory Estimates",
+    version: "1.0.0",
+    tool: "browser.getTabMemory",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+
+  // ─── Browser — Downloads ────────────────────────────────────────────────────
+  "browser.getDownloads": {
+    capabilityId: "browser.getDownloads",
+    label: "Get Browser Download History",
+    version: "1.0.0",
+    tool: "browser.getDownloads",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+  "browser.clearDownloads": {
+    capabilityId: "browser.clearDownloads",
+    label: "Clear Browser Download History",
+    version: "1.0.0",
+    tool: "browser.clearDownloads",
+    status: "experimental",
+    riskTier: "destructive",
+  },
+  "browser.getDownloadDirectory": {
+    capabilityId: "browser.getDownloadDirectory",
+    label: "Get Browser Download Directory",
+    version: "1.0.0",
+    tool: "browser.getDownloadDirectory",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+
+  // ─── Browser — Bookmarks ──────────────────────────────────────────────────
+  "browser.getBookmarks": {
+    capabilityId: "browser.getBookmarks",
+    label: "Get Browser Bookmarks",
+    version: "1.0.0",
+    tool: "browser.getBookmarks",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.addBookmark": {
+    capabilityId: "browser.addBookmark",
+    label: "Add Bookmark",
+    version: "1.0.0",
+    tool: "browser.addBookmark",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "browser.searchBookmarks": {
+    capabilityId: "browser.searchBookmarks",
+    label: "Search Bookmarks",
+    version: "1.0.0",
+    tool: "browser.searchBookmarks",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.bookmark": {
+    capabilityId: "browser.bookmark",
+    label: "Bookmark Current Tab",
+    version: "1.0.0",
+    tool: "browser.bookmark",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+
+  // ─── Browser — History / Performance ──────────────────────────────────────
+  "browser.getHistory": {
+    capabilityId: "browser.getHistory",
+    label: "Get Browser History",
+    version: "1.0.0",
+    tool: "browser.getHistory",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getPageLoadTime": {
+    capabilityId: "browser.getPageLoadTime",
+    label: "Get Page Load Timing Metrics",
+    version: "1.0.0",
+    tool: "browser.getPageLoadTime",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.getNetworkRequests": {
+    capabilityId: "browser.getNetworkRequests",
+    label: "Get Resource Timing Entries",
+    version: "1.0.0",
+    tool: "browser.getNetworkRequests",
+    status: "implemented",
+    riskTier: "read-only",
+  },
+  "browser.blockUrls": {
+    capabilityId: "browser.blockUrls",
+    label: "Block URL Patterns via CDP (Headless)",
+    version: "1.0.0",
+    tool: "browser.blockUrls",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+
+  // ─── Browser — Special / High-Level ───────────────────────────────────────
+  "browser.scrape": {
+    capabilityId: "browser.scrape",
+    label: "Scrape Page Elements",
+    version: "1.0.0",
+    tool: "browser.scrape",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+  "browser.clickFirstVideo": {
+    capabilityId: "browser.clickFirstVideo",
+    label: "Open First YouTube Video",
+    version: "1.0.0",
+    tool: "browser.clickFirstVideo",
+    status: "experimental",
+    riskTier: "reversible-write",
+  },
+
+  // ─── UI Surface Primitives ─────────────────────────────────────────────────
+  "ui.click": {
+    capabilityId: "ui.click",
+    label: "Pointer Click",
+    version: "1.0.0",
+    tool: "ui.click",
+    status: "implemented",
+    riskTier: "system-sensitive",
+  },
+  "ui.type": {
+    capabilityId: "ui.type",
+    label: "Type Text",
+    version: "1.0.0",
+    tool: "ui.type",
+    status: "implemented",
+    riskTier: "reversible-write",
+  },
+  "ui.key": {
+    capabilityId: "ui.key",
+    label: "Keyboard Shortcut",
+    version: "1.0.0",
+    tool: "ui.key",
+    status: "implemented",
+    riskTier: "system-sensitive",
+  },
+
+  // ─── System ───────────────────────────────────────────────────────────────
+  "shell.exec": {
+    capabilityId: "shell.exec",
+    label: "Shell Execution",
+    version: "1.0.0",
+    tool: "shell.exec",
+    status: "flagged",
+    riskTier: "destructive",
+  },
+  "unsupported.capability": {
+    capabilityId: "unsupported.capability",
+    label: "Honest Unsupported Capability",
+    version: "1.0.0",
+    tool: "unsupported.capability",
+    status: "unsupported",
+    riskTier: "read-only",
+  },
+  "verify.screenshot": {
+    capabilityId: "verify.screenshot",
+    label: "Screenshot Verification",
+    version: "1.0.0",
+    tool: "verify.screenshot",
+    status: "experimental",
+    riskTier: "read-only",
+  },
+};
+
+const RUNTIME_CAPABILITY_GATES: Record<string, RuntimeCapabilityGate> = {
+  "shell.exec": {
+    status: "flagged",
+    riskTier: "destructive",
+    allowedByDefault: false,
+  },
+  "kernel.sysctl.set": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "kernel.memory.purge": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "kernel.launchctl.load": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "kernel.launchctl.unload": {
+    status: "flagged",
+    riskTier: "destructive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "kernel.launchctl.kickstart": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "kernel.trace.syscalls": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.deep.scan": {
+    status: "experimental",
+    riskTier: "read-only",
+    allowedByDefault: false,
+  },
+  "wifi.monitor.start": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.monitor.stop": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+  },
+  "wifi.channel.set": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.capture.handshake": {
+    status: "flagged",
+    riskTier: "destructive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.tools.install": {
+    status: "flagged",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.deauth": {
+    status: "experimental",
+    riskTier: "destructive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "wifi.crack.handshake": {
+    status: "experimental",
+    riskTier: "destructive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "network.capture": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+    requiresPrivilege: true,
+    requiresConfirmation: true,
+  },
+  "network.scan.hosts": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+  },
+  "network.scan.ports": {
+    status: "experimental",
+    riskTier: "system-sensitive",
+    allowedByDefault: false,
+  },
+};
+
+export function getGatewayCapabilityRef(tool: string): TaskCapabilityRef | undefined {
+  return CAPABILITY_REFS[tool];
+}
+
+export function getRuntimeCapabilityGate(tool: string): RuntimeCapabilityGate | undefined {
+  return RUNTIME_CAPABILITY_GATES[tool];
+}

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { childLogger } from "../utils/logger.js";
+import { classifySemanticIntent, rankSemanticIntents } from "./semantic-intent.js";
 
 const log = childLogger("intent-parser");
 
@@ -223,6 +224,11 @@ function classifyIntent(text: string, partial: boolean): IntentCandidate {
     return { label: "unknown", confidence: 0, entities: [], partial };
   }
 
+  const semanticResult = classifySemanticIntent(text, partial);
+  if (semanticResult.label !== "unknown" && semanticResult.confidence >= 0.58) {
+    return semanticResult;
+  }
+
   const normalizedText = text.toLowerCase().trim();
   const matchedRules: Array<{ label: IntentLabel; keywords: string[]; matchCount: number }> = [];
 
@@ -279,12 +285,18 @@ function classifyIntent(text: string, partial: boolean): IntentCandidate {
     confidence *= 0.7;
   }
 
-  return {
+  const keywordResult = {
     label: bestMatch.label,
     confidence: Math.max(0.1, Math.min(1.0, confidence)),
     entities: extractEntities(text),
     partial,
   };
+
+  if (semanticResult.label !== "unknown" && semanticResult.confidence >= keywordResult.confidence - 0.08) {
+    return semanticResult;
+  }
+
+  return keywordResult;
 }
 
 class IntentParserImpl extends EventEmitter implements IntentParser {
@@ -311,6 +323,15 @@ class IntentParserImpl extends EventEmitter implements IntentParser {
   feedMultiple(text: string, maxCandidates = 3): IntentCandidate[] {
     if (!text || text.trim().length === 0) {
       return [{ label: "unknown", confidence: 0, entities: [], partial: false }];
+    }
+
+    const semanticCandidates = rankSemanticIntents(text, true, maxCandidates);
+    if (semanticCandidates[0]?.label !== "unknown" && semanticCandidates[0].confidence >= 0.58) {
+      if (!this.currentIntent || semanticCandidates[0]!.confidence > this.currentIntent.confidence) {
+        this.currentIntent = semanticCandidates[0]!;
+      }
+      this.history.push(...semanticCandidates);
+      return semanticCandidates;
     }
 
     const normalizedText = text.toLowerCase().trim();

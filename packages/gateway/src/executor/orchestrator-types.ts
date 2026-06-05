@@ -1,4 +1,5 @@
 import type { ExecutionLayer } from "../types/task.js";
+import type { VerificationResult } from "@omnistate/shared";
 
 export interface ExecutionError {
   code: string;
@@ -15,6 +16,7 @@ export interface StepResult {
   durationMs: number;
   data?: Record<string, unknown>;
   error?: string;
+  verification?: VerificationResult;
 }
 
 export interface ExecutionResult {
@@ -24,4 +26,5 @@ export interface ExecutionResult {
   totalSteps: number;
   error?: string;
   stepResults?: StepResult[];
+  verificationSummary?: VerificationResult;
 }

@@ -45,7 +45,7 @@ export interface OpenAITool {
 // Seed tool definitions (Anthropic format)
 // ---------------------------------------------------------------------------
 
-export const TOOLS: AnthropicTool[] = [
+export const ALL_TOOLS: AnthropicTool[] = [
   {
     name: "timer.set",
     description: "Set a countdown timer for a specified duration.",
@@ -451,6 +451,22 @@ export const TOOLS: AnthropicTool[] = [
     }
   },
 ];
+
+const QUARANTINED_MAINLINE_TOOLS = new Set<string>([
+  "wifi.monitor.start",
+  "wifi.monitor.stop",
+  "network.capture",
+  "network.scan.hosts",
+  "network.scan.ports",
+  "wifi.deep.scan",
+  "wifi.channel.set",
+  "wifi.capture.handshake",
+  "wifi.tools.install",
+  "wifi.deauth",
+  "wifi.crack.handshake",
+]);
+
+export const TOOLS: AnthropicTool[] = ALL_TOOLS.filter((tool) => !QUARANTINED_MAINLINE_TOOLS.has(tool.name));
 
 // ---------------------------------------------------------------------------
 // Adapter: Anthropic -> OpenAI function-calling format

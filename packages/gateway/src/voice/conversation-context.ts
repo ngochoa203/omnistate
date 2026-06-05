@@ -58,8 +58,12 @@ class ConversationContextImpl extends EventEmitter implements ConversationContex
 
   constructor() {
     super();
-    this.maxTurns = parseInt(process.env.MAX_CONTEXT_TURNS ?? "20", 10);
-    if (isNaN(this.maxTurns) || this.maxTurns < 1) this.maxTurns = 20;
+    this.maxTurns = this.resolveMaxTurns();
+  }
+
+  private resolveMaxTurns(): number {
+    const parsed = parseInt(process.env.MAX_CONTEXT_TURNS ?? String(this.maxTurns || 20), 10);
+    return Number.isNaN(parsed) || parsed < 1 ? 20 : parsed;
   }
 
   private static normalizeText(text: string): string {
@@ -131,6 +135,7 @@ class ConversationContextImpl extends EventEmitter implements ConversationContex
     this.turns.push(turn);
 
     // Maintain rolling window
+    this.maxTurns = this.resolveMaxTurns();
     if (this.turns.length > this.maxTurns) {
       this.turns = this.turns.slice(-this.maxTurns);
     }
@@ -146,6 +151,10 @@ class ConversationContextImpl extends EventEmitter implements ConversationContex
     }
 
     // Auto-detect conversation state transitions
+    if (intent && this.state === ConversationState.INITIAL) {
+      this.state = ConversationState.IN_PROGRESS;
+    }
+
     if (intent === "question" || intent === "command") {
       // Check if asking for confirmation
       if (/\b(có|không|navigate|confirm|đồng ý|thực hiện)\b/i.test(text)) {

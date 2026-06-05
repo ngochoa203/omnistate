@@ -288,10 +288,10 @@ async function main() {
   }
   gatewayReady = true;
 
-  log("Gateway API and WS are ready. Starting web dev server on fixed port 5175...");
+  log("Gateway API and WS are ready. Starting web dev server on fixed port 5173...");
   web = spawn(
     "pnpm",
-    ["--dir", "packages/web", "dev", "--port", "5175", "--strictPort"],
+    ["--dir", "packages/web", "dev", "--port", "5173", "--strictPort"],
     {
       cwd: repoRoot,
       stdio: "inherit",
@@ -306,7 +306,7 @@ async function main() {
       webRetries++;
       if (webRetries < MAX_WEB_RETRIES) {
         log(`Web process exited with code ${code}. Retrying (${webRetries}/${MAX_WEB_RETRIES})...`);
-        web = spawn("pnpm", ["--dir", "packages/web", "dev", "--port", "5175", "--strictPort"], {
+        web = spawn("pnpm", ["--dir", "packages/web", "dev", "--port", "5173", "--strictPort"], {
           cwd: repoRoot,
           stdio: "inherit",
           env: runtimeEnv,
@@ -320,7 +320,7 @@ async function main() {
     }
   });
 
-  log("Run all ready: web http://localhost:5175 · gateway ws://127.0.0.1:19800");
+  log("Run all ready: web http://localhost:5173 · gateway ws://127.0.0.1:19800");
 }
 
 main().catch((err) => {

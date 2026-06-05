@@ -761,17 +761,16 @@ export async function generateScript(
       throw new Error(`Script generation failed: ${String(err)}`);
     }
   } else {
-    // Try to map description to a known quick action before falling back to TODO stubs.
+    // Only allow vetted quick actions without an LLM. Emitting TODO stubs makes
+    // product paths look successful while doing nothing.
     const actionKey = description.trim().toLowerCase().replace(/\s+/g, "-");
     if (actionKey in QUICK_ACTIONS) {
       const entry = QUICK_ACTIONS[actionKey];
       code = entry.code;
-    } else if (language === "bash") {
-      const safeDesc = description.replace(/["'`$\n\r]/g, ' ').slice(0, 200);
-      code = `#!/bin/bash\n# ${safeDesc}\necho "TODO: implement stub"`;
     } else {
-      const safeDesc = description.replace(/["'`$\n\r]/g, ' ').slice(0, 200);
-      code = `# ${safeDesc}\nprint("TODO: implement")`;
+      throw new Error(
+        `Script generation requires an LLM or a mapped quick action: ${description.slice(0, 120)}`
+      );
     }
   }
 

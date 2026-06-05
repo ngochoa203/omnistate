@@ -23,6 +23,7 @@ export type VoiceStateChangeCallback = (state: VoiceState, prevState: VoiceState
 
 export interface VoiceOrchestratorOptions {
   wakeManager: WakeManager;
+  defaultUserId?: string;
   verificationThreshold?: number;
   sttLanguage?: string;
   ttsLanguage?: "vi" | "en";
@@ -45,6 +46,7 @@ const DEFAULT_RECOVERY: RecoveryConfig = {
 export class VoiceOrchestrator extends EventEmitter {
   private state: VoiceState = VoiceState.IDLE;
   private userId: string | null = null;
+  private defaultUserId: string | null = null;
   private sessionId: string | null = null;
   private recoveryCount = 0;
   private aborted = false;
@@ -60,6 +62,7 @@ export class VoiceOrchestrator extends EventEmitter {
   constructor(options: VoiceOrchestratorOptions) {
     super();
     this.wakeManager = options.wakeManager;
+    this.defaultUserId = options.defaultUserId ?? null;
     this.verificationThreshold = options.verificationThreshold ?? 0.7;
     this.sttLanguage = options.sttLanguage ?? "vi";
     this.ttsLanguage = options.ttsLanguage ?? "vi";
@@ -82,6 +85,14 @@ export class VoiceOrchestrator extends EventEmitter {
 
     logger.info({ userId, sessionId: this.sessionId }, "[VoiceOrchestrator] Starting session");
     this.setState(VoiceState.LISTENING);
+  }
+
+  setDefaultUserId(userId: string): void {
+    this.defaultUserId = userId;
+  }
+
+  getSessionId(): string | null {
+    return this.sessionId;
   }
 
   stopSession(): void {
@@ -314,10 +325,16 @@ export class VoiceOrchestrator extends EventEmitter {
    * Called when the wake manager detects a wake phrase.
    * Automatically starts a new session if not already active.
    */
-  handleWakeDetected(): void {
-    if (this.state === VoiceState.IDLE && this.userId) {
+  async handleWakeDetected(userId?: string): Promise<void> {
+    const effectiveUserId = userId ?? this.userId ?? this.defaultUserId;
+    if (!effectiveUserId) {
+      logger.warn("[VoiceOrchestrator] Wake detected but no user ID is available");
+      return;
+    }
+
+    if (this.state === VoiceState.IDLE) {
       logger.info("[VoiceOrchestrator] Wake detected, starting session");
-      this.setState(VoiceState.LISTENING);
+      await this.startSession(effectiveUserId);
     }
   }
 

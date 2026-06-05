@@ -25,6 +25,15 @@ import { execAsync, execFileAsync, isAllowedFilePath, mimeForPath, sniffAudioFor
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Gateway = any;
 
+function decodeBase64AudioChunk(value: unknown): Buffer | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length % 4 === 1) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) return null;
+  const decoded = Buffer.from(normalized, "base64");
+  return decoded.length > 0 ? decoded : null;
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // handleSiriBridgeRequest — HTTP handler for Siri bridge and REST endpoints
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1094,8 +1103,14 @@ export async function handleMessage(
           taskId,
           result: {
             goal: msg.goal,
+            mode: "command",
+            stepsCompleted: 0,
+            intentType: "command-mode",
+            confidence: 1,
             command: true,
             output: commandResult.output,
+            stepData: [],
+            claimStatus: "unverified",
             ...(commandResult.data ? { commandData: commandResult.data } : {}),
           },
         } as ServerMessage);
@@ -1133,10 +1148,15 @@ export async function handleMessage(
             result: {
               goal: msg.goal,
               mode: "chat",
+              stepsCompleted: 0,
+              intentType: "chat-mode",
+              confidence: 1,
               route: requestedMode,
               providerId: llm.providerId,
               model: llm.model,
               output: llm.text,
+              stepData: [],
+              claimStatus: "unverified",
               attachmentCount: Array.isArray((msg as { attachments?: TaskAttachment[] }).attachments)
                 ? ((msg as { attachments?: TaskAttachment[] }).attachments?.length ?? 0)
                 : 0,
@@ -1163,9 +1183,14 @@ export async function handleMessage(
             result: {
               goal: msg.goal,
               mode: "chat",
+              stepsCompleted: 0,
+              intentType: "chat-mode",
+              confidence: 0,
               route: requestedMode,
               output: fallback,
               warning: err instanceof Error ? err.message : String(err),
+              stepData: [],
+              claimStatus: "unverified",
             },
           } as ServerMessage);
           incrementSessionUsage();
@@ -1246,6 +1271,23 @@ export async function handleMessage(
     case "voice.stream.start":
     case "voice.stream.stop": {
       gateway.streamManager.handleControlMessage(clientId, msg as any, (serverMsg: any) => {
+        gateway.safeSend(ws, serverMsg as unknown as ServerMessage);
+      });
+      break;
+    }
+
+    case "voice.stream.chunk": {
+      const chunk = decodeBase64AudioChunk((msg as any).chunk ?? (msg as any).audio);
+      if (!chunk) {
+        gateway.safeSend(ws, {
+          type: "voice.stream.error",
+          sessionId: (msg as any).sessionId,
+          error: "Invalid or empty base64 audio chunk",
+          code: "STT_EMPTY_AUDIO",
+        } as unknown as ServerMessage);
+        break;
+      }
+      gateway.streamManager.handleBinaryFrame(clientId, chunk, (serverMsg: any) => {
         gateway.safeSend(ws, serverMsg as unknown as ServerMessage);
       });
       break;

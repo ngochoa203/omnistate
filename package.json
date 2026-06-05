@@ -30,6 +30,12 @@
     "build:native": "cargo build -p omnistate-napi --release && node scripts/build/copy-native.mjs",
     "dev": "pnpm -r --filter @omnistate/gateway dev",
     "test": "pnpm -r test",
+    "test:gateway": "pnpm --filter @omnistate/gateway test",
+    "test:web": "pnpm --filter @omnistate/web test",
+    "test:prompts": "OMNISTATE_REQUIRE_LLM=false pnpm --filter @omnistate/gateway test src/__tests__/user-prompt-regression.test.ts",
+    "test:voice": "pnpm --filter @omnistate/gateway test src/voice/__tests__/advanced-voice.test.ts src/voice/__tests__/audio-ingest.test.ts src/voice/__tests__/edge-tts.test.ts src/voice/__tests__/tts-sanitize.test.ts src/voice/__tests__/tts-stream.test.ts src/voice/__tests__/webrtc-stream.test.ts src/__tests__/voice-stream-routing.test.ts src/__tests__/wake-manager.test.ts",
+    "test:voice:full": "pnpm --filter @omnistate/gateway test src/voice/__tests__ src/__tests__/voice-stream-routing.test.ts src/__tests__/wake-manager.test.ts src/__tests__/voice-pipeline.test.ts",
+    "test:quality": "pnpm lint && pnpm build && pnpm test && pnpm test:e2e",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
     "clean": "pnpm -r clean && cargo clean",
@@ -37,7 +43,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "tsx": "^4.21.0"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0"
