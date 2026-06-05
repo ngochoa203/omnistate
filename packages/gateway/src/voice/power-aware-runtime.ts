@@ -1,7 +1,7 @@
 import type { HealthReport } from "../health/monitor.js";
 import {
   clearTransientVoiceRuntimeOverride,
-  loadLlmRuntimeConfig,
+  loadPersistedLlmRuntimeConfig,
   setTransientVoiceRuntimeOverride,
   type TransientVoiceRuntimeOverride,
   type VoiceRuntimeConfig,
@@ -103,7 +103,7 @@ export class PowerAwareVoiceRuntimeController {
   constructor(deps: PowerAwareVoiceRuntimeControllerDeps) {
     this.clearOverride = deps.clearOverride ?? clearTransientVoiceRuntimeOverride;
     this.getBaseVoiceConfig =
-      deps.getBaseVoiceConfig ?? (() => loadLlmRuntimeConfig().voice);
+      deps.getBaseVoiceConfig ?? (() => loadPersistedLlmRuntimeConfig().voice);
     this.restartWakeListener = deps.restartWakeListener;
     this.setOverride = deps.setOverride ?? setTransientVoiceRuntimeOverride;
   }
@@ -114,6 +114,14 @@ export class PowerAwareVoiceRuntimeController {
 
   handleHealthReport(report: HealthReport): void {
     const nextMode = deriveVoicePowerMode(report);
+    this.applyMode(nextMode);
+  }
+
+  handlePowerMode(mode: VoicePowerMode): void {
+    this.applyMode(mode);
+  }
+
+  private applyMode(nextMode: VoicePowerMode): void {
     if (nextMode === this.currentMode) return;
 
     this.currentMode = nextMode;

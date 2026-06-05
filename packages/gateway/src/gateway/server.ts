@@ -17,6 +17,7 @@ import { getDb } from "../db/database.js";
 import { EventBus } from "../events/event-bus.js";
 import { OSFirehose } from "../events/os-firehose.js";
 import { RuleEngine } from "../events/rule-engine.js";
+import { PowerManager } from "../power/power-manager.js";
 import { EventRepository } from "../events/event-repository.js";
 import { MemoryRepository } from "../memory/memory-repository.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
@@ -59,6 +60,7 @@ export class OmniStateGateway {
   private eventBus: EventBus = new EventBus();
   private firehose: OSFirehose = new OSFirehose(this.eventBus);
   private ruleEngine: RuleEngine = new RuleEngine(this.eventBus);
+  private powerManager: PowerManager = new PowerManager(this.eventBus);
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -156,8 +158,20 @@ export class OmniStateGateway {
     });
     this.triggerEngine.bridgeToEventBus(this.eventBus);
     this.firehose.start();
+    this.powerManager.start();
     this.ruleEngine.start(async (_rule, event) => {
       logger.info({ eventType: event.type }, "[rule-engine] Rule fired");
+    });
+
+    this.eventBus.on("power.state.changed", (event) => {
+      const mode = event.payload.mode;
+      if (
+        mode === "normal" ||
+        mode === "low_power" ||
+        mode === "battery_saver"
+      ) {
+        this.powerAwareVoiceController.handlePowerMode(mode);
+      }
     });
 
     // Broadcast all events to connected WS clients
@@ -190,6 +204,7 @@ export class OmniStateGateway {
     this.wakeManager.stop();
     this.triggerEngine.stop();
     this.firehose.stop();
+    this.powerManager.stop();
     this.ruleEngine.stop();
     if (this.claudeCodeResponder?.isRunning) {
       void this.claudeCodeResponder.stop();

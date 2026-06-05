@@ -11,6 +11,7 @@ class GatewayManager: ObservableObject {
     private var process: Process?
     private var outputPipe: Pipe?
     private var errorPipe: Pipe?
+    private var wakeRecoveryWorkItem: DispatchWorkItem?
     private var restartCount = 0
     private let maxRestarts = 5
     private var stopRequested = false
@@ -318,8 +319,44 @@ class GatewayManager: ObservableObject {
         }
     }
 
+    func handleSystemWillSleep() {
+        wakeRecoveryWorkItem?.cancel()
+        Task { @MainActor in
+            GatewaySocketClient.shared.disconnect()
+        }
+        print("[OmniState] System will sleep — disconnected gateway socket")
+    }
+
+    func handleSystemDidWake() {
+        wakeRecoveryWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+
+            if let proc = self.process, proc.isRunning {
+                Task { @MainActor in
+                    GatewaySocketClient.shared.connect()
+                    GatewaySocketClient.shared.queryRuntimeConfig()
+                }
+                print("[OmniState] System woke — refreshed gateway runtime state")
+                return
+            }
+
+            self.start()
+            Task { @MainActor in
+                GatewaySocketClient.shared.connect()
+                GatewaySocketClient.shared.queryRuntimeConfig()
+            }
+            print("[OmniState] System woke — restarted gateway after sleep")
+        }
+
+        wakeRecoveryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+
     func stop() {
         stopRequested = true
+        wakeRecoveryWorkItem?.cancel()
 
         guard let proc = process, proc.isRunning else {
             DispatchQueue.main.async {

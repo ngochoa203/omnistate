@@ -396,11 +396,11 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
   };
 }
 
-export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
+function loadResolvedRuntimeConfig(applyOverrides: boolean): LlmRuntimeConfig {
   if (!existsSync(CONFIG_PATH)) {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return applyRuntimeOverrides(conf);
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   }
 
   try {
@@ -410,12 +410,20 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
     // writing secrets back into the JSON config file.
     const redacted = pruneSecrets(conf);
     saveLlmRuntimeConfig(redacted);
-    return applyRuntimeOverrides(conf);
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   } catch {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return applyRuntimeOverrides(conf);
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   }
+}
+
+export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
+  return loadResolvedRuntimeConfig(true);
+}
+
+export function loadPersistedLlmRuntimeConfig(): LlmRuntimeConfig {
+  return loadResolvedRuntimeConfig(false);
 }
 
 function applyRuntimeOverrides(conf: LlmRuntimeConfig): LlmRuntimeConfig {
