@@ -1,4 +1,4 @@
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -41,6 +41,38 @@ function getProfileRootDir(): string {
 function decodeBase64Audio(raw: string): Buffer {
   const cleaned = raw.replace(/^data:audio\/[a-zA-Z0-9+.-]+;base64,/, "");
   return Buffer.from(cleaned, "base64");
+}
+
+export function normalizeRtvcPlaybackRate(rate?: number): number {
+  const normalized = Number.isFinite(rate) ? Number(rate) : 1;
+  return Math.max(0.85, Math.min(1.15, Number(normalized.toFixed(2))));
+}
+
+async function applyRtvcPlaybackRate(inputPath: string, rate: number): Promise<string> {
+  if (Math.abs(rate - 1) < 0.01) {
+    return inputPath;
+  }
+
+  const adjustedPath = join(tmpdir(), `omnistate-rtvc-adjusted-${crypto.randomUUID()}.wav`);
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-loglevel",
+        "quiet",
+        "-i",
+        inputPath,
+        "-filter:a",
+        `atempo=${rate.toFixed(2)}`,
+        adjustedPath,
+      ],
+      { timeout: 60_000, maxBuffer: 1024 * 1024 * 8 },
+    );
+    return adjustedPath;
+  } catch {
+    return inputPath;
+  }
 }
 
 function normalizeFormat(raw?: string): "wav" | "webm" | "ogg" | "mp3" {
@@ -131,6 +163,7 @@ export async function synthesizeRtvcSpeech(input: {
   text: string;
   profileId?: string;
   language?: string;
+  rate?: number;
 }): Promise<{
   audio: Buffer;
   contentType: string;
@@ -161,10 +194,20 @@ export async function synthesizeRtvcSpeech(input: {
   }
   await execFileAsync(getPythonExec(), ttsArgs, { timeout: 180_000, maxBuffer: 1024 * 1024 * 8 });
 
-  const audio = await import("node:fs/promises").then((m) => m.readFile(outPath));
-  return {
-    audio,
-    contentType: "audio/wav",
-    speakerPath,
-  };
+  const normalizedRate = normalizeRtvcPlaybackRate(input.rate);
+  const finalOutPath = await applyRtvcPlaybackRate(outPath, normalizedRate);
+
+  try {
+    const audio = await readFile(finalOutPath);
+    return {
+      audio,
+      contentType: "audio/wav",
+      speakerPath,
+    };
+  } finally {
+    await unlink(outPath).catch(() => undefined);
+    if (finalOutPath !== outPath) {
+      await unlink(finalOutPath).catch(() => undefined);
+    }
+  }
 }

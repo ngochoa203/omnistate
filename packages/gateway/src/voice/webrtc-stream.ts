@@ -910,6 +910,7 @@ export class VoiceStreamManager {
       const result = await synthesizeRtvcSpeech({
         text,
         profileId: session.ttsProfileId ?? "default",
+        rate: session.executionPolicy.ttsRate,
       });
       send({
         type: "voice.stream.tts",
