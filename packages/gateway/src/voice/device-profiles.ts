@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { childLogger } from "../utils/logger.js";
 
@@ -67,6 +68,13 @@ export interface DeviceOptimizer {
   supportsFeature(feature: keyof DeviceCapabilities): boolean;
   setPowerMode(mode: "normal" | "low_power" | "battery_saver"): void;
   getAudioProfile(): AudioProfile;
+}
+
+interface MacOsAudioCandidate {
+  name: string;
+  direction: "input" | "output" | "unknown";
+  isDefault: boolean;
+  source: "switchaudiosource" | "system_profiler";
 }
 
 const DEVICE_PROFILES: Record<DeviceType, Omit<DeviceProfile, "deviceName" | "confidence">> = {
@@ -408,6 +416,224 @@ const POWER_MODE_THRESHOLD_ADJUSTMENTS = {
   battery_saver: { speech: 0.1, silence: -0.1 },
 };
 
+function safeExecFile(command: string, args: string[]): string | null {
+  try {
+    return execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function collectNamedAudioRecords(node: unknown, results: Record<string, unknown>[] = []): Record<string, unknown>[] {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      collectNamedAudioRecords(item, results);
+    }
+    return results;
+  }
+
+  if (!node || typeof node !== "object") {
+    return results;
+  }
+
+  const record = node as Record<string, unknown>;
+  if (typeof record["_name"] === "string") {
+    results.push(record);
+  }
+
+  for (const value of Object.values(record)) {
+    collectNamedAudioRecords(value, results);
+  }
+
+  return results;
+}
+
+function dedupeAudioCandidates(candidates: MacOsAudioCandidate[]): MacOsAudioCandidate[] {
+  const seen = new Set<string>();
+  const deduped: MacOsAudioCandidate[] = [];
+
+  for (const candidate of candidates) {
+    const key = `${candidate.direction}:${candidate.name.toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(candidate);
+  }
+
+  return deduped;
+}
+
+export function inferDeviceTypeFromName(name?: string): DeviceType | null {
+  if (!name) {
+    return null;
+  }
+
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("airpods max")) {
+    return "airpods_max";
+  }
+
+  if (normalized.includes("airpods pro")) {
+    return "airpods_pro";
+  }
+
+  if (normalized.includes("airpods")) {
+    return "airpods";
+  }
+
+  if (normalized.includes("homepod")) {
+    return "homepod";
+  }
+
+  if (normalized.includes("apple watch") || normalized.includes("watch")) {
+    return "apple_watch";
+  }
+
+  if (normalized.includes("ipad")) {
+    return "ipad";
+  }
+
+  if (normalized.includes("iphone")) {
+    return "iphone";
+  }
+
+  if (
+    normalized.includes("macbook")
+    || normalized.includes("imac")
+    || normalized.includes("mac mini")
+    || normalized.includes("mac studio")
+    || normalized.includes("studio display")
+    || normalized.includes("built-in")
+    || normalized.includes("internal")
+    || normalized.includes("external headphones")
+    || normalized.includes("display audio")
+  ) {
+    return "macos";
+  }
+
+  return null;
+}
+
+export function parseMacOsAudioCandidatesFromProfiler(raw: string): MacOsAudioCandidate[] {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const audioItems = collectNamedAudioRecords(parsed["SPAudioDataType"]);
+
+    const candidates = audioItems.flatMap((item) => {
+      const name = typeof item["_name"] === "string" ? item["_name"].trim() : "";
+      if (!name) {
+        return [];
+      }
+
+      const isDefaultOutput = item["coreaudio_default_audio_output_device"] === "spaudio_yes";
+      const isDefaultInput = item["coreaudio_default_audio_input_device"] === "spaudio_yes";
+      const direction: MacOsAudioCandidate["direction"] = isDefaultOutput
+        ? "output"
+        : isDefaultInput
+          ? "input"
+          : "unknown";
+
+      return [{
+        name,
+        direction,
+        isDefault: isDefaultOutput || isDefaultInput,
+        source: "system_profiler" as const,
+      }];
+    });
+
+    return dedupeAudioCandidates(candidates);
+  } catch {
+    return [];
+  }
+}
+
+function parseSwitchAudioSourceCurrent(raw: string, direction: "input" | "output"): MacOsAudioCandidate[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((name) => ({
+      name,
+      direction,
+      isDefault: true,
+      source: "switchaudiosource" as const,
+    }));
+}
+
+function detectMacOsAudioDevice():
+  | { deviceType: DeviceType; deviceName?: string; confidence: number }
+  | null {
+  const candidates: MacOsAudioCandidate[] = [];
+
+  const currentOutput = safeExecFile("SwitchAudioSource", ["-c", "-t", "output"]);
+  if (currentOutput) {
+    candidates.push(...parseSwitchAudioSourceCurrent(currentOutput, "output"));
+  }
+
+  const currentInput = safeExecFile("SwitchAudioSource", ["-c", "-t", "input"]);
+  if (currentInput) {
+    candidates.push(...parseSwitchAudioSourceCurrent(currentInput, "input"));
+  }
+
+  const profilerOutput = safeExecFile("system_profiler", ["SPAudioDataType", "-json"]);
+  if (profilerOutput) {
+    candidates.push(...parseMacOsAudioCandidatesFromProfiler(profilerOutput));
+  }
+
+  const orderedCandidates = dedupeAudioCandidates(candidates).sort((left, right) => {
+    const sourceWeight = left.source === "switchaudiosource" ? 2 : 1;
+    const rightSourceWeight = right.source === "switchaudiosource" ? 2 : 1;
+    const defaultWeight = left.isDefault ? 1 : 0;
+    const rightDefaultWeight = right.isDefault ? 1 : 0;
+    const directionWeight = left.direction === "output" ? 1 : 0;
+    const rightDirectionWeight = right.direction === "output" ? 1 : 0;
+
+    return (rightSourceWeight + rightDefaultWeight + rightDirectionWeight)
+      - (sourceWeight + defaultWeight + directionWeight);
+  });
+
+  for (const candidate of orderedCandidates) {
+    const detectedType = inferDeviceTypeFromName(candidate.name);
+    if (!detectedType) {
+      continue;
+    }
+
+    const confidence = candidate.source === "switchaudiosource"
+      ? 0.98
+      : candidate.isDefault
+        ? 0.95
+        : 0.9;
+
+    return {
+      deviceType: detectedType,
+      deviceName: candidate.name,
+      confidence,
+    };
+  }
+
+  const fallbackCandidate = orderedCandidates[0];
+  if (fallbackCandidate) {
+    return {
+      deviceType: "macos",
+      deviceName: fallbackCandidate.name,
+      confidence: fallbackCandidate.source === "switchaudiosource" ? 0.92 : 0.88,
+    };
+  }
+
+  return null;
+}
+
 class DeviceOptimizerImpl extends EventEmitter implements DeviceOptimizer {
   private currentDeviceType: DeviceType = "unknown";
   private currentDeviceName?: string;
@@ -427,20 +653,29 @@ class DeviceOptimizerImpl extends EventEmitter implements DeviceOptimizer {
   }
 
   autoDetect(): DeviceProfile {
-    // Detect based on platform
     const platform = process.platform;
-
     let detectedType: DeviceType = "unknown";
+    let deviceName: string | undefined;
+    let confidence = 0.3;
 
     if (platform === "darwin") {
-      detectedType = "macos";
+      const detected = detectMacOsAudioDevice();
+      if (detected) {
+        detectedType = detected.deviceType;
+        deviceName = detected.deviceName;
+        confidence = detected.confidence;
+      } else {
+        detectedType = "macos";
+        confidence = 0.9;
+      }
     }
 
     this.currentDeviceType = detectedType;
-    this.confidence = detectedType === "macos" ? 0.9 : 0.3;
+    this.currentDeviceName = deviceName;
+    this.confidence = confidence;
 
     const profile = this.getCurrentProfile();
-    log.info({ detectedType, confidence: this.confidence }, "Device auto-detected");
+    log.info({ detectedType, deviceName, confidence: this.confidence }, "Device auto-detected");
     this.emit("deviceAutoDetected", profile);
 
     return profile;
