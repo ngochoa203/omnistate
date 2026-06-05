@@ -1373,7 +1373,15 @@ export async function handleMessage(
         gateway.safeSend(ws, {
           type: "system.info",
           id,
-          data: { battery, wifi, disk, cpu, memory, hostname },
+          data: {
+            battery,
+            wifi,
+            disk,
+            cpu,
+            memory,
+            power: gateway.powerManager?.getState?.() ?? null,
+            hostname,
+          },
         });
       } catch (err: any) {
         gateway.safeSend(ws, {
@@ -1385,6 +1393,7 @@ export async function handleMessage(
             disk: null,
             cpu: null,
             memory: null,
+            power: gateway.powerManager?.getState?.() ?? null,
             hostname: "unknown",
             error: err instanceof Error ? err.message : String(err),
           },

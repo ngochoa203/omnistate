@@ -605,6 +605,15 @@ export interface SystemInfoMessage {
     disk: any;
     cpu: any;
     memory: any;
+    power?: {
+      mode: string;
+      isOnBattery: boolean;
+      isCharging: boolean;
+      chargePercent: number | null;
+      lowPowerModeEnabled: boolean;
+      thermalPressure: string;
+      sampledAt: number;
+    } | null;
     hostname: string;
     error?: string;
   };

@@ -773,6 +773,15 @@ export interface SystemInfoMessage {
     disk: DiskInfo | null;
     cpu: CpuInfo | null;
     memory: MemoryInfo | null;
+    power?: {
+      mode: string;
+      isOnBattery: boolean;
+      isCharging: boolean;
+      chargePercent: number | null;
+      lowPowerModeEnabled: boolean;
+      thermalPressure: string;
+      sampledAt: number;
+    } | null;
     hostname: string;
     error?: string;
   };

@@ -110,6 +110,9 @@ struct NativeSystemInfo: Equatable {
     var hostname: String = "unknown"
     var batteryPercent: Int?
     var batteryCharging: Bool = false
+    var powerMode: String?
+    var lowPowerModeEnabled: Bool = false
+    var thermalPressure: String?
     var wifiSSID: String?
     var wifiConnected: Bool = false
     var wifiIP: String?
@@ -120,6 +123,16 @@ struct NativeSystemInfo: Equatable {
     var cpuLoadAvg: String?
     var memoryTotalMB: Int?
     var memoryFreeMB: Int?
+}
+
+struct NativePowerState: Equatable {
+    let mode: String
+    let isOnBattery: Bool
+    let isCharging: Bool
+    let chargePercent: Int?
+    let lowPowerModeEnabled: Bool
+    let thermalPressure: String
+    let sampledAt: Double
 }
 
 // MARK: - LLM Preflight
@@ -182,6 +195,7 @@ final class GatewaySocketClient: ObservableObject {
     @Published var healthReport: NativeHealthReport?
     // Real system data
     @Published var systemInfo: NativeSystemInfo?
+    @Published var powerState: NativePowerState?
     // LLM preflight
     @Published var llmPreflight: NativeLlmPreflight?
 
@@ -591,6 +605,9 @@ final class GatewaySocketClient: ObservableObject {
         case "runtime.config.report":
             parseRuntimeConfigReport(json)
 
+        case "events.stream":
+            parseEventBusStream(json)
+
         case "gateway.shutdown":
             isConnected = false
             messages.append(NativeChatMessage(role: "system", text: "Gateway is shutting down"))
@@ -707,6 +724,18 @@ final class GatewaySocketClient: ObservableObject {
             info.batteryCharging = battery["charging"] as? Bool ?? false
         }
 
+        if let power = parsePowerState(from: data["power"]) {
+            info.powerMode = power.mode
+            info.lowPowerModeEnabled = power.lowPowerModeEnabled
+            info.thermalPressure = power.thermalPressure
+            if info.batteryPercent == nil {
+                info.batteryPercent = power.chargePercent
+            }
+            info.batteryCharging = power.isCharging
+            applyPowerStateSnapshot(power, replacingSystemInfo: info)
+            return
+        }
+
         if let wifi = data["wifi"] as? [String: Any] {
             info.wifiSSID = wifi["ssid"] as? String
             info.wifiConnected = wifi["connected"] as? Bool ?? false
@@ -729,6 +758,50 @@ final class GatewaySocketClient: ObservableObject {
             info.memoryFreeMB = memory["freeMB"] as? Int
         }
 
+        systemInfo = info
+    }
+
+    private func parseEventBusStream(_ json: [String: Any]) {
+        guard let event = json["event"] as? [String: Any],
+              let eventType = event["type"] as? String,
+              eventType == "power.state.changed"
+        else {
+            return
+        }
+
+        let payload = event["payload"]
+        guard let power = parsePowerState(from: payload) else { return }
+        applyPowerStateSnapshot(power)
+    }
+
+    private func parsePowerState(from raw: Any?) -> NativePowerState? {
+        guard let payload = raw as? [String: Any] else { return nil }
+
+        let sampledAt = (payload["sampledAt"] as? Double)
+            ?? Double(payload["sampledAt"] as? Int ?? 0)
+
+        return NativePowerState(
+            mode: payload["mode"] as? String ?? "normal",
+            isOnBattery: payload["isOnBattery"] as? Bool ?? false,
+            isCharging: payload["isCharging"] as? Bool ?? false,
+            chargePercent: payload["chargePercent"] as? Int,
+            lowPowerModeEnabled: payload["lowPowerModeEnabled"] as? Bool ?? false,
+            thermalPressure: payload["thermalPressure"] as? String ?? "unknown",
+            sampledAt: sampledAt
+        )
+    }
+
+    private func applyPowerStateSnapshot(_ power: NativePowerState, replacingSystemInfo nextSystemInfo: NativeSystemInfo? = nil) {
+        powerState = power
+
+        var info = nextSystemInfo ?? systemInfo ?? NativeSystemInfo()
+        info.powerMode = power.mode
+        info.lowPowerModeEnabled = power.lowPowerModeEnabled
+        info.thermalPressure = power.thermalPressure
+        if info.batteryPercent == nil {
+            info.batteryPercent = power.chargePercent
+        }
+        info.batteryCharging = power.isCharging
         systemInfo = info
     }
 
