@@ -9,6 +9,7 @@ import type { HealthMonitor } from "../health/monitor.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
+import { PowerAwareVoiceRuntimeController } from "../voice/power-aware-runtime.js";
 import { VoiceStreamManager } from "../voice/webrtc-stream.js";
 import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { TriggerEngine } from "../triggers/index.js";
@@ -62,6 +63,9 @@ export class OmniStateGateway {
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
   public monitor: HealthMonitor | null = null; // used by server-handlers
+  private powerAwareVoiceController = new PowerAwareVoiceRuntimeController({
+    restartWakeListener: () => this.startWakeListener(),
+  });
   public startedAt = Date.now(); // used by server-handlers
   private taskHistory: Array<{
     taskId: string;
@@ -106,6 +110,9 @@ export class OmniStateGateway {
   /** Wire in the health monitor for health.query responses. */
   setHealthMonitor(monitor: HealthMonitor): void {
     this.monitor = monitor;
+    monitor.onReport((report) => {
+      this.powerAwareVoiceController.handleHealthReport(report);
+    });
   }
 
   /** Start the WebSocket server. */

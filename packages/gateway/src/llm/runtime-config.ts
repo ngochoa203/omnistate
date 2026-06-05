@@ -78,6 +78,15 @@ export interface VoiceRuntimeConfig {
   };
 }
 
+export interface TransientVoiceRuntimeOverride {
+  whisperLocalModel?: WhisperLocalModel;
+  lowLatency?: boolean;
+  autoExecuteTranscript?: boolean;
+  chunkMs?: number;
+  vad?: Partial<VadConfig>;
+  wake?: Partial<VoiceRuntimeConfig["wake"]>;
+}
+
 export interface SessionMeta {
   id: string;
   name: string;
@@ -109,6 +118,7 @@ export interface LlmRuntimeConfig {
 }
 
 const CONFIG_PATH = resolve(homedir(), ".omnistate/llm.runtime.json");
+let transientVoiceRuntimeOverride: TransientVoiceRuntimeOverride | null = null;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -390,7 +400,7 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
   if (!existsSync(CONFIG_PATH)) {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return conf;
+    return applyRuntimeOverrides(conf);
   }
 
   try {
@@ -400,12 +410,20 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
     // writing secrets back into the JSON config file.
     const redacted = pruneSecrets(conf);
     saveLlmRuntimeConfig(redacted);
-    return conf;
+    return applyRuntimeOverrides(conf);
   } catch {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return conf;
+    return applyRuntimeOverrides(conf);
   }
+}
+
+function applyRuntimeOverrides(conf: LlmRuntimeConfig): LlmRuntimeConfig {
+  if (!transientVoiceRuntimeOverride) return conf;
+  return {
+    ...conf,
+    voice: applyTransientVoiceRuntimeOverride(conf.voice, transientVoiceRuntimeOverride),
+  };
 }
 
 /**
@@ -433,6 +451,41 @@ export function saveLlmRuntimeConfig(config: LlmRuntimeConfig): void {
     mode: 0o600,
   });
   chmodSync(CONFIG_PATH, 0o600);
+}
+
+export function applyTransientVoiceRuntimeOverride(
+  voice: VoiceRuntimeConfig,
+  override: TransientVoiceRuntimeOverride,
+): VoiceRuntimeConfig {
+  return {
+    ...voice,
+    whisperLocalModel: override.whisperLocalModel ?? voice.whisperLocalModel,
+    lowLatency: override.lowLatency ?? voice.lowLatency,
+    autoExecuteTranscript: override.autoExecuteTranscript ?? voice.autoExecuteTranscript,
+    chunkMs: override.chunkMs ?? voice.chunkMs,
+    vad: {
+      ...voice.vad,
+      ...override.vad,
+    },
+    wake: {
+      ...voice.wake,
+      ...override.wake,
+    },
+  };
+}
+
+export function setTransientVoiceRuntimeOverride(
+  override: TransientVoiceRuntimeOverride | null,
+): void {
+  transientVoiceRuntimeOverride = override;
+}
+
+export function clearTransientVoiceRuntimeOverride(): void {
+  transientVoiceRuntimeOverride = null;
+}
+
+export function getTransientVoiceRuntimeOverride(): TransientVoiceRuntimeOverride | null {
+  return transientVoiceRuntimeOverride;
 }
 
 export function setActiveModel(model: string): LlmRuntimeConfig {
