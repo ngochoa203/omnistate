@@ -91,9 +91,16 @@ export function pickVoice(
   );
 }
 
+export function formatEdgeTtsRate(rate?: number): string {
+  const normalized = Number.isFinite(rate) ? Number(rate) : 1;
+  const clamped = Math.max(0.7, Math.min(1.3, normalized));
+  const deltaPercent = Math.round((clamped - 1) * 100);
+  return `${deltaPercent >= 0 ? "+" : ""}${deltaPercent}%`;
+}
+
 export async function synthesize(
   text: string,
-  opts?: { voice?: string; lang?: "vi" | "en"; signal?: AbortSignal },
+  opts?: { voice?: string; lang?: "vi" | "en"; rate?: number; signal?: AbortSignal },
 ): Promise<Buffer> {
   const cleanText = sanitizeForTts(text);
   if (!cleanText) {
@@ -101,6 +108,7 @@ export async function synthesize(
   }
   const lang = opts?.lang ?? detectLanguage(cleanText);
   const voice = opts?.voice ?? pickVoice(lang);
+  const rate = formatEdgeTtsRate(opts?.rate);
 
   if (!/^[a-zA-Z]+-[A-Z]{2}-[A-Za-z]+Neural$/.test(voice)) {
     throw new Error(`Invalid voice identifier: ${voice}`);
@@ -112,7 +120,7 @@ export async function synthesize(
   try {
     await execFileAsync(
       getPythonExec(),
-      [edgeTtsScriptPath, "--text", cleanText, "--voice", voice, "--output", outPath],
+      [edgeTtsScriptPath, "--text", cleanText, "--voice", voice, "--rate", rate, "--output", outPath],
       { timeout: 60_000, maxBuffer: 1024 * 1024 * 16, signal: opts?.signal },
     );
     const buf = await readFile(outPath);

@@ -179,7 +179,10 @@ describe("resolveVoiceExecutionPolicy", () => {
     },
   } satisfies LlmRuntimeConfig;
 
-  function makeProfile(powerMode: DeviceProfile["powerMode"]): DeviceProfile {
+  function makeProfile(
+    powerMode: DeviceProfile["powerMode"],
+    overrides?: Partial<DeviceProfile["recommendedSettings"]>,
+  ): DeviceProfile {
     return {
       deviceType: "macos",
       capabilities: {
@@ -214,6 +217,7 @@ describe("resolveVoiceExecutionPolicy", () => {
         ttsVoiceSpeed: 1.0,
         enableContinuousListening: powerMode !== "battery_saver",
         enableOnDeviceProcessing: powerMode === "normal",
+        ...overrides,
       },
       confidence: 1,
     };
@@ -234,5 +238,20 @@ describe("resolveVoiceExecutionPolicy", () => {
   it("falls back from rtvc to edge TTS in low-power modes", () => {
     const policy = resolveVoiceExecutionPolicy(runtime, makeProfile("low_power"), "audio/webm");
     expect(policy.ttsProvider).toBe("edge");
+  });
+
+  it("raises TTS cadence in constrained power modes", () => {
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm").ttsRate).toBe(1);
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("low_power"), "audio/webm").ttsRate).toBe(1.05);
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("battery_saver"), "audio/webm").ttsRate).toBe(1.1);
+  });
+
+  it("respects the device profile base TTS speed before power adjustments", () => {
+    const policy = resolveVoiceExecutionPolicy(
+      runtime,
+      makeProfile("low_power", { ttsVoiceSpeed: 0.95 }),
+      "audio/webm",
+    );
+    expect(policy.ttsRate).toBe(1);
   });
 });

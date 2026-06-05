@@ -211,8 +211,20 @@ export interface ResolvedVoiceExecutionPolicy {
   useLowLatencyRace: boolean;
   useStreamingStt: boolean;
   ttsProvider: "edge" | "rtvc" | "none";
+  ttsRate: number;
   preferredChunkMs: number;
   powerMode: "normal" | "low_power" | "battery_saver";
+}
+
+function resolveTtsRate(profile: DeviceProfile): number {
+  const baseRate = profile.recommendedSettings.ttsVoiceSpeed || 1;
+  const powerAdjustment = profile.powerMode === "battery_saver"
+    ? 0.1
+    : profile.powerMode === "low_power"
+      ? 0.05
+      : 0;
+
+  return Math.max(0.7, Math.min(1.3, Number((baseRate + powerAdjustment).toFixed(2))));
 }
 
 export function resolveVoiceExecutionPolicy(
@@ -251,6 +263,7 @@ export function resolveVoiceExecutionPolicy(
     useLowLatencyRace,
     useStreamingStt: requestedStreamingStt && profile.recommendedSettings.enableContinuousListening,
     ttsProvider,
+    ttsRate: resolveTtsRate(profile),
     preferredChunkMs: Math.max(runtime.voice.chunkMs, profile.audioProfile.recommendedChunkMs),
     powerMode: profile.powerMode,
   };
@@ -865,7 +878,11 @@ export class VoiceStreamManager {
       try {
         const lang = detectLanguage(text);
         const voice = pickVoice(lang, cfg.voice);
-        const audioBuf = await edgeTtsSynthesize(text, { voice, lang });
+        const audioBuf = await edgeTtsSynthesize(text, {
+          voice,
+          lang,
+          rate: session.executionPolicy.ttsRate,
+        });
         send({
           type: "voice.stream.tts",
           sessionId: session.sessionId,
