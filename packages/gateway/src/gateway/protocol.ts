@@ -222,7 +222,10 @@ export interface RuntimeConfigSetMessage {
     | "voice.siri.token"
     | "vad.silenceThresholdMs"
     | "vad.speechThreshold"
-    | "vad.minSpeechMs";
+    | "vad.minSpeechMs"
+    | "power.lowBatteryThreshold"
+    | "power.criticalBatteryThreshold"
+    | "power.pollIntervalMs";
   value: string | boolean | number;
 }
 

@@ -14,7 +14,7 @@ import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig, saveLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setPowerField, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider, deleteProvider } from "../llm/runtime-config.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
@@ -1535,6 +1535,21 @@ export async function handleMessage(
           case "voice.siri.token":
             handled = true;
             config = setSiriField("token", String(msg.value));
+            break;
+          case "power.lowBatteryThreshold":
+            handled = true;
+            config = setPowerField("lowBatteryThreshold", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
+            break;
+          case "power.criticalBatteryThreshold":
+            handled = true;
+            config = setPowerField("criticalBatteryThreshold", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
+            break;
+          case "power.pollIntervalMs":
+            handled = true;
+            config = setPowerField("pollIntervalMs", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
             break;
           case "vad.silenceThresholdMs": {
             handled = true;

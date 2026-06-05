@@ -57,6 +57,9 @@ export const RuntimeConfigSetMessageSchema = z.object({
     "vad.silenceThresholdMs",
     "vad.speechThreshold",
     "vad.minSpeechMs",
+    "power.lowBatteryThreshold",
+    "power.criticalBatteryThreshold",
+    "power.pollIntervalMs",
   ]),
   value: z.union([z.string(), z.boolean(), z.number()]),
 });

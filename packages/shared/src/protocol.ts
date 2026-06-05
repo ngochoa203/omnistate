@@ -214,7 +214,10 @@ export interface RuntimeConfigSetMessage {
     | "speakerVerification.threshold"
     | "speakerVerification.onMismatch"
     | "voice.sttProvider"
-    | "voice.whisperLocalModel";
+    | "voice.whisperLocalModel"
+    | "power.lowBatteryThreshold"
+    | "power.criticalBatteryThreshold"
+    | "power.pollIntervalMs";
   value: string | boolean | number;
 }
 

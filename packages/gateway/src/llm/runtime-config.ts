@@ -21,6 +21,12 @@ export interface TokenBudgetConfig {
   maxInputChars: number;
 }
 
+export interface PowerRuntimeConfig {
+  lowBatteryThreshold: number;
+  criticalBatteryThreshold: number;
+  pollIntervalMs: number;
+}
+
 export type VoiceProvider = "native" | "whisper-local" | "whisper-cloud";
 
 export interface SiriBridgeConfig {
@@ -110,6 +116,7 @@ export interface LlmRuntimeConfig {
    * Phase 2 owns voice.*; do not move this field under voice.*.
    */
   fastPathThreshold: number;
+  power: PowerRuntimeConfig;
   voice: VoiceRuntimeConfig;
   session: {
     currentSessionId: string;
@@ -162,6 +169,11 @@ function defaultConfig(): LlmRuntimeConfig {
       intentMaxTokens: 320,
       decomposeMaxTokens: 500,
       maxInputChars: 1800,
+    },
+    power: {
+      lowBatteryThreshold: 20,
+      criticalBatteryThreshold: 10,
+      pollIntervalMs: 15_000,
     },
     voice: {
       tts: {
@@ -285,6 +297,28 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
       decomposeMaxTokens:
         raw.tokenBudget?.decomposeMaxTokens ?? def.tokenBudget.decomposeMaxTokens,
       maxInputChars: raw.tokenBudget?.maxInputChars ?? def.tokenBudget.maxInputChars,
+    },
+    power: {
+      lowBatteryThreshold:
+        typeof raw.power?.lowBatteryThreshold === "number" &&
+        Number.isFinite(raw.power.lowBatteryThreshold) &&
+        raw.power.lowBatteryThreshold >= 5 &&
+        raw.power.lowBatteryThreshold <= 100
+          ? Math.round(raw.power.lowBatteryThreshold)
+          : def.power.lowBatteryThreshold,
+      criticalBatteryThreshold:
+        typeof raw.power?.criticalBatteryThreshold === "number" &&
+        Number.isFinite(raw.power.criticalBatteryThreshold) &&
+        raw.power.criticalBatteryThreshold >= 1 &&
+        raw.power.criticalBatteryThreshold <= 100
+          ? Math.round(raw.power.criticalBatteryThreshold)
+          : def.power.criticalBatteryThreshold,
+      pollIntervalMs:
+        typeof raw.power?.pollIntervalMs === "number" &&
+        Number.isFinite(raw.power.pollIntervalMs) &&
+        raw.power.pollIntervalMs >= 2_000
+          ? Math.round(raw.power.pollIntervalMs)
+          : def.power.pollIntervalMs,
     },
     voice: {
       tts: {
@@ -584,6 +618,32 @@ export function setTokenBudgetField(
       conf.tokenBudget[key] = Math.round(num);
     }
   }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setPowerField(
+  key: keyof PowerRuntimeConfig,
+  value: number,
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  const num = Number(value);
+  if (Number.isNaN(num) || !Number.isFinite(num)) return conf;
+
+  if (key === "pollIntervalMs") {
+    if (num >= 2_000) {
+      conf.power.pollIntervalMs = Math.round(num);
+    }
+  } else if (key === "criticalBatteryThreshold") {
+    if (num >= 1 && num <= conf.power.lowBatteryThreshold) {
+      conf.power.criticalBatteryThreshold = Math.round(num);
+    }
+  } else if (key === "lowBatteryThreshold") {
+    if (num >= conf.power.criticalBatteryThreshold && num <= 100) {
+      conf.power.lowBatteryThreshold = Math.round(num);
+    }
+  }
+
   saveLlmRuntimeConfig(conf);
   return conf;
 }

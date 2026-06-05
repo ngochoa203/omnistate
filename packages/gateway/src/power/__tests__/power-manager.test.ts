@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  PowerManager,
   derivePowerMode,
   parseBatteryState,
   parseLowPowerMode,
@@ -35,5 +36,37 @@ describe("power-manager parsers", () => {
     );
 
     expect(mode).toBe("battery_saver");
+  });
+
+  it("re-applies policy updates without recreating the manager", () => {
+    const manager = new PowerManager(null, {
+      lowBatteryThreshold: 20,
+      criticalBatteryThreshold: 10,
+      pollIntervalMs: 15_000,
+      readState: () => ({
+        mode: "normal",
+        isOnBattery: true,
+        isCharging: false,
+        chargePercent: 12,
+        lowPowerModeEnabled: false,
+        thermalPressure: "nominal",
+        sampledAt: Date.now(),
+      }),
+    });
+
+    manager.refresh();
+    expect(manager.getState()?.mode).toBe("normal");
+
+    manager.updatePolicy({
+      lowBatteryThreshold: 15,
+      criticalBatteryThreshold: 8,
+      pollIntervalMs: 5_000,
+    });
+
+    expect(manager.getPolicy()).toEqual({
+      lowBatteryThreshold: 15,
+      criticalBatteryThreshold: 8,
+      pollIntervalMs: 5_000,
+    });
   });
 });

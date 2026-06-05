@@ -60,7 +60,7 @@ export class OmniStateGateway {
   private eventBus: EventBus = new EventBus();
   private firehose: OSFirehose = new OSFirehose(this.eventBus);
   private ruleEngine: RuleEngine = new RuleEngine(this.eventBus);
-  private powerManager: PowerManager = new PowerManager(this.eventBus);
+  private powerManager: PowerManager;
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
@@ -87,6 +87,7 @@ export class OmniStateGateway {
   constructor(config: GatewayConfig) {
     this.config = config;
     this.orchestrator = new Orchestrator();
+    this.powerManager = new PowerManager(this.eventBus, loadLlmRuntimeConfig().power);
 
     // Wire up permission responder system if approvalPolicy is configured
     if (config.approvalPolicy) {
@@ -107,6 +108,11 @@ export class OmniStateGateway {
       this.orchestrator.approvalEngine = this.approvalEngine;
       this.orchestrator.permissionResponder = this.claudeCodeResponder;
     }
+  }
+
+  applyPowerPolicyFromRuntimeConfig(): void {
+    const runtime = loadLlmRuntimeConfig();
+    this.powerManager.updatePolicy(runtime.power);
   }
 
   /** Wire in the health monitor for health.query responses. */

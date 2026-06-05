@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { v4 as uuid } from "uuid";
 import type { EventBus } from "../events/event-bus.js";
+import type { PowerRuntimeConfig } from "../llm/runtime-config.js";
 import { childLogger } from "../utils/logger.js";
 import type { VoicePowerMode } from "../voice/power-aware-runtime.js";
 
@@ -21,6 +22,12 @@ export interface PowerManagerOptions {
   criticalBatteryThreshold?: number;
   pollIntervalMs?: number;
   readState?: () => PowerState;
+}
+
+export interface PowerManagerPolicy {
+  lowBatteryThreshold: number;
+  criticalBatteryThreshold: number;
+  pollIntervalMs: number;
 }
 
 function safeExec(command: string): string {
@@ -96,9 +103,9 @@ export function derivePowerMode(
 export class PowerManager {
   private currentState: PowerState | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly lowBatteryThreshold: number;
-  private readonly criticalBatteryThreshold: number;
-  private readonly pollIntervalMs: number;
+  private lowBatteryThreshold: number;
+  private criticalBatteryThreshold: number;
+  private pollIntervalMs: number;
   private readonly readStateImpl: () => PowerState;
 
   constructor(
@@ -126,6 +133,61 @@ export class PowerManager {
 
   getState(): PowerState | null {
     return this.currentState;
+  }
+
+  getPolicy(): PowerManagerPolicy {
+    return {
+      lowBatteryThreshold: this.lowBatteryThreshold,
+      criticalBatteryThreshold: this.criticalBatteryThreshold,
+      pollIntervalMs: this.pollIntervalMs,
+    };
+  }
+
+  updatePolicy(policy: Partial<Pick<PowerRuntimeConfig, "lowBatteryThreshold" | "criticalBatteryThreshold" | "pollIntervalMs">>): void {
+    const previous = this.getPolicy();
+
+    if (
+      typeof policy.lowBatteryThreshold === "number" &&
+      Number.isFinite(policy.lowBatteryThreshold) &&
+      policy.lowBatteryThreshold >= 5 &&
+      policy.lowBatteryThreshold <= 100
+    ) {
+      this.lowBatteryThreshold = Math.round(policy.lowBatteryThreshold);
+    }
+
+    if (
+      typeof policy.criticalBatteryThreshold === "number" &&
+      Number.isFinite(policy.criticalBatteryThreshold) &&
+      policy.criticalBatteryThreshold >= 1 &&
+      policy.criticalBatteryThreshold <= this.lowBatteryThreshold
+    ) {
+      this.criticalBatteryThreshold = Math.round(policy.criticalBatteryThreshold);
+    }
+
+    if (
+      typeof policy.pollIntervalMs === "number" &&
+      Number.isFinite(policy.pollIntervalMs) &&
+      policy.pollIntervalMs >= 2_000
+    ) {
+      this.pollIntervalMs = Math.round(policy.pollIntervalMs);
+    }
+
+    const next = this.getPolicy();
+    const pollIntervalChanged = previous.pollIntervalMs !== next.pollIntervalMs;
+
+    if (pollIntervalChanged && this.timer) {
+      clearInterval(this.timer);
+      this.timer = setInterval(() => this.refresh(), this.pollIntervalMs);
+    }
+
+    if (
+      previous.lowBatteryThreshold !== next.lowBatteryThreshold ||
+      previous.criticalBatteryThreshold !== next.criticalBatteryThreshold ||
+      previous.pollIntervalMs !== next.pollIntervalMs
+    ) {
+      log.info({ previous, next }, "updated power manager policy");
+      this.refresh();
+    }
   }
 
   refresh(): PowerState {
