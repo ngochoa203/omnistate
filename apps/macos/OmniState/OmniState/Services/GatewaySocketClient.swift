@@ -180,6 +180,9 @@ final class GatewaySocketClient: ObservableObject {
     @Published var voiceSiriShortcutName = ""
     @Published var voiceSiriEndpoint = ""
     @Published var voiceSiriToken = ""
+    @Published var powerLowBatteryThreshold = 20
+    @Published var powerCriticalBatteryThreshold = 10
+    @Published var powerPollIntervalMs = 15_000
     @Published var runtimeSessions: [RuntimeSessionMeta] = []
     @Published var runtimeCurrentSessionId = "default"
     @Published var sharedMemorySummary = ""
@@ -909,6 +912,18 @@ final class GatewaySocketClient: ObservableObject {
                 voiceSiriEndpoint = (siri["endpoint"] as? String) ?? voiceSiriEndpoint
                 voiceSiriToken = (siri["token"] as? String) ?? voiceSiriToken
             }
+        }
+
+        if let power = config["power"] as? [String: Any] {
+            powerLowBatteryThreshold =
+                (power["lowBatteryThreshold"] as? Int)
+                ?? Int(power["lowBatteryThreshold"] as? Double ?? Double(powerLowBatteryThreshold))
+            powerCriticalBatteryThreshold =
+                (power["criticalBatteryThreshold"] as? Int)
+                ?? Int(power["criticalBatteryThreshold"] as? Double ?? Double(powerCriticalBatteryThreshold))
+            powerPollIntervalMs =
+                (power["pollIntervalMs"] as? Int)
+                ?? Int(power["pollIntervalMs"] as? Double ?? Double(powerPollIntervalMs))
         }
 
         if let session = config["session"] as? [String: Any] {

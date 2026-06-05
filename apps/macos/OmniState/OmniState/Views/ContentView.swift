@@ -3658,6 +3658,88 @@ struct ContentView: View {
                     }
                 }
 
+                GlowCard(glow: CyberColor.green.opacity(0.16)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Power & Efficiency", "Power & Efficiency"))
+
+                        Text(tx("Tinh chỉnh ngưỡng pin và chu kỳ dò power để wake/STT tự hạ tải hợp lý trên từng máy.", "Tune battery thresholds and polling cadence so wake/STT can downshift cleanly per machine."))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(CyberColor.textMuted)
+
+                        HStack(alignment: .top, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Low Battery Threshold", "Low Battery Threshold"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerLowBatteryThreshold)%", value: Binding(get: {
+                                    socketClient.powerLowBatteryThreshold
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: max(socketClient.powerCriticalBatteryThreshold, 5)...60, step: 1)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Critical Battery", "Critical Battery"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerCriticalBatteryThreshold)%", value: Binding(get: {
+                                    socketClient.powerCriticalBatteryThreshold
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: 1...min(socketClient.powerLowBatteryThreshold, 40), step: 1)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Power Poll Interval", "Power Poll Interval"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerPollIntervalMs) ms", value: Binding(get: {
+                                    socketClient.powerPollIntervalMs
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: 2_000...60_000, step: 1_000)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            CyberBadge(
+                                text: tx("Low \(socketClient.powerLowBatteryThreshold)%", "Low \(socketClient.powerLowBatteryThreshold)%"),
+                                color: CyberColor.orange
+                            )
+                            CyberBadge(
+                                text: tx("Critical \(socketClient.powerCriticalBatteryThreshold)%", "Critical \(socketClient.powerCriticalBatteryThreshold)%"),
+                                color: CyberColor.red
+                            )
+                            CyberBadge(
+                                text: tx("Poll \(socketClient.powerPollIntervalMs / 1000)s", "Poll \(socketClient.powerPollIntervalMs / 1000)s"),
+                                color: CyberColor.green
+                            )
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(tx("Battery saver profile", "Battery saver profile")) {
+                                socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: 30)
+                                socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: 15)
+                                socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: 10_000)
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(tx("Balanced profile", "Balanced profile")) {
+                                socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: 20)
+                                socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: 10)
+                                socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: 15_000)
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CyberColor.green.opacity(0.75))
+                        }
+                    }
+                }
+
                 GlowCard(glow: CyberColor.blue.opacity(0.16)) {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(text: tx("Permissions", "Permissions"))
