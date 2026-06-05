@@ -11,6 +11,7 @@ import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-conf
 import { WakeManager } from "../voice/wake-manager.js";
 import { PowerAwareVoiceRuntimeController } from "../voice/power-aware-runtime.js";
 import { VoiceStreamManager } from "../voice/webrtc-stream.js";
+import { deviceOptimizer } from "../voice/device-profiles.js";
 import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { TriggerEngine } from "../triggers/index.js";
 import { getDb } from "../db/database.js";
@@ -88,6 +89,7 @@ export class OmniStateGateway {
     this.config = config;
     this.orchestrator = new Orchestrator();
     this.powerManager = new PowerManager(this.eventBus, loadLlmRuntimeConfig().power);
+    deviceOptimizer.autoDetect();
 
     // Wire up permission responder system if approvalPolicy is configured
     if (config.approvalPolicy) {
@@ -176,6 +178,7 @@ export class OmniStateGateway {
         mode === "low_power" ||
         mode === "battery_saver"
       ) {
+        deviceOptimizer.setPowerMode(mode);
         this.powerAwareVoiceController.handlePowerMode(mode);
       }
     });

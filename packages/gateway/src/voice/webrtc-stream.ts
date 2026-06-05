@@ -49,13 +49,14 @@
  */
 
 import * as HybridAutomation from "../hybrid/automation.js";
-import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
+import { loadLlmRuntimeConfig, type LlmRuntimeConfig } from "../llm/runtime-config.js";
 import { verifySpeaker } from "./verification.js";
 import { synthesize as edgeTtsSynthesize, detectLanguage, pickVoice } from "./edge-tts.js";
 import { whisperLocalClient } from "./whisper-local-client.js";
 import { AudioIngest } from "./audio-ingest.js";
 import { intentParser } from "./intent-parser.js";
 import { voiceCommandRouter, type ActionResult } from "./voice-command-router.js";
+import { deviceOptimizer, type DeviceProfile } from "./device-profiles.js";
 
 import { logger } from "../utils/logger.js";
 // ─── Protocol types ────────────────────────────────────────────────────────────
@@ -200,9 +201,60 @@ interface StreamSession {
   useStreamingStt: boolean;
   /** AudioIngest instance for this session (only when useStreamingStt=true). */
   audioIngest: AudioIngest | null;
+  executionPolicy: ResolvedVoiceExecutionPolicy;
 }
 
 type SendFn = (msg: VoiceStreamServerMessage) => void;
+
+export interface ResolvedVoiceExecutionPolicy {
+  orderedProviders: Array<"native" | "whisper-local" | "whisper-cloud">;
+  useLowLatencyRace: boolean;
+  useStreamingStt: boolean;
+  ttsProvider: "edge" | "rtvc" | "none";
+  preferredChunkMs: number;
+  powerMode: "normal" | "low_power" | "battery_saver";
+}
+
+export function resolveVoiceExecutionPolicy(
+  runtime: LlmRuntimeConfig,
+  profile: DeviceProfile,
+  mimeType: string,
+): ResolvedVoiceExecutionPolicy {
+  const requestedStreamingStt =
+    mimeType === "audio/pcm" || mimeType === "audio/raw" || mimeType.includes("pcm");
+
+  const configuredProviders = [
+    runtime.voice.primaryProvider,
+    ...runtime.voice.fallbackProviders,
+  ].filter((provider, index, list) => list.indexOf(provider) === index) as Array<
+    "native" | "whisper-local" | "whisper-cloud"
+  >;
+
+  const preferredProvider = profile.recommendedSettings.sttProvider;
+  const orderedProviders = [
+    preferredProvider,
+    ...configuredProviders.filter((provider) => provider !== preferredProvider),
+  ].filter((provider, index, list) => list.indexOf(provider) === index);
+
+  const useLowLatencyRace =
+    runtime.voice.lowLatency &&
+    profile.powerMode === "normal" &&
+    profile.capabilities.supportsLowLatency;
+
+  const ttsProvider =
+    profile.powerMode !== "normal" && runtime.voice.tts?.provider === "rtvc"
+      ? profile.recommendedSettings.ttsProvider
+      : (runtime.voice.tts?.provider ?? "edge");
+
+  return {
+    orderedProviders,
+    useLowLatencyRace,
+    useStreamingStt: requestedStreamingStt && profile.recommendedSettings.enableContinuousListening,
+    ttsProvider,
+    preferredChunkMs: Math.max(runtime.voice.chunkMs, profile.audioProfile.recommendedChunkMs),
+    powerMode: profile.powerMode,
+  };
+}
 
 // ─── VoiceStreamManager ────────────────────────────────────────────────────────
 
@@ -354,11 +406,10 @@ export class VoiceStreamManager {
     // Terminate any stale session first.
     this.dropSession(clientId);
 
-    // Use streaming STT when codec is PCM16 (raw PCM, compatible with whisper-local streaming API)
     const mimeType = msg.mimeType ?? "audio/webm";
-    const useStreamingStt = mimeType === "audio/pcm" || mimeType === "audio/raw" || mimeType.includes("pcm");
-
-    const vadConfig = loadLlmRuntimeConfig().voice.vad;
+    const runtime = loadLlmRuntimeConfig();
+    const executionPolicy = resolveVoiceExecutionPolicy(runtime, deviceOptimizer.getProfile(), mimeType);
+    const vadConfig = runtime.voice.vad;
 
     const session: StreamSession = {
       sessionId: msg.sessionId,
@@ -373,14 +424,15 @@ export class VoiceStreamManager {
       closed: false,
       idleTimer: null,
       send,
-      useStreamingStt,
+      useStreamingStt: executionPolicy.useStreamingStt,
       audioIngest: null,
+      executionPolicy,
     };
 
     this.sessions.set(clientId, session);
     this.resetIdleTimer(clientId, session);
 
-    if (useStreamingStt) {
+    if (session.useStreamingStt) {
       // Start the streaming STT session; emit partial events as they arrive
       const iter = whisperLocalClient.startSession(msg.sessionId);
       (async () => {
@@ -467,8 +519,8 @@ export class VoiceStreamManager {
       sampleRate: session.sampleRate,
       totalBytes: 0,
       chunks: 0,
-      useStreamingStt,
-      message: useStreamingStt
+      useStreamingStt: session.useStreamingStt,
+      message: session.useStreamingStt
         ? "Streaming PCM STT path enabled"
         : "Buffered audio path enabled; final STT runs after stop",
     });
@@ -587,7 +639,7 @@ export class VoiceStreamManager {
       }
 
       // ── STT ──────────────────────────────────────────────────────────────────
-      const transcript = await this.transcribe(audioBuffer);
+      const transcript = await this.transcribe(audioBuffer, session.executionPolicy);
 
       if (!transcript.text) {
         const anyError = transcript.attempts.some((a) => a.status === "error");
@@ -713,36 +765,27 @@ export class VoiceStreamManager {
   /**
    * Run STT using the same provider chain as the existing voice.transcribe handler.
    */
-  private async transcribe(audioBuffer: Buffer): Promise<{
+  private async transcribe(
+    audioBuffer: Buffer,
+    executionPolicy: ResolvedVoiceExecutionPolicy,
+  ): Promise<{
     text: string;
     provider: string;
     attempts: Array<{ provider: string; status: "ok" | "empty" | "error"; error?: string }>;
   }> {
-    const runtime = loadLlmRuntimeConfig();
-    const voice = runtime.voice;
-
-    const dedupedProviders = [
-      voice.primaryProvider,
-      ...voice.fallbackProviders,
-    ].filter((p, i, arr) => arr.indexOf(p) === i) as Array<
-      "native" | "whisper-local" | "whisper-cloud"
-    >;
-
-    const orderedProviders = voice.lowLatency
-      ? (["native", ...dedupedProviders.filter((p) => p !== "native")] as typeof dedupedProviders)
-      : dedupedProviders;
+    const orderedProviders = executionPolicy.orderedProviders;
 
     const bytes = audioBuffer.length;
     const attempts: Array<{ provider: string; status: "ok" | "empty" | "error"; error?: string }> = [];
 
     // Bug fix: Check for empty providers array
-    if (dedupedProviders.length === 0) {
+    if (orderedProviders.length === 0) {
       logger.error("[VoiceStream] No STT providers configured");
       return { text: "", provider: "", attempts: [{ provider: "none", status: "error", error: "No providers" }] };
     }
 
     // Race all providers in low-latency mode, first non-empty wins.
-    if (voice.lowLatency) {
+    if (executionPolicy.useLowLatencyRace) {
       try {
         const fastest = await Promise.any(
           orderedProviders.map(async (provider) => {
@@ -814,7 +857,7 @@ export class VoiceStreamManager {
     if (!text.trim()) return;
 
     const cfg = loadLlmRuntimeConfig();
-    const provider = cfg.voice.tts?.provider ?? "edge";
+    const provider = session.executionPolicy.ttsProvider;
 
     if (provider === "none") return;
 
