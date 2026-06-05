@@ -277,8 +277,12 @@ async function cmdRunDaemon(goal: string): Promise<void> {
           if (typeof m.result.output === "string" && m.result.output.trim()) {
             console.log(m.result.output.trimEnd());
           } else if (m.result && typeof m.result === "object") {
-            const success = (m.result as Record<string, unknown>).success;
-            const error = (m.result as Record<string, unknown>).error;
+            const result = m.result as TaskCompleteMessage["result"] & {
+              success?: boolean;
+              error?: string;
+            };
+            const success = result.success;
+            const error = result.error;
             if (success === false || typeof error === "string") {
               console.log(JSON.stringify(m.result, null, 2));
             }

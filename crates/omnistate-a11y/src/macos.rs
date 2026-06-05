@@ -135,10 +135,10 @@ fn get_frontmost_pid_via_script() -> Option<i32> {
 /// each) was O(n_processes) and took ~3 s; it has been removed.
 fn get_frontmost_app(system_wide: AXUIElementRef) -> OmniResult<AXUIElementRef> {
     // ── Step 1: AXFocusedApplication (fast path) ─────────────────────
-    if let Ok(app) = get_attribute(system_wide, "AXFocusedApplication") {
-        if !app.is_null() {
-            return Ok(app);
-        }
+    if let Ok(app) = get_attribute(system_wide, "AXFocusedApplication")
+        && !app.is_null()
+    {
+        return Ok(app);
     }
 
     // ── Step 2: osascript frontmost PID (O(1) fallback) ──────────────
@@ -183,22 +183,21 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     let mut id_counter = 0u32;
 
     // If we have a focused window, walk its children (depth 10)
-    if let Ok(window) = focused_window {
-        if !window.is_null() {
-            walk_element(window, &mut elements, &mut id_counter, 0, 10);
-        }
+    if let Ok(window) = focused_window
+        && !window.is_null()
+    {
+        walk_element(window, &mut elements, &mut id_counter, 0, 10);
     }
 
     // Also get the application's children (menus, etc.) — depth 8
-    if let Ok(children_ref) = get_attribute(focused_app, "AXChildren") {
-        if !children_ref.is_null() {
-            let children: CFArray =
-                unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
-            for i in 0..children.len().min(50) {
-                let child: *const c_void =
-                    *children.get(i).unwrap() as *const c_void;
-                walk_element(child, &mut elements, &mut id_counter, 0, 8);
-            }
+    if let Ok(children_ref) = get_attribute(focused_app, "AXChildren")
+        && !children_ref.is_null()
+    {
+        let children: CFArray =
+            unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+        for i in 0..children.len().min(50) {
+            let child: *const c_void = *children.get(i).unwrap();
+            walk_element(child, &mut elements, &mut id_counter, 0, 8);
         }
     }
 
@@ -411,24 +410,23 @@ fn find_element_ref(query: &str) -> OmniResult<Option<AXUIElementRef>> {
 
     let mut found: Option<AXUIElementRef> = None;
 
-    if let Ok(window) = get_attribute(focused_app, "AXFocusedWindow") {
-        if !window.is_null() {
-            found = walk_element_for_ref(window, &query_lower, 0, 10);
-        }
+    if let Ok(window) = get_attribute(focused_app, "AXFocusedWindow")
+        && !window.is_null()
+    {
+        found = walk_element_for_ref(window, &query_lower, 0, 10);
     }
 
-    if found.is_none() {
-        if let Ok(children_ref) = get_attribute(focused_app, "AXChildren") {
-            if !children_ref.is_null() {
-                let children: CFArray =
-                    unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
-                for i in 0..children.len().min(50) {
-                    let child: *const c_void = *children.get(i).unwrap() as *const c_void;
-                    if let Some(f) = walk_element_for_ref(child, &query_lower, 0, 8) {
-                        found = Some(f);
-                        break;
-                    }
-                }
+    if found.is_none()
+        && let Ok(children_ref) = get_attribute(focused_app, "AXChildren")
+        && !children_ref.is_null()
+    {
+        let children: CFArray =
+            unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+        for i in 0..children.len().min(50) {
+            let child: *const c_void = *children.get(i).unwrap();
+            if let Some(f) = walk_element_for_ref(child, &query_lower, 0, 8) {
+                found = Some(f);
+                break;
             }
         }
     }
@@ -644,7 +642,7 @@ fn push_children_from_array_attr(
         }
         let children: CFArray = unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
         for i in 0..children.len().min(max_items as isize) {
-            let child: *const c_void = *children.get(i).unwrap() as *const c_void;
+            let child: *const c_void = *children.get(i).unwrap();
             if child.is_null() {
                 continue;
             }

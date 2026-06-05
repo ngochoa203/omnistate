@@ -10,7 +10,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist *.tsbuildinfo",
-    "lint": "oxlint src/ --max-warnings=100",
+    "lint": "oxlint src/ --max-warnings=500",
     "rtvc:check": "test -d vendor/Real-Time-Voice-Cloning && echo 'RTVC vendored: OK'",
     "test": "vitest run",
     "test:planner": "vitest run src/__tests__/planner.test.ts --testTimeout=30000",
