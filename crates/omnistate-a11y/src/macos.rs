@@ -58,11 +58,7 @@ unsafe extern "C" {
         names: *mut core_foundation_sys::array::CFArrayRef,
     ) -> AXError;
     fn AXIsProcessTrusted() -> bool;
-    fn AXValueGetValue(
-        value: AXValueRef,
-        value_type: u32,
-        value_ptr: *mut c_void,
-    ) -> bool;
+    fn AXValueGetValue(value: AXValueRef, value_type: u32, value_ptr: *mut c_void) -> bool;
     fn AXUIElementPerformAction(
         element: AXUIElementRef,
         action: core_foundation_sys::string::CFStringRef,
@@ -77,7 +73,6 @@ unsafe extern "C" {
         names: *mut core_foundation_sys::array::CFArrayRef,
     ) -> AXError;
 }
-
 
 // ── AX Attribute keys ────────────────────────────────────────────────
 
@@ -193,8 +188,7 @@ pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
     if let Ok(children_ref) = get_attribute(focused_app, "AXChildren")
         && !children_ref.is_null()
     {
-        let children: CFArray =
-            unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+        let children: CFArray = unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
         for i in 0..children.len().min(50) {
             let child: *const c_void = *children.get(i).unwrap();
             walk_element(child, &mut elements, &mut id_counter, 0, 8);
@@ -222,8 +216,8 @@ pub fn get_ui_tree() -> OmniResult<UITreeNode> {
     // AXFocusedApplication returns null (e.g. browser web views).
     let focused_app = get_frontmost_app(system_wide)?;
 
-    let app_name = get_string_attribute(focused_app, "AXTitle")
-        .unwrap_or_else(|| "Unknown App".to_string());
+    let app_name =
+        get_string_attribute(focused_app, "AXTitle").unwrap_or_else(|| "Unknown App".to_string());
 
     let mut id_counter: u32 = 0;
 
@@ -269,12 +263,11 @@ pub fn perform_action(query: &str, action: &str) -> OmniResult<bool> {
         None => Ok(false),
         Some(elem) => {
             let cf_action = CFString::new(action);
-            let err = unsafe {
-                AXUIElementPerformAction(elem, cf_action.as_concrete_TypeRef())
-            };
+            let err = unsafe { AXUIElementPerformAction(elem, cf_action.as_concrete_TypeRef()) };
             if err != K_AX_ERROR_SUCCESS {
                 return Err(OmniError::AccessibilityError(format!(
-                    "AXUIElementPerformAction '{}' failed (AXError: {})", action, err
+                    "AXUIElementPerformAction '{}' failed (AXError: {})",
+                    action, err
                 )));
             }
             Ok(true)
@@ -310,7 +303,8 @@ pub fn set_element_value(query: &str, value: &str) -> OmniResult<bool> {
             };
             if err != K_AX_ERROR_SUCCESS {
                 return Err(OmniError::AccessibilityError(format!(
-                    "AXUIElementSetAttributeValue failed (AXError: {})", err
+                    "AXUIElementSetAttributeValue failed (AXError: {})",
+                    err
                 )));
             }
             Ok(true)
@@ -420,8 +414,7 @@ fn find_element_ref(query: &str) -> OmniResult<Option<AXUIElementRef>> {
         && let Ok(children_ref) = get_attribute(focused_app, "AXChildren")
         && !children_ref.is_null()
     {
-        let children: CFArray =
-            unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
+        let children: CFArray = unsafe { CFArray::wrap_under_get_rule(children_ref as *const _) };
         for i in 0..children.len().min(50) {
             let child: *const c_void = *children.get(i).unwrap();
             if let Some(f) = walk_element_for_ref(child, &query_lower, 0, 8) {
@@ -448,11 +441,7 @@ fn get_attribute(
     let mut value: core_foundation_sys::base::CFTypeRef = ptr::null();
 
     let err = unsafe {
-        AXUIElementCopyAttributeValue(
-            element,
-            cf_attr.as_concrete_TypeRef(),
-            &mut value,
-        )
+        AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value)
     };
 
     if err != K_AX_ERROR_SUCCESS {
@@ -515,11 +504,7 @@ fn get_position(element: AXUIElementRef) -> Option<(f64, f64)> {
             &mut point as *mut CGPoint as *mut c_void,
         )
     };
-    if ok {
-        Some((point.x, point.y))
-    } else {
-        None
-    }
+    if ok { Some((point.x, point.y)) } else { None }
 }
 
 fn get_size(element: AXUIElementRef) -> Option<(f64, f64)> {
@@ -545,12 +530,8 @@ fn get_size(element: AXUIElementRef) -> Option<(f64, f64)> {
 fn role_to_element_type(role: &str) -> ElementType {
     match role {
         "AXButton" => ElementType::Button,
-        "AXTextField" | "AXTextArea" | "AXSearchField" | "AXComboBox" => {
-            ElementType::TextField
-        }
-        "AXMenu" | "AXMenuBar" | "AXMenuBarItem" | "AXMenuItem" => {
-            ElementType::Menu
-        }
+        "AXTextField" | "AXTextArea" | "AXSearchField" | "AXComboBox" => ElementType::TextField,
+        "AXMenu" | "AXMenuBar" | "AXMenuBarItem" | "AXMenuItem" => ElementType::Menu,
         "AXStaticText" => ElementType::Label,
         "AXImage" => ElementType::Image,
         "AXList" | "AXTable" | "AXOutline" => ElementType::List,
@@ -578,10 +559,7 @@ fn walk_element(
     let value = get_string_attribute(element, "AXValue");
     let description = get_string_attribute(element, "AXDescription");
 
-    let text = title
-        .or(value)
-        .or(description)
-        .filter(|t| !t.is_empty());
+    let text = title.or(value).or(description).filter(|t| !t.is_empty());
 
     let position = get_position(element);
     let size = get_size(element);
@@ -748,7 +726,8 @@ fn build_tree_node(
     if depth < max_depth {
         for child in collect_related_children(element) {
             if !child.is_null() {
-                let child_node = build_tree_node(child as AXUIElementRef, id_counter, depth + 1, max_depth);
+                let child_node =
+                    build_tree_node(child as AXUIElementRef, id_counter, depth + 1, max_depth);
                 children.push(child_node);
             }
         }

@@ -3,9 +3,9 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use core_graphics::display::{
-    kCGNullWindowID, kCGWindowImageBestResolution, kCGWindowImageDefault,
-    kCGWindowListExcludeDesktopElements, kCGWindowListOptionIncludingWindow,
-    kCGWindowListOptionOnScreenOnly, CGDisplay, CGRectNull, CGWindowID,
+    CGDisplay, CGRectNull, CGWindowID, kCGNullWindowID, kCGWindowImageBestResolution,
+    kCGWindowImageDefault, kCGWindowListExcludeDesktopElements, kCGWindowListOptionIncludingWindow,
+    kCGWindowListOptionOnScreenOnly,
 };
 use core_graphics::geometry::CGRect;
 use core_graphics::image::CGImage;
@@ -48,9 +48,7 @@ pub fn capture_window(window_id: u32) -> OmniResult<Frame> {
         window_id as CGWindowID,
         kCGWindowImageBestResolution | kCGWindowImageDefault,
     )
-    .ok_or_else(|| {
-        OmniError::CaptureError(format!("Failed to capture window {window_id}"))
-    })?;
+    .ok_or_else(|| OmniError::CaptureError(format!("Failed to capture window {window_id}")))?;
 
     cg_image_to_frame(cg_image, CaptureMethod::WindowCapture)
 }
@@ -92,9 +90,8 @@ pub fn list_windows() -> OmniResult<Vec<WindowInfo>> {
         let dict_ref: CFType = unsafe { CFType::wrap_under_get_rule(*cf_array.get(i).unwrap()) };
 
         // Safe downcast to CFDictionary
-        let dict: CFDictionary = unsafe {
-            CFDictionary::wrap_under_get_rule(dict_ref.as_CFTypeRef() as *const _)
-        };
+        let dict: CFDictionary =
+            unsafe { CFDictionary::wrap_under_get_rule(dict_ref.as_CFTypeRef() as *const _) };
 
         let info = parse_window_dict(&dict);
         if let Some(info) = info {
@@ -170,9 +167,8 @@ fn get_number(dict: &CFDictionary, key: &str) -> Option<i64> {
 fn get_bounds(dict: &CFDictionary, key: &str) -> Option<Rect> {
     let cf_key = CFString::new(key);
     let value = dict.find(cf_key.as_CFType().as_CFTypeRef())?;
-    let bounds_dict: CFDictionary = unsafe {
-        CFDictionary::wrap_under_get_rule(*value as *const _)
-    };
+    let bounds_dict: CFDictionary =
+        unsafe { CFDictionary::wrap_under_get_rule(*value as *const _) };
 
     let x = get_number(&bounds_dict, "X").unwrap_or(0) as f64;
     let y = get_number(&bounds_dict, "Y").unwrap_or(0) as f64;
@@ -233,10 +229,7 @@ mod tests {
         assert!(frame.height > 0);
         assert_eq!(frame.bytes_per_pixel, 4);
         assert!(!frame.data.is_empty());
-        assert_eq!(
-            frame.data.len(),
-            (frame.width * frame.height * 4) as usize
-        );
+        assert_eq!(frame.data.len(), (frame.width * frame.height * 4) as usize);
     }
 
     #[test]
@@ -251,8 +244,7 @@ mod tests {
 
     #[test]
     fn test_capture_region() {
-        let frame = capture_region(0.0, 0.0, 100.0, 100.0)
-            .expect("Region capture should succeed");
+        let frame = capture_region(0.0, 0.0, 100.0, 100.0).expect("Region capture should succeed");
         assert!(frame.width > 0);
         assert!(frame.height > 0);
     }

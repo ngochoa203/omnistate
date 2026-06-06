@@ -15,8 +15,8 @@
 //!
 //! ## Deps: `windows = "0.58"` features: Dxgi, Direct3D11, Gdi, Foundation
 
-use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
+use omnistate_core::error::{OmniError, OmniResult};
 
 use crate::WindowInfo;
 

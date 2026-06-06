@@ -135,10 +135,10 @@ fn capture_from_iosurface(
 
     // Determine output pixel format
     let pixel_format = match surface.pixel_format() {
-        0x42475241 => PixelFormat::Bgra8,         // 'BGRA'
-        0x52474241 => PixelFormat::Rgba8,          // 'RGBA'
-        0x6C313072 => PixelFormat::Bgra10,         // 'l10r'
-        _ => PixelFormat::Bgra8,                   // Default assumption
+        0x42475241 => PixelFormat::Bgra8,  // 'BGRA'
+        0x52474241 => PixelFormat::Rgba8,  // 'RGBA'
+        0x6C313072 => PixelFormat::Bgra10, // 'l10r'
+        _ => PixelFormat::Bgra8,           // Default assumption
     };
 
     // The only copy: IOSurface memory -> owned Vec<u8>
@@ -197,9 +197,11 @@ fn capture_from_pixel_buffer(
     let height = buffer.height() as u32;
     let bytes_per_row = buffer.bytes_per_row();
 
-    let guard = buffer.lock(CVPixelBufferLockFlags::READ_ONLY).map_err(|e| {
-        OmniError::CaptureError(format!("CVPixelBuffer lock failed (CVReturn: {e})"))
-    })?;
+    let guard = buffer
+        .lock(CVPixelBufferLockFlags::READ_ONLY)
+        .map_err(|e| {
+            OmniError::CaptureError(format!("CVPixelBuffer lock failed (CVReturn: {e})"))
+        })?;
 
     let slice = guard.as_slice();
 
@@ -246,9 +248,9 @@ fn bgra_to_rgba(src: &[u8], width: usize, height: usize, bytes_per_row: usize) -
             let si = src_offset + x * 4;
             let di = dst_offset + x * 4;
             if si + 3 < src.len() {
-                dst[di] = src[si + 2];     // R <- B
+                dst[di] = src[si + 2]; // R <- B
                 dst[di + 1] = src[si + 1]; // G <- G
-                dst[di + 2] = src[si];     // B <- R
+                dst[di + 2] = src[si]; // B <- R
                 dst[di + 3] = src[si + 3]; // A <- A
             }
         }
@@ -303,15 +305,14 @@ pub fn capture_region_gpu(
     }
 
     // Apply nearest-neighbor resize if requested
-    let (final_data, final_width, final_height, final_bpr) =
-        match (target_width, target_height) {
-            (Some(tw), Some(th)) if tw > 0 && th > 0 => {
-                let resized = nearest_neighbor_resize(&cropped, width, height, tw, th, bpp);
-                let bpr = tw * bpp;
-                (resized, tw, th, bpr as usize)
-            }
-            _ => (cropped, width, height, dst_bpr as usize),
-        };
+    let (final_data, final_width, final_height, final_bpr) = match (target_width, target_height) {
+        (Some(tw), Some(th)) if tw > 0 && th > 0 => {
+            let resized = nearest_neighbor_resize(&cropped, width, height, tw, th, bpp);
+            let bpr = tw * bpp;
+            (resized, tw, th, bpr as usize)
+        }
+        _ => (cropped, width, height, dst_bpr as usize),
+    };
 
     Ok(CapturedFrame {
         width: final_width,
@@ -355,7 +356,7 @@ fn nearest_neighbor_resize(
 /// This sets up an SCStream, captures one frame via the output handler callback,
 /// then stops. Useful as an alternative to SCScreenshotManager on macOS < 14.0.
 pub fn capture_frame_stream(config: &CaptureConfig) -> OmniResult<CapturedFrame> {
-    use std::sync::{Arc, Mutex, Condvar};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     let content = SCShareableContent::get()
@@ -402,7 +403,8 @@ pub fn capture_frame_stream(config: &CaptureConfig) -> OmniResult<CapturedFrame>
             if let Some(pixel_buffer) = sample.image_buffer() {
                 let frame = if let Some(surface) = pixel_buffer.io_surface() {
                     // Zero-copy IOSurface path
-                    let lock_opts = IOSurfaceLockOptions::READ_ONLY | IOSurfaceLockOptions::AVOID_SYNC;
+                    let lock_opts =
+                        IOSurfaceLockOptions::READ_ONLY | IOSurfaceLockOptions::AVOID_SYNC;
                     if let Ok(guard) = surface.lock(lock_opts) {
                         let data = guard.as_slice().to_vec();
                         Some(CapturedFrame {
@@ -444,16 +446,16 @@ pub fn capture_frame_stream(config: &CaptureConfig) -> OmniResult<CapturedFrame>
         SCStreamOutputType::Screen,
     );
 
-    stream.start_capture()
+    stream
+        .start_capture()
         .map_err(|e| OmniError::CaptureError(format!("Stream start failed: {e}")))?;
 
     // Wait for first frame with timeout
     let result = {
         let mut lock = frame_data.lock().unwrap();
         if lock.is_none() {
-            let (new_lock, timeout_result) = condvar
-                .wait_timeout(lock, Duration::from_secs(5))
-                .unwrap();
+            let (new_lock, timeout_result) =
+                condvar.wait_timeout(lock, Duration::from_secs(5)).unwrap();
             lock = new_lock;
             if timeout_result.timed_out() && lock.is_none() {
                 let _ = stream.stop_capture();
@@ -479,14 +481,14 @@ mod tests {
         let rgba = bgra_to_rgba(&bgra, 2, 1, 8);
 
         // Expected RGBA: R=30, G=20, B=10, A=255
-        assert_eq!(rgba[0], 30);  // R
-        assert_eq!(rgba[1], 20);  // G
-        assert_eq!(rgba[2], 10);  // B
+        assert_eq!(rgba[0], 30); // R
+        assert_eq!(rgba[1], 20); // G
+        assert_eq!(rgba[2], 10); // B
         assert_eq!(rgba[3], 255); // A
 
-        assert_eq!(rgba[4], 70);  // R
-        assert_eq!(rgba[5], 60);  // G
-        assert_eq!(rgba[6], 50);  // B
+        assert_eq!(rgba[4], 70); // R
+        assert_eq!(rgba[5], 60); // G
+        assert_eq!(rgba[6], 50); // B
         assert_eq!(rgba[7], 128); // A
     }
 
@@ -500,13 +502,13 @@ mod tests {
         let rgba = bgra_to_rgba(&bgra, 1, 2, 8);
 
         assert_eq!(rgba.len(), 8); // 1 pixel * 4 bytes * 2 rows
-        assert_eq!(rgba[0], 30);  // R
-        assert_eq!(rgba[1], 20);  // G
-        assert_eq!(rgba[2], 10);  // B
+        assert_eq!(rgba[0], 30); // R
+        assert_eq!(rgba[1], 20); // G
+        assert_eq!(rgba[2], 10); // B
         assert_eq!(rgba[3], 255); // A
-        assert_eq!(rgba[4], 70);  // R
-        assert_eq!(rgba[5], 60);  // G
-        assert_eq!(rgba[6], 50);  // B
+        assert_eq!(rgba[4], 70); // R
+        assert_eq!(rgba[5], 60); // G
+        assert_eq!(rgba[6], 50); // B
         assert_eq!(rgba[7], 128); // A
     }
 
@@ -557,7 +559,9 @@ mod tests {
 
         println!(
             "Stream captured {}x{} frame, {} bytes",
-            frame.width, frame.height, frame.data.len()
+            frame.width,
+            frame.height,
+            frame.data.len()
         );
     }
 

@@ -31,8 +31,8 @@
 //! Uses `std::process::Command` to shell out to `idevicescreenshot` or `xcrun`.
 //! No native Rust deps needed — purely remote.
 
-use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
+use omnistate_core::error::{OmniError, OmniResult};
 
 use crate::WindowInfo;
 

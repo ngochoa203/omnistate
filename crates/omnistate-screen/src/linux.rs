@@ -14,8 +14,8 @@
 //!
 //! ## Deps: `pipewire = "0.8"`, `x11rb = "0.13"`, `wayland-client = "0.31"`
 
-use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
+use omnistate_core::error::{OmniError, OmniResult};
 
 use crate::WindowInfo;
 

@@ -11,8 +11,8 @@ use napi_derive::napi;
 #[napi]
 pub fn capture_frame_zero_copy() -> Result<serde_json::Value> {
     let config = omnistate_capture::CaptureConfig::default();
-    let frame = omnistate_capture::capture_frame(&config)
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let frame =
+        omnistate_capture::capture_frame(&config).map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(serde_json::json!({
         "width": frame.width,
@@ -36,8 +36,8 @@ pub fn capture_frame_zero_copy() -> Result<serde_json::Value> {
 #[napi]
 pub fn capture_frame_zero_copy_buffer() -> Result<Buffer> {
     let config = omnistate_capture::CaptureConfig::default();
-    let frame = omnistate_capture::capture_frame(&config)
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let frame =
+        omnistate_capture::capture_frame(&config).map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(Buffer::from(frame.data))
 }
@@ -122,8 +122,8 @@ pub fn capture_frame_configured(
         pixel_format: pf,
     };
 
-    let frame = omnistate_capture::capture_frame(&config)
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let frame =
+        omnistate_capture::capture_frame(&config).map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(serde_json::json!({
         "width": frame.width,

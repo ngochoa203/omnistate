@@ -39,8 +39,8 @@
 //! Uses `std::process::Command` to shell out to `adb`.
 //! For scrcpy protocol: `usb` crate + custom H.264 decoder.
 
-use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::Frame;
+use omnistate_core::error::{OmniError, OmniResult};
 
 use crate::WindowInfo;
 

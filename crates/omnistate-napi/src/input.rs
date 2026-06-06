@@ -5,21 +5,17 @@ use omnistate_core::{Key, Modifiers, MouseButton, Point};
 /// Move the mouse cursor to absolute screen coordinates.
 #[napi]
 pub fn move_mouse(x: f64, y: f64) -> Result<()> {
-    omnistate_input::move_mouse(Point { x, y })
-        .map_err(|e| Error::from_reason(e.to_string()))
+    omnistate_input::move_mouse(Point { x, y }).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Move mouse smoothly along a Bezier curve (human-like).
 #[napi]
-pub fn move_mouse_smooth(
-    from_x: f64,
-    from_y: f64,
-    to_x: f64,
-    to_y: f64,
-    steps: u32,
-) -> Result<()> {
+pub fn move_mouse_smooth(from_x: f64, from_y: f64, to_x: f64, to_y: f64, steps: u32) -> Result<()> {
     omnistate_input::move_mouse_smooth(
-        Point { x: from_x, y: from_y },
+        Point {
+            x: from_x,
+            y: from_y,
+        },
         Point { x: to_x, y: to_y },
         steps,
     )
@@ -30,30 +26,30 @@ pub fn move_mouse_smooth(
 #[napi]
 pub fn click(button: String) -> Result<()> {
     let btn = parse_mouse_button(&button)?;
-    omnistate_input::click(btn)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    omnistate_input::click(btn).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Double-click a mouse button.
 #[napi]
 pub fn double_click(button: String) -> Result<()> {
     let btn = parse_mouse_button(&button)?;
-    omnistate_input::double_click(btn)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    omnistate_input::double_click(btn).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Scroll the mouse wheel. dy > 0 scrolls up, dy < 0 scrolls down.
 #[napi]
 pub fn scroll(dx: i32, dy: i32) -> Result<()> {
-    omnistate_input::scroll(dx, dy)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    omnistate_input::scroll(dx, dy).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Drag from one point to another with left mouse button held.
 #[napi]
 pub fn drag(from_x: f64, from_y: f64, to_x: f64, to_y: f64) -> Result<()> {
     omnistate_input::drag(
-        Point { x: from_x, y: from_y },
+        Point {
+            x: from_x,
+            y: from_y,
+        },
         Point { x: to_x, y: to_y },
     )
     .map_err(|e| Error::from_reason(e.to_string()))
@@ -63,34 +59,45 @@ pub fn drag(from_x: f64, from_y: f64, to_x: f64, to_y: f64) -> Result<()> {
 #[napi]
 pub fn key_tap(key: String, shift: bool, control: bool, alt: bool, meta: bool) -> Result<()> {
     let k = parse_key(&key)?;
-    let modifiers = Modifiers { shift, control, alt, meta };
-    omnistate_input::key_tap(k, modifiers)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    let modifiers = Modifiers {
+        shift,
+        control,
+        alt,
+        meta,
+    };
+    omnistate_input::key_tap(k, modifiers).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Press a key down without releasing it. Pair with key_up to release.
 #[napi]
 pub fn key_down(key: String, shift: bool, control: bool, alt: bool, meta: bool) -> Result<()> {
     let k = parse_key(&key)?;
-    let modifiers = Modifiers { shift, control, alt, meta };
-    omnistate_input::key_down(k, modifiers)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    let modifiers = Modifiers {
+        shift,
+        control,
+        alt,
+        meta,
+    };
+    omnistate_input::key_down(k, modifiers).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Release a previously pressed key.
 #[napi]
 pub fn key_up(key: String, shift: bool, control: bool, alt: bool, meta: bool) -> Result<()> {
     let k = parse_key(&key)?;
-    let modifiers = Modifiers { shift, control, alt, meta };
-    omnistate_input::key_up(k, modifiers)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    let modifiers = Modifiers {
+        shift,
+        control,
+        alt,
+        meta,
+    };
+    omnistate_input::key_up(k, modifiers).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 /// Type a string of text with human-like delays.
 #[napi]
 pub fn type_text(text: String) -> Result<()> {
-    omnistate_input::type_text(&text)
-        .map_err(|e| Error::from_reason(e.to_string()))
+    omnistate_input::type_text(&text).map_err(|e| Error::from_reason(e.to_string()))
 }
 
 fn parse_mouse_button(s: &str) -> Result<MouseButton> {
@@ -124,7 +131,8 @@ fn parse_key(s: &str) -> Result<Key> {
         "meta" | "command" | "cmd" => Ok(Key::Meta),
         s if s.len() == 1 => Ok(Key::Char(s.chars().next().unwrap())),
         s if s.starts_with('f') || s.starts_with('F') => {
-            let n: u8 = s[1..].parse()
+            let n: u8 = s[1..]
+                .parse()
                 .map_err(|_| Error::from_reason(format!("Invalid function key: {s}")))?;
             Ok(Key::Function(n))
         }

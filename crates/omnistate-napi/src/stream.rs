@@ -8,8 +8,8 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // ---------------------------------------------------------------------------
 // Stream registry
@@ -66,8 +66,7 @@ pub fn start_capture_stream(
     width: u32,
     height: u32,
     show_cursor: bool,
-    #[allow(unused_variables)]
-    callback: ThreadsafeFunction<FrameEvent, ErrorStrategy::Fatal>,
+    #[allow(unused_variables)] callback: ThreadsafeFunction<FrameEvent, ErrorStrategy::Fatal>,
 ) -> Result<String> {
     #[cfg(not(target_os = "macos"))]
     {

@@ -15,13 +15,17 @@
 //!
 //! ## Note: WDA must be running on device via XCTest bootstrap
 
-use omnistate_core::error::{OmniError, OmniResult};
 use omnistate_core::UIElement;
+use omnistate_core::error::{OmniError, OmniResult};
 
 pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
-    Err(OmniError::UnsupportedPlatform("iOS remote accessibility (WDA) not yet implemented".into()))
+    Err(OmniError::UnsupportedPlatform(
+        "iOS remote accessibility (WDA) not yet implemented".into(),
+    ))
 }
 
 pub fn find_element(_query: &str) -> OmniResult<Option<UIElement>> {
-    Err(OmniError::UnsupportedPlatform("iOS remote element search not yet implemented".into()))
+    Err(OmniError::UnsupportedPlatform(
+        "iOS remote element search not yet implemented".into(),
+    ))
 }
