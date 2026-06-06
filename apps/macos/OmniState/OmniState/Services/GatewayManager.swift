@@ -11,6 +11,7 @@ class GatewayManager: ObservableObject {
     private var process: Process?
     private var outputPipe: Pipe?
     private var errorPipe: Pipe?
+    private var wakeRecoveryWorkItem: DispatchWorkItem?
     private var restartCount = 0
     private let maxRestarts = 5
     private var stopRequested = false
@@ -22,21 +23,50 @@ class GatewayManager: ObservableObject {
         NSHomeDirectory() + "/.omnistate/llm.runtime.json"
     }
 
-    /// Path to the gateway entry point
-    private var gatewayPath: String {
-        // In dev: use the source project path
-        // In release: use bundled path inside .app
-        let bundledPath = Bundle.main.resourcePath.map { "\($0)/gateway/dist/index.js" } ?? ""
-        if FileManager.default.fileExists(atPath: bundledPath) {
-            return bundledPath
+    private var bundledRuntimeRoot: String? {
+        guard let resourcePath = Bundle.main.resourcePath else { return nil }
+        let runtimeRoot = resourcePath + "/runtime"
+        if FileManager.default.fileExists(atPath: runtimeRoot) {
+            return runtimeRoot
         }
-        // Dev fallback: find project root relative to app location
+        return nil
+    }
+
+    /// Path to the gateway entry point inside the bundled runtime.
+    /// Layout: OmniState.app/Contents/Resources/runtime/gateway/dist/index.js
+    /// Falls back to a project-root scan only in DEBUG builds (never in shipped product).
+    private var gatewayPath: String {
+        if let runtimeRoot = bundledRuntimeRoot {
+            let bundled = runtimeRoot + "/gateway/dist/index.js"
+            if FileManager.default.fileExists(atPath: bundled) {
+                return bundled
+            }
+        }
+        #if DEBUG
+        // Walk up from bundle to project root in dev only.
         let projectRoot = findProjectRoot()
-        return "\(projectRoot)/packages/gateway/dist/index.js"
+        let devPath = projectRoot + "/packages/gateway/dist/index.js"
+        if FileManager.default.fileExists(atPath: devPath) {
+            return devPath
+        }
+        // Last-resort dev path — only present in DEBUG so the app can
+        // still launch during iterative development without a bundled copy.
+        return NSHomeDirectory() + "/Projects/omnistate/packages/gateway/dist/index.js"
+        #else
+        return ""
+        #endif
     }
 
     /// Find node executable
     private var nodePath: String {
+        if let runtimeRoot = bundledRuntimeRoot {
+            let bundledNode = runtimeRoot + "/bin/node"
+            if FileManager.default.fileExists(atPath: bundledNode),
+               validateNodeBinary(at: bundledNode) {
+                return bundledNode
+            }
+        }
+
         // Check common locations
         let candidates = [
             "/opt/homebrew/bin/node",
@@ -68,8 +98,35 @@ class GatewayManager: ObservableObject {
         return "node" // hope it's in PATH
     }
 
+    private func validateNodeBinary(at path: String) -> Bool {
+        let proc = Process()
+        let pipe = Pipe()
+        proc.executableURL = URL(fileURLWithPath: path)
+        proc.arguments = ["--version"]
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+
+        do {
+            try proc.run()
+        } catch {
+            return false
+        }
+
+        let deadline = Date().addingTimeInterval(2.0)
+        while proc.isRunning && Date() < deadline {
+            usleep(50_000)
+        }
+
+        if proc.isRunning {
+            proc.terminate()
+            return false
+        }
+
+        return proc.terminationStatus == 0
+    }
+
     private func findProjectRoot() -> String {
-        // Walk up from bundle location to find pnpm-workspace.yaml
+        // Walk up from bundle location to find pnpm-workspace.yaml marker.
         var dir = Bundle.main.bundlePath
         for _ in 0..<10 {
             dir = (dir as NSString).deletingLastPathComponent
@@ -78,8 +135,15 @@ class GatewayManager: ObservableObject {
                 return dir
             }
         }
-        // Default to a known dev path
-        return NSHomeDirectory() + "/Projects/omnistate"
+        // No hardcoded fallback — return empty so callers can handle gracefully.
+        return ""
+    }
+
+    private func runtimeWorkingDirectory(for gateway: String) -> String {
+        if let runtimeRoot = bundledRuntimeRoot {
+            return runtimeRoot
+        }
+        return (gateway as NSString).deletingLastPathComponent
     }
 
     private func siriHTTPPort() -> Int {
@@ -169,7 +233,7 @@ class GatewayManager: ObservableObject {
 
         proc.executableURL = URL(fileURLWithPath: nodePath)
         proc.arguments = [gateway]
-        proc.currentDirectoryURL = URL(fileURLWithPath: findProjectRoot())
+        proc.currentDirectoryURL = URL(fileURLWithPath: runtimeWorkingDirectory(for: gateway))
         proc.standardOutput = outPipe
         proc.standardError = errPipe
 
@@ -255,8 +319,44 @@ class GatewayManager: ObservableObject {
         }
     }
 
+    func handleSystemWillSleep() {
+        wakeRecoveryWorkItem?.cancel()
+        Task { @MainActor in
+            GatewaySocketClient.shared.disconnect()
+        }
+        print("[OmniState] System will sleep — disconnected gateway socket")
+    }
+
+    func handleSystemDidWake() {
+        wakeRecoveryWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+
+            if let proc = self.process, proc.isRunning {
+                Task { @MainActor in
+                    GatewaySocketClient.shared.connect()
+                    GatewaySocketClient.shared.queryRuntimeConfig()
+                }
+                print("[OmniState] System woke — refreshed gateway runtime state")
+                return
+            }
+
+            self.start()
+            Task { @MainActor in
+                GatewaySocketClient.shared.connect()
+                GatewaySocketClient.shared.queryRuntimeConfig()
+            }
+            print("[OmniState] System woke — restarted gateway after sleep")
+        }
+
+        wakeRecoveryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+
     func stop() {
         stopRequested = true
+        wakeRecoveryWorkItem?.cancel()
 
         guard let proc = process, proc.isRunning else {
             DispatchQueue.main.async {

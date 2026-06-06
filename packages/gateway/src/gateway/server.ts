@@ -9,13 +9,16 @@ import type { HealthMonitor } from "../health/monitor.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { WakeManager } from "../voice/wake-manager.js";
+import { PowerAwareVoiceRuntimeController } from "../voice/power-aware-runtime.js";
 import { VoiceStreamManager } from "../voice/webrtc-stream.js";
+import { deviceOptimizer } from "../voice/device-profiles.js";
 import { CancellationRegistry, TaskCancelledError } from "../executor/cancellation-registry.js";
 import { TriggerEngine } from "../triggers/index.js";
 import { getDb } from "../db/database.js";
 import { EventBus } from "../events/event-bus.js";
 import { OSFirehose } from "../events/os-firehose.js";
 import { RuleEngine } from "../events/rule-engine.js";
+import { PowerManager } from "../power/power-manager.js";
 import { EventRepository } from "../events/event-repository.js";
 import { MemoryRepository } from "../memory/memory-repository.js";
 import { ClaudeMemStore } from "../session/claude-mem-store.js";
@@ -24,6 +27,9 @@ import { ClaudeCodeResponder } from "../vision/permission-responder.js";
 import { logger } from "../utils/logger.js";
 import { handleSiriBridgeRequest as _handleSiriBridgeRequest, handleConnection as _handleConnection, handleMessage as doHandleMessage } from "./server-handlers.js";
 import type { ConnectedClient } from "./server-types.js";
+import type { ExecutionResult, StepResult } from "../executor/orchestrator.js";
+import type { TaskCapabilityRef, TaskClaimStatus, VerificationResult } from "@omnistate/shared";
+import { getGatewayCapabilityRef } from "../verification/capability-contracts.js";
 
 // Re-export helpers and types for external consumers
 export {
@@ -55,10 +61,14 @@ export class OmniStateGateway {
   private eventBus: EventBus = new EventBus();
   private firehose: OSFirehose = new OSFirehose(this.eventBus);
   private ruleEngine: RuleEngine = new RuleEngine(this.eventBus);
+  private powerManager: PowerManager;
   private clients: Map<string, ConnectedClient> = new Map();
   private config: GatewayConfig;
   private orchestrator: Orchestrator;
   public monitor: HealthMonitor | null = null; // used by server-handlers
+  private powerAwareVoiceController = new PowerAwareVoiceRuntimeController({
+    restartWakeListener: () => this.startWakeListener(),
+  });
   public startedAt = Date.now(); // used by server-handlers
   private taskHistory: Array<{
     taskId: string;
@@ -78,6 +88,8 @@ export class OmniStateGateway {
   constructor(config: GatewayConfig) {
     this.config = config;
     this.orchestrator = new Orchestrator();
+    this.powerManager = new PowerManager(this.eventBus, loadLlmRuntimeConfig().power);
+    deviceOptimizer.autoDetect();
 
     // Wire up permission responder system if approvalPolicy is configured
     if (config.approvalPolicy) {
@@ -100,9 +112,17 @@ export class OmniStateGateway {
     }
   }
 
+  applyPowerPolicyFromRuntimeConfig(): void {
+    const runtime = loadLlmRuntimeConfig();
+    this.powerManager.updatePolicy(runtime.power);
+  }
+
   /** Wire in the health monitor for health.query responses. */
   setHealthMonitor(monitor: HealthMonitor): void {
     this.monitor = monitor;
+    monitor.onReport((report) => {
+      this.powerAwareVoiceController.handleHealthReport(report);
+    });
   }
 
   /** Start the WebSocket server. */
@@ -146,8 +166,21 @@ export class OmniStateGateway {
     });
     this.triggerEngine.bridgeToEventBus(this.eventBus);
     this.firehose.start();
+    this.powerManager.start();
     this.ruleEngine.start(async (_rule, event) => {
       logger.info({ eventType: event.type }, "[rule-engine] Rule fired");
+    });
+
+    this.eventBus.on("power.state.changed", (event) => {
+      const mode = event.payload.mode;
+      if (
+        mode === "normal" ||
+        mode === "low_power" ||
+        mode === "battery_saver"
+      ) {
+        deviceOptimizer.setPowerMode(mode);
+        this.powerAwareVoiceController.handlePowerMode(mode);
+      }
     });
 
     // Broadcast all events to connected WS clients
@@ -180,6 +213,7 @@ export class OmniStateGateway {
     this.wakeManager.stop();
     this.triggerEngine.stop();
     this.firehose.stop();
+    this.powerManager.stop();
     this.ruleEngine.stop();
     if (this.claudeCodeResponder?.isRunning) {
       void this.claudeCodeResponder.stop();
@@ -304,6 +338,16 @@ export class OmniStateGateway {
             output: question,
             missing_params: intent.missing_params,
             stepData: [],
+            claimStatus: 'unverified',
+            verificationSummary: {
+              status: "unverified",
+              confidence: 0,
+              verifier: "heuristic",
+              evidence: [{ type: "heuristic-note", summary: "Task ended in clarification before execution began" }],
+              summary: "Task requires clarification before execution",
+              timestamp: new Date().toISOString(),
+            },
+            capabilities: [],
           },
         } as ServerMessage);
         this.taskHistory.unshift({
@@ -332,6 +376,8 @@ export class OmniStateGateway {
     const totalSteps = plan.nodes.length;
     let stepNum = 0;
     const allStepData: Record<string, unknown>[] = [];
+    const capabilityRefs: TaskCapabilityRef[] = [];
+    let finalVerificationSummary: VerificationResult | undefined;
 
     for (const node of plan.nodes) {
       this.cancellationRegistry.throwIfCancelled(taskId);
@@ -351,7 +397,14 @@ export class OmniStateGateway {
       const singlePlan = { ...plan, nodes: [node] };
       const result = await this.orchestrator.executePlan(singlePlan);
       this.cancellationRegistry.throwIfCancelled(taskId);
-      const stepData = result.stepResults?.[0]?.data ?? {};
+      const stepResult = this.getStepResult(result);
+      const stepData = stepResult?.data ?? {};
+      const stepVerification = stepResult?.verification ?? result.verificationSummary;
+      finalVerificationSummary = this.mergeVerification(finalVerificationSummary, stepVerification);
+      const capabilityRef = this.getCapabilityRef(node.action.tool);
+      if (capabilityRef) {
+        capabilityRefs.push(capabilityRef);
+      }
 
       if (result.status === "failed") {
         this.safeSend(ws, {
@@ -361,7 +414,26 @@ export class OmniStateGateway {
           status: "failed",
           layer: resolvedLayer,
           data: stepData,
+          verification: stepVerification,
+          contractRef: capabilityRef,
         } as ServerMessage);
+
+        if (stepVerification) {
+          this.safeSend(ws, {
+            type: "task.verify",
+            taskId,
+            step: stepNum,
+            result:
+              stepVerification.status === "verified"
+                ? "pass"
+                : stepVerification.status === "contradicted"
+                  ? "fail"
+                  : "ambiguous",
+            confidence: stepVerification.confidence,
+            verification: stepVerification,
+            contractRef: capabilityRef,
+          } as ServerMessage);
+        }
 
         // Translate technical error to user-friendly language
         const rawError = result.error ?? 'Step execution failed';
@@ -399,15 +471,24 @@ export class OmniStateGateway {
         status: "completed",
         layer: resolvedLayer,
         data: stepData,
+        verification: stepVerification,
+        contractRef: capabilityRef,
       } as ServerMessage);
 
-      if (node.verify) {
+      if (stepVerification) {
         this.safeSend(ws, {
           type: "task.verify",
           taskId,
           step: stepNum,
-          result: "pass",
-          confidence: 0.9,
+          result:
+            stepVerification.status === "verified"
+              ? "pass"
+              : stepVerification.status === "contradicted"
+                ? "fail"
+                : "ambiguous",
+          confidence: stepVerification.confidence,
+          verification: stepVerification,
+          contractRef: capabilityRef,
         } as ServerMessage);
       }
     }
@@ -417,6 +498,7 @@ export class OmniStateGateway {
     const outputs = allStepData.flatMap((d) => this.extractUserFacingTexts(d));
     const structuredSummary = this.summarizeStructuredStepData(allStepData, goal, intent.type);
     const combinedOutput = outputs.join("\n").trim() || structuredSummary || this.fallbackUserFacingOutput(goal, intent.type);
+    const claimStatus = this.toClaimStatus(finalVerificationSummary, capabilityRefs);
 
     this.safeSend(ws, {
       type: "task.complete",
@@ -429,6 +511,9 @@ export class OmniStateGateway {
         confidence: intent.confidence,
         output: combinedOutput || undefined,
         stepData: allStepData,
+        claimStatus,
+        verificationSummary: finalVerificationSummary,
+        capabilities: capabilityRefs,
       },
     } as ServerMessage);
 
@@ -507,8 +592,21 @@ export class OmniStateGateway {
             goal,
             mode: "heuristic",
             stepsCompleted: 0,
+            intentType: "ask-clarification",
+            confidence: 0,
             output: "Không thể xác định ý định. Vui lòng thử lại sau khi LLM được khôi phục.",
+            stepData: [],
             warning: llmErrorMessage,
+            claimStatus: "unverified",
+            verificationSummary: {
+              status: "unverified",
+              confidence: 0,
+              verifier: "heuristic",
+              evidence: [{ type: "heuristic-note", summary: "Heuristic fallback could not safely determine intent" }],
+              summary: "Heuristic fallback could not determine a safe executable intent",
+              timestamp: new Date().toISOString(),
+            },
+            capabilities: [],
           },
         } as ServerMessage);
         return;
@@ -525,6 +623,8 @@ export class OmniStateGateway {
         const heuristicTotalSteps = plan.nodes.length;
         let heuristicStepNum = 0;
         const heuristicAllStepData: Record<string, unknown>[] = [];
+        const heuristicCapabilityRefs: TaskCapabilityRef[] = [];
+        let heuristicVerificationSummary: VerificationResult | undefined;
 
         for (const node of plan.nodes) {
           this.cancellationRegistry.throwIfCancelled(taskId);
@@ -542,7 +642,14 @@ export class OmniStateGateway {
           const singlePlan = { ...plan, nodes: [node] };
           const result = await this.orchestrator.executePlan(singlePlan);
           this.cancellationRegistry.throwIfCancelled(taskId);
-          const stepData = result.stepResults?.[0]?.data ?? {};
+          const stepResult = this.getStepResult(result);
+          const stepData = stepResult?.data ?? {};
+          const stepVerification = stepResult?.verification ?? result.verificationSummary;
+          const capabilityRef = this.getCapabilityRef(node.action.tool);
+          heuristicVerificationSummary = this.mergeVerification(heuristicVerificationSummary, stepVerification);
+          if (capabilityRef) {
+            heuristicCapabilityRefs.push(capabilityRef);
+          }
 
           if (result.status === "failed") {
             this.safeSend(ws, {
@@ -552,7 +659,25 @@ export class OmniStateGateway {
               status: "failed",
               layer: resolvedLayer,
               data: stepData,
+              verification: stepVerification,
+              contractRef: capabilityRef,
             } as ServerMessage);
+            if (stepVerification) {
+              this.safeSend(ws, {
+                type: "task.verify",
+                taskId,
+                step: heuristicStepNum,
+                result:
+                  stepVerification.status === "verified"
+                    ? "pass"
+                    : stepVerification.status === "contradicted"
+                      ? "fail"
+                      : "ambiguous",
+                confidence: stepVerification.confidence,
+                verification: stepVerification,
+                contractRef: capabilityRef,
+              } as ServerMessage);
+            }
             this.safeSend(ws, {
               type: "task.error",
               taskId,
@@ -580,15 +705,24 @@ export class OmniStateGateway {
             status: "completed",
             layer: resolvedLayer,
             data: stepData,
+            verification: stepVerification,
+            contractRef: capabilityRef,
           } as ServerMessage);
 
-          if (node.verify) {
+          if (stepVerification) {
             this.safeSend(ws, {
               type: "task.verify",
               taskId,
               step: heuristicStepNum,
-              result: "pass",
-              confidence: 0.9,
+              result:
+                stepVerification.status === "verified"
+                  ? "pass"
+                  : stepVerification.status === "contradicted"
+                    ? "fail"
+                    : "ambiguous",
+              confidence: stepVerification.confidence,
+              verification: stepVerification,
+              contractRef: capabilityRef,
             } as ServerMessage);
           }
         }
@@ -609,6 +743,9 @@ export class OmniStateGateway {
             output: heuristicCombined || undefined,
             stepData: heuristicAllStepData,
             warning: llmErrorMessage,
+            claimStatus: this.toClaimStatus(heuristicVerificationSummary, heuristicCapabilityRefs),
+            verificationSummary: heuristicVerificationSummary,
+            capabilities: heuristicCapabilityRefs,
           },
         } as ServerMessage);
 
@@ -735,6 +872,71 @@ Rules:
     }
 
     return undefined;
+  }
+
+  private getCapabilityRef(tool: string): TaskCapabilityRef | undefined {
+    return getGatewayCapabilityRef(tool);
+  }
+
+  /**
+   * Merges two verification results using priority: contradicted > verified > unsupported > unverified.
+   * This ensures a single contradicted or unverified step does not degrade a prior verified status
+   * unless contradictory evidence is present, per the claimStatus contract.
+   */
+  private mergeVerification(
+    existing: VerificationResult | undefined,
+    incoming: VerificationResult | undefined,
+  ): VerificationResult | undefined {
+    if (!existing) return incoming;
+    if (!incoming) return existing;
+
+    const STATUS_PRIORITY: Record<string, number> = {
+      contradicted: 4,
+      verified: 3,
+      unsupported: 2,
+      unverified: 1,
+    };
+
+    const existingPriority = STATUS_PRIORITY[existing.status] ?? 0;
+    const incomingPriority = STATUS_PRIORITY[incoming.status] ?? 0;
+
+    // When incoming has equal or higher priority, merge evidence arrays and use higher-confidence result.
+    if (incomingPriority >= existingPriority) {
+      return {
+        ...incoming,
+        evidence: [...existing.evidence, ...incoming.evidence],
+        confidence: Math.max(existing.confidence, incoming.confidence),
+      };
+    }
+
+    // When incoming has lower priority, keep existing but append incoming evidence for completeness.
+    return {
+      ...existing,
+      evidence: [...existing.evidence, ...incoming.evidence],
+    };
+  }
+
+  private toClaimStatus(
+    verification: VerificationResult | undefined,
+    capabilities: TaskCapabilityRef[],
+  ): TaskClaimStatus {
+    if (verification?.status === "verified") {
+      return "verified";
+    }
+
+    if (verification?.status === "unsupported") {
+      return "unsupported";
+    }
+
+    if (capabilities.some((capability) => capability.status === "unsupported")) {
+      return "unsupported";
+    }
+
+    return "unverified";
+  }
+
+  private getStepResult(result: ExecutionResult): StepResult | undefined {
+    return result.stepResults?.[0];
   }
 
   private formatSystemInfoSummary(info: Record<string, unknown>): string | undefined {

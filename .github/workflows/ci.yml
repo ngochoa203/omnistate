@@ -102,6 +102,10 @@ jobs:
       - name: Test
         run: pnpm -r --if-present test
 
+      # Voice protocol and STT pipeline regressions are common and high-impact.
+      - name: Voice focused tests
+        run: pnpm test:voice
+
   # ──────────────────────────────────────────────────────────────────────────
   # Swift — macOS app (requires macOS runner + Xcode toolchain)
   # ──────────────────────────────────────────────────────────────────────────

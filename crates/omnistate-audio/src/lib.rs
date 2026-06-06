@@ -5,4 +5,4 @@
 
 pub mod whisper;
 
-pub use whisper::{WhisperConfig, WhisperEngine, TranscriptionResult};
+pub use whisper::{TranscriptionResult, WhisperConfig, WhisperEngine};

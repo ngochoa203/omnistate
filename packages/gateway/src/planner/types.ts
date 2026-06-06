@@ -1,6 +1,6 @@
 // ── Types & constants extracted from intent.ts ──────────────────────────────
 
-import type { StateNode, FailureStrategy } from "../types/task.js";
+import type { StateNode, FailureStrategy, VerifyConfig } from "../types/task.js";
 
 // ============================================================================
 // Intent interfaces
@@ -111,7 +111,6 @@ export const INTENT_TYPES = [
   // ─── Domain E: Deep Hardware & Kernel ────────────────────────────────
   "iokit-hardware",
   "kernel-control",
-  "wifi-security",
 ] as const;
 
 // ============================================================================
@@ -228,7 +227,6 @@ Classify the user's natural-language command into exactly ONE intent type:
 - "multi-app-orchestration" — transfer data between apps, orchestrate multi-app workflows
 - "iokit-hardware"    — read hardware sensors directly via IOKit: thermals, SMC keys, battery health, GPU info, NVRAM, USB/PCI device tree
 - "kernel-control"    — deep kernel operations: sysctl params, kext load/unload/list, VM statistics, dtrace/dtruss syscall tracing, Spotlight indexing, launchd/launchctl
-- "wifi-security"     — WiFi security & monitoring: packet capture, handshake capture, aircrack-ng, deauth attacks, channel hopping, airport deep scan
 
 Also extract relevant entities of these types: file, app, url, person, text, command.
 
@@ -247,7 +245,7 @@ process-management, service-management, package-management, network-control, os-
 hardware-control, security-management, container-management, display-audio, backup-restore, update-management,
 health-check, disk-cleanup, network-diagnose, security-scan, self-healing, voice-control, script-generation,
 automation-macro, workflow-template, file-organization, debug-assist, compliance-check, resource-forecast,
-multi-app-orchestration, iokit-hardware, kernel-control, wifi-security.
+multi-app-orchestration, iokit-hardware, kernel-control.
 Schema:
 {"type":"<intent-type>","confidence":0.0,"entities":{"k":{"type":"file|app|url|person|text|command","value":"v"}}}`;
 
@@ -294,6 +292,43 @@ export function resolveEffectiveBudget() {
 export const FAILURE: FailureStrategy = { strategy: "escalate" };
 export const FAILURE_RETRY: FailureStrategy = { strategy: "retry", maxRetries: 2 };
 
+function inferDefaultVerifyConfig(
+  tool: string,
+  params: Record<string, unknown>,
+): VerifyConfig | undefined {
+  const name = typeof params.name === "string" ? params.name.trim() : "";
+  const url = typeof params.url === "string" ? params.url.trim() : "";
+
+  if ((tool === "app.launch" || tool === "app.activate") && name) {
+    return {
+      strategy: "process",
+      expected: JSON.stringify({ name, running: true }),
+      timeoutMs: 10_000,
+    };
+  }
+
+  if (tool === "app.quit" && name) {
+    return {
+      strategy: "process",
+      expected: JSON.stringify({ name, running: false }),
+      timeoutMs: 10_000,
+    };
+  }
+
+  if ((tool === "browser.open" || tool === "browser.newTab") && url) {
+    return {
+      strategy: "browser-state",
+      expected: JSON.stringify({
+        url,
+        browser: typeof params.browser === "string" ? params.browser : undefined,
+      }),
+      timeoutMs: 10_000,
+    };
+  }
+
+  return undefined;
+}
+
 export function actionNode(
   id: string,
   description: string,
@@ -303,11 +338,13 @@ export function actionNode(
   deps: string[] = [],
   onSuccess: string | null = null,
 ): StateNode {
+  const verify = inferDefaultVerifyConfig(tool, params);
   return {
     id,
     type: "action",
     layer,
     action: { description, tool, params },
+    ...(verify ? { verify } : {}),
     dependencies: deps,
     onSuccess,
     onFailure: FAILURE_RETRY,
@@ -337,6 +374,61 @@ export function verifyNode(
     onSuccess,
     onFailure: FAILURE,
     estimatedDurationMs: 3000,
+    priority: "normal",
+  };
+}
+
+export function verifyProcessNode(
+  id: string,
+  description: string,
+  processName: string,
+  deps: string[],
+  shouldBeRunning: boolean = true,
+  onSuccess: string | null = null,
+): StateNode {
+  return {
+    id,
+    type: "verify",
+    layer: "deep",
+    action: { description, tool: "verify.process", params: {} },
+    verify: {
+      strategy: "process",
+      expected: JSON.stringify({ name: processName, running: shouldBeRunning }),
+      timeoutMs: 10_000,
+    },
+    dependencies: deps,
+    onSuccess,
+    onFailure: FAILURE,
+    estimatedDurationMs: 2_000,
+    priority: "normal",
+  };
+}
+
+export function verifyBrowserStateNode(
+  id: string,
+  description: string,
+  expected: {
+    url: string;
+    browser?: string;
+    titleIncludes?: string;
+  },
+  deps: string[],
+  onSuccess: string | null = null,
+): StateNode {
+  return {
+    id,
+    type: "verify",
+    layer: "deep",
+    action: { description, tool: "verify.browser-state", params: {} },
+    verify: {
+      strategy: "browser-state",
+      expected: JSON.stringify(expected),
+      timeoutMs: 12_000,
+    },
+    dependencies: deps,
+    onSuccess,
+    onFailure: FAILURE,
+    estimatedDurationMs: 2_000,
     priority: "normal",
   };
 }

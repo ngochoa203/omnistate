@@ -4,8 +4,8 @@ use napi_derive::napi;
 /// Capture the entire screen and return metadata as JSON.
 #[napi]
 pub fn capture_screen() -> Result<serde_json::Value> {
-    let frame = omnistate_screen::capture_screen()
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let frame =
+        omnistate_screen::capture_screen().map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(serde_json::json!({
         "width": frame.width,
@@ -52,8 +52,8 @@ pub fn capture_region(x: f64, y: f64, width: f64, height: f64) -> Result<serde_j
 /// Capture screen and return the raw pixel data as a Buffer.
 #[napi]
 pub fn capture_screen_buffer() -> Result<Buffer> {
-    let frame = omnistate_screen::capture_screen()
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let frame =
+        omnistate_screen::capture_screen().map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(Buffer::from(frame.data))
 }
@@ -62,8 +62,8 @@ pub fn capture_screen_buffer() -> Result<Buffer> {
 /// Returns a JSON array of { id, title, owner, bounds, isOnScreen }.
 #[napi]
 pub fn list_windows() -> Result<serde_json::Value> {
-    let windows = omnistate_screen::list_windows()
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+    let windows =
+        omnistate_screen::list_windows().map_err(|e| Error::from_reason(e.to_string()))?;
 
     let result: Vec<serde_json::Value> = windows
         .iter()

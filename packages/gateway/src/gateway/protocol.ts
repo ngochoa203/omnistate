@@ -222,7 +222,10 @@ export interface RuntimeConfigSetMessage {
     | "voice.siri.token"
     | "vad.silenceThresholdMs"
     | "vad.speechThreshold"
-    | "vad.minSpeechMs";
+    | "vad.minSpeechMs"
+    | "power.lowBatteryThreshold"
+    | "power.criticalBatteryThreshold"
+    | "power.pollIntervalMs";
   value: string | boolean | number;
 }
 
@@ -273,9 +276,18 @@ export interface VoiceStreamStartMessage {
   sampleRate?: number;
   autoExecute?: boolean;
   includeContext?: boolean;
+  wantTts?: boolean;
+  ttsProfileId?: string;
 }
 
-export interface VoiceStreamChunkMessage { type: "voice.stream.chunk"; sessionId: string; audio: string; }
+export interface VoiceStreamChunkMessage {
+  type: "voice.stream.chunk";
+  sessionId: string;
+  /** Base64 audio chunk. `chunk` is what the web client sends; `audio` is retained for compatibility. */
+  chunk?: string;
+  audio?: string;
+  seq?: number;
+}
 export interface VoiceStreamStopMessage { type: "voice.stream.stop"; sessionId: string; autoExecute?: boolean; includeContext?: boolean; }
 export interface VoiceSessionCancelMessage { type: "voice.session.cancel"; sessionId: string; }
 export interface TaskCancelMessage { type: "task.cancel"; taskId: string; }
@@ -324,6 +336,9 @@ export type ServerMessage =
   | VoiceTranscriptFinalMessage
   | VoiceContextMessage
   | VoiceStreamErrorMessage
+  | VoiceStreamResultMessage
+  | VoiceCommandResultMessage
+  | VoiceStreamDiagnosticsMessage
   | TaskCancelledMessage
   | VoiceEnrollResultMessage
   | VoiceEnrollErrorMessage
@@ -375,20 +390,80 @@ export interface TaskStepMessage {
   status: "executing" | "completed" | "failed";
   layer: "deep" | "surface" | "fleet";
   data?: Record<string, unknown>;
+  verification?: VerificationResult;
+  contractRef?: TaskCapabilityRef;
 }
+
+export type TaskVerificationResult = "pass" | "fail" | "ambiguous";
+
+export type VerificationStatus = "verified" | "unverified" | "contradicted" | "unsupported";
+
+export type VerificationEvidenceType =
+  | "text"
+  | "ui-tree"
+  | "image-region"
+  | "process-state"
+  | "window-state"
+  | "api-response"
+  | "file-state"
+  | "heuristic-note";
+
+export interface VerificationEvidence {
+  type: VerificationEvidenceType;
+  summary: string;
+  details?: Record<string, unknown>;
+}
+
+export interface VerificationResult {
+  status: VerificationStatus;
+  confidence: number;
+  verifier: string;
+  evidence: VerificationEvidence[];
+  summary?: string;
+  timestamp: string;
+}
+
+export interface TaskCapabilityRef {
+  capabilityId: string;
+  label?: string;
+  version?: string;
+  tool?: string;
+  status?: "implemented" | "experimental" | "unsupported" | "flagged";
+  riskTier?: "read-only" | "reversible-write" | "destructive" | "system-sensitive";
+}
+
+export type TaskClaimStatus = "verified" | "unverified" | "unsupported";
 
 export interface TaskVerifyMessage {
   type: "task.verify";
   taskId: string;
   step: number;
-  result: "pass" | "fail" | "ambiguous";
+  result: TaskVerificationResult;
   confidence?: number;
+  contractRef?: TaskCapabilityRef;
+  verification?: VerificationResult;
+}
+
+export interface TaskCompleteResult {
+  goal: string;
+  mode: string;
+  stepsCompleted: number;
+  intentType: string;
+  confidence: number;
+  output?: string;
+  stepData: Array<Record<string, unknown>>;
+  warning?: string;
+  missing_params?: string[];
+  claimStatus?: TaskClaimStatus;
+  verificationSummary?: VerificationResult;
+  capabilities?: TaskCapabilityRef[];
 }
 
 export interface TaskCompleteMessage {
   type: "task.complete";
   taskId: string;
-  result: Record<string, unknown>;
+  result: TaskCompleteResult;
+  contractRef?: TaskCapabilityRef;
 }
 
 export interface TaskErrorMessage {
@@ -482,7 +557,21 @@ export interface VoiceStateMessage { type: "voice.state"; sessionId?: string; st
 export interface VoiceTranscriptPartialMessage { type: "voice.transcript.partial"; sessionId: string; text: string; provider?: string; }
 export interface VoiceTranscriptFinalMessage { type: "voice.transcript.final"; sessionId: string; text: string; provider?: string; taskId?: string; }
 export interface VoiceContextMessage { type: "voice.context"; sessionId: string; context: unknown; }
-export interface VoiceStreamErrorMessage { type: "voice.stream.error"; sessionId: string; error: string; }
+export interface VoiceStreamErrorMessage { type: "voice.stream.error"; sessionId: string; error: string; code?: string; }
+export interface VoiceStreamResultMessage { type: "voice.stream.result"; sessionId: string; kind: "partial" | "final"; text: string; provider?: string; }
+export interface VoiceCommandResultMessage { type: "voice.command.result"; sessionId: string; intent: string; success: boolean; message: string; action?: string; data?: unknown; }
+export interface VoiceStreamDiagnosticsMessage {
+  type: "voice.stream.diagnostics";
+  sessionId: string;
+  stage: "started" | "chunk" | "finalizing" | "ended";
+  mimeType?: string;
+  sampleRate?: number;
+  chunkBytes?: number;
+  totalBytes?: number;
+  chunks?: number;
+  useStreamingStt?: boolean;
+  message?: string;
+}
 export interface TaskCancelledMessage { type: "task.cancelled"; taskId: string; reason?: string; }
 
 export interface VoiceEnrollResultMessage {
@@ -519,6 +608,15 @@ export interface SystemInfoMessage {
     disk: any;
     cpu: any;
     memory: any;
+    power?: {
+      mode: string;
+      isOnBattery: boolean;
+      isCharging: boolean;
+      chargePercent: number | null;
+      lowPowerModeEnabled: boolean;
+      thermalPressure: string;
+      sampledAt: number;
+    } | null;
     hostname: string;
     error?: string;
   };

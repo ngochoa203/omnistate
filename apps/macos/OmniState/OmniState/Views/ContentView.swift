@@ -1184,6 +1184,9 @@ struct ContentView: View {
                 HStack(alignment: .top, spacing: sectionGap) {
                     if let si = socketClient.systemInfo {
                         let battPct = si.batteryPercent ?? 0
+                        let powerMode = (socketClient.powerState?.mode ?? si.powerMode ?? "normal").lowercased()
+                        let thermalPressure = (socketClient.powerState?.thermalPressure ?? si.thermalPressure ?? "unknown").lowercased()
+                        let lowPowerEnabled = socketClient.powerState?.lowPowerModeEnabled ?? si.lowPowerModeEnabled
                         GlowCard(glow: battPct > 50 ? CyberColor.green.opacity(0.3) : CyberColor.orange.opacity(0.3)) {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
@@ -1197,6 +1200,16 @@ struct ContentView: View {
                                 }
                                 if si.batteryCharging {
                                     CyberBadge(text: "⚡ Charging", color: CyberColor.orange)
+                                }
+                                if powerMode == "battery_saver" {
+                                    CyberBadge(text: "Battery Saver", color: CyberColor.red)
+                                } else if powerMode == "low_power" || lowPowerEnabled {
+                                    CyberBadge(text: "Low Power", color: CyberColor.orange)
+                                }
+                                if thermalPressure == "heavy" || thermalPressure == "critical" {
+                                    CyberBadge(text: "Thermal \(thermalPressure.capitalized)", color: CyberColor.red)
+                                } else if thermalPressure == "moderate" {
+                                    CyberBadge(text: "Thermal Moderate", color: CyberColor.orange)
                                 }
                             }
                         }
@@ -2577,7 +2590,8 @@ struct ContentView: View {
                                 if let si = socketClient.systemInfo {
                                     let cpuLoad = si.cpuLoadAvg ?? "n/a"
                                     let wifiName = si.wifiSSID ?? "none"
-                                    let text = "host=\(si.hostname) cpu=\(cpuLoad) mem=\(si.memoryTotalMB ?? 0)MB wifi=\(wifiName)"
+                                    let powerMode = socketClient.powerState?.mode ?? si.powerMode ?? "normal"
+                                    let text = "host=\(si.hostname) cpu=\(cpuLoad) mem=\(si.memoryTotalMB ?? 0)MB wifi=\(wifiName) power=\(powerMode)"
                                     copyToClipboard(text)
                                     inlineStatusMessage = tx("Đã copy machine summary", "Machine summary copied")
                                 }
@@ -2594,10 +2608,13 @@ struct ContentView: View {
                         guard let total = si.memoryTotalMB, let free = si.memoryFreeMB, total > 0 else { return 0 }
                         return Int(Double(total - free) / Double(total) * 100)
                     }()
+                    let powerMode = socketClient.powerState?.mode ?? si.powerMode ?? "normal"
+                    let thermalPressure = socketClient.powerState?.thermalPressure ?? si.thermalPressure ?? "unknown"
 
                     LazyVGrid(columns: machineInfoColumns, spacing: regularGridSpacing) {
                         gaugeInfoCard(label: "Hostname", value: si.hostname, icon: "house.fill", color: CyberColor.cyan)
                         gaugeInfoCard(label: "Battery", value: "\(battPct)%", icon: battPct > 50 ? "battery.100" : "battery.25", color: battPct > 20 ? CyberColor.green : CyberColor.red, pct: Double(battPct))
+                        gaugeInfoCard(label: "Power", value: powerMode.replacingOccurrences(of: "_", with: " ").capitalized, icon: powerMode == "battery_saver" ? "bolt.batteryblock.fill" : "battery.50", color: powerMode == "normal" ? CyberColor.green : (powerMode == "low_power" ? CyberColor.orange : CyberColor.red))
                         gaugeInfoCard(label: "Wi-Fi", value: si.wifiSSID ?? (si.wifiConnected ? "Connected" : "Disconnected"), icon: "wifi", color: si.wifiConnected ? CyberColor.green : CyberColor.red)
                         gaugeInfoCard(label: "Disk", value: si.diskUsePercent ?? "N/A", icon: "internaldrive.fill", color: diskPct > 90 ? CyberColor.red : diskPct > 70 ? CyberColor.orange : CyberColor.green, pct: Double(diskPct))
                         gaugeInfoCard(label: "CPU Load", value: si.cpuLoadAvg ?? "N/A", icon: "cpu", color: CyberColor.blue)
@@ -2614,6 +2631,9 @@ struct ContentView: View {
                                 Text("IP: \(ip)").font(.system(size: 12, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
                                 if si.batteryCharging {
                                     CyberBadge(text: "⚡ Charging", color: CyberColor.orange)
+                                }
+                                if thermalPressure.lowercased() != "unknown" {
+                                    CyberBadge(text: "Thermal \(thermalPressure.capitalized)", color: thermalPressure.lowercased() == "nominal" ? CyberColor.green : CyberColor.orange)
                                 }
                                 if let d = si.diskTotal, let u = si.diskUsed {
                                     Text("Disk: \(u) / \(d)").font(.system(size: 12, design: .monospaced)).foregroundColor(CyberColor.textSecondary)
@@ -3634,6 +3654,88 @@ struct ContentView: View {
                                 socketClient.sendTask(goal: "Run Siri bridge diagnostics and validate endpoint/token", conversationId: selectedConversationID)
                             }
                             .buttonStyle(.bordered)
+                        }
+                    }
+                }
+
+                GlowCard(glow: CyberColor.green.opacity(0.16)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Power & Efficiency", "Power & Efficiency"))
+
+                        Text(tx("Tinh chỉnh ngưỡng pin và chu kỳ dò power để wake/STT tự hạ tải hợp lý trên từng máy.", "Tune battery thresholds and polling cadence so wake/STT can downshift cleanly per machine."))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(CyberColor.textMuted)
+
+                        HStack(alignment: .top, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Low Battery Threshold", "Low Battery Threshold"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerLowBatteryThreshold)%", value: Binding(get: {
+                                    socketClient.powerLowBatteryThreshold
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: max(socketClient.powerCriticalBatteryThreshold, 5)...60, step: 1)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Critical Battery", "Critical Battery"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerCriticalBatteryThreshold)%", value: Binding(get: {
+                                    socketClient.powerCriticalBatteryThreshold
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: 1...min(socketClient.powerLowBatteryThreshold, 40), step: 1)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(tx("Power Poll Interval", "Power Poll Interval"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(CyberColor.textSecondary)
+                                Stepper("\(socketClient.powerPollIntervalMs) ms", value: Binding(get: {
+                                    socketClient.powerPollIntervalMs
+                                }, set: { value in
+                                    socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: value)
+                                    socketClient.queryRuntimeConfig()
+                                }), in: 2_000...60_000, step: 1_000)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            CyberBadge(
+                                text: tx("Low \(socketClient.powerLowBatteryThreshold)%", "Low \(socketClient.powerLowBatteryThreshold)%"),
+                                color: CyberColor.orange
+                            )
+                            CyberBadge(
+                                text: tx("Critical \(socketClient.powerCriticalBatteryThreshold)%", "Critical \(socketClient.powerCriticalBatteryThreshold)%"),
+                                color: CyberColor.red
+                            )
+                            CyberBadge(
+                                text: tx("Poll \(socketClient.powerPollIntervalMs / 1000)s", "Poll \(socketClient.powerPollIntervalMs / 1000)s"),
+                                color: CyberColor.green
+                            )
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(tx("Battery saver profile", "Battery saver profile")) {
+                                socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: 30)
+                                socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: 15)
+                                socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: 10_000)
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(tx("Balanced profile", "Balanced profile")) {
+                                socketClient.setRuntimeConfig(key: "power.lowBatteryThreshold", value: 20)
+                                socketClient.setRuntimeConfig(key: "power.criticalBatteryThreshold", value: 10)
+                                socketClient.setRuntimeConfig(key: "power.pollIntervalMs", value: 15_000)
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CyberColor.green.opacity(0.75))
                         }
                     }
                 }

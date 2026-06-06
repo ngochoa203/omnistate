@@ -1,19 +1,35 @@
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(target_os = "ios")]
+pub mod ios;
+#[cfg(target_os = "linux")]
+pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
-#[cfg(target_os = "linux")]
-pub mod linux;
-#[cfg(target_os = "ios")]
-pub mod ios;
-#[cfg(target_os = "android")]
-pub mod android;
 
-use omnistate_core::error::OmniResult;
 use omnistate_core::UIElement;
+use omnistate_core::error::OmniResult;
+#[cfg(not(target_os = "macos"))]
+use omnistate_core::{ElementState, Rect};
 
 #[cfg(target_os = "macos")]
 pub use macos::UITreeNode;
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UITreeNode {
+    pub id: String,
+    pub role: String,
+    pub title: Option<String>,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub bounds: Rect,
+    pub state: ElementState,
+    pub children: Vec<UITreeNode>,
+    pub attributes: std::collections::HashMap<String, String>,
+}
 
 /// Get all UI elements visible on the focused window.
 pub fn get_ui_elements() -> OmniResult<Vec<UIElement>> {
@@ -57,9 +73,9 @@ pub fn find_element(query: &str) -> OmniResult<Option<UIElement>> {
 
 /// Perform an accessibility action on the element matching the query.
 /// Common actions: "AXPress", "AXRaise", "AXShowMenu", "AXCancel", "AXConfirm"
-pub fn perform_action(query: &str, action: &str) -> OmniResult<bool> {
+pub fn perform_action(_query: &str, _action: &str) -> OmniResult<bool> {
     #[cfg(target_os = "macos")]
-    return macos::perform_action(query, action);
+    return macos::perform_action(_query, _action);
     #[cfg(not(target_os = "macos"))]
     return Err(omnistate_core::error::OmniError::AccessibilityError(
         "perform_action is only supported on macOS".to_string(),
@@ -67,9 +83,9 @@ pub fn perform_action(query: &str, action: &str) -> OmniResult<bool> {
 }
 
 /// Press (click) a UI element found by query — calls AXPress action directly.
-pub fn press_element(query: &str) -> OmniResult<bool> {
+pub fn press_element(_query: &str) -> OmniResult<bool> {
     #[cfg(target_os = "macos")]
-    return macos::press_element(query);
+    return macos::press_element(_query);
     #[cfg(not(target_os = "macos"))]
     return Err(omnistate_core::error::OmniError::AccessibilityError(
         "press_element is only supported on macOS".to_string(),
@@ -77,9 +93,9 @@ pub fn press_element(query: &str) -> OmniResult<bool> {
 }
 
 /// Set the value of a text field found by query.
-pub fn set_element_value(query: &str, value: &str) -> OmniResult<bool> {
+pub fn set_element_value(_query: &str, _value: &str) -> OmniResult<bool> {
     #[cfg(target_os = "macos")]
-    return macos::set_element_value(query, value);
+    return macos::set_element_value(_query, _value);
     #[cfg(not(target_os = "macos"))]
     return Err(omnistate_core::error::OmniError::AccessibilityError(
         "set_element_value is only supported on macOS".to_string(),
@@ -87,9 +103,9 @@ pub fn set_element_value(query: &str, value: &str) -> OmniResult<bool> {
 }
 
 /// Get available actions for the element matching the query.
-pub fn get_element_actions(query: &str) -> OmniResult<Vec<String>> {
+pub fn get_element_actions(_query: &str) -> OmniResult<Vec<String>> {
     #[cfg(target_os = "macos")]
-    return macos::get_element_actions(query);
+    return macos::get_element_actions(_query);
     #[cfg(not(target_os = "macos"))]
     return Err(omnistate_core::error::OmniError::AccessibilityError(
         "get_element_actions is only supported on macOS".to_string(),

@@ -35,6 +35,8 @@ class HealthChecker: ObservableObject {
     }
 
     func startPolling() {
+        stopPolling()
+
         // Initial check
         check()
 

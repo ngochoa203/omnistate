@@ -199,6 +199,8 @@ import {
 export { IntentRegistry } from "./types.js";
 export type { StructuredResponse, HandlerContext, HandlerLayers, IntentHandler } from "./types.js";
 
+const ENABLE_MUTATION_SURFACES = process.env.OMNISTATE_ENABLE_MUTATION_SURFACES === "true";
+
 // ── Inline handler functions (exported for external use) ───────────────────────
 export const appLaunchHandler = async (
   args: Record<string, unknown>,
@@ -549,116 +551,125 @@ intentRegistry.register("system.lock", systemLock);
 intentRegistry.register("system.dnd", systemDnd);
 intentRegistry.register("system.focus", systemDnd);
 intentRegistry.register("os.getConfig", osGetConfig);
-intentRegistry.register("os.setConfig", osSetConfig);
 intentRegistry.register("os.darkMode", osDarkMode);
 intentRegistry.register("os.dns", osDns);
 intentRegistry.register("os.proxy", osProxy);
-intentRegistry.register("snapshot.create", snapshotCreate);
 intentRegistry.register("snapshot.list", snapshotList);
-intentRegistry.register("snapshot.rollback", snapshotRollback);
 intentRegistry.register("env.get", envGet);
-intentRegistry.register("env.set", envSet);
-intentRegistry.register("env.unset", envUnset);
 intentRegistry.register("env.list", envList);
 intentRegistry.register("defaults.read", defaultsRead);
-intentRegistry.register("defaults.write", defaultsWrite);
-intentRegistry.register("defaults.delete", defaultsDelete);
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("snapshot.create", snapshotCreate);
+  intentRegistry.register("snapshot.rollback", snapshotRollback);
+  intentRegistry.register("env.set", envSet);
+  intentRegistry.register("env.unset", envUnset);
+  intentRegistry.register("defaults.write", defaultsWrite);
+  intentRegistry.register("defaults.delete", defaultsDelete);
+}
 intentRegistry.register("timezone.get", timezoneGet);
-intentRegistry.register("timezone.set", timezoneSet);
 intentRegistry.register("locale.get", localeGet);
-intentRegistry.register("locale.set", localeSet);
 intentRegistry.register("power.battery", powerBattery);
-intentRegistry.register("power.sleep", powerSleep);
-intentRegistry.register("power.shutdown", powerShutdown);
-intentRegistry.register("power.restart", powerRestart);
-intentRegistry.register("power.scheduleWake", powerScheduleWake);
+// power.sleep/shutdown/restart/scheduleWake — gated below
 intentRegistry.register("startup.list", startupList);
-intentRegistry.register("startup.add", startupAdd);
-intentRegistry.register("startup.remove", startupRemove);
 intentRegistry.register("login.items", loginItems);
-intentRegistry.register("login.add", loginAdd);
-intentRegistry.register("login.remove", loginRemove);
 intentRegistry.register("user.list", userList);
 intentRegistry.register("user.current", userCurrent);
 intentRegistry.register("user.groups", userGroups);
 intentRegistry.register("schedule.list", scheduleList);
-intentRegistry.register("schedule.create", scheduleCreate);
-intentRegistry.register("schedule.remove", scheduleRemove);
-intentRegistry.register("wifi.toggle", wifiToggle);
 intentRegistry.register("search.spotlight", searchSpotlight);
 intentRegistry.register("search.files", searchSpotlight);
+
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("os.setConfig", osSetConfig);
+  intentRegistry.register("timezone.set", timezoneSet);
+  intentRegistry.register("locale.set", localeSet);
+  intentRegistry.register("power.sleep", powerSleep);
+  intentRegistry.register("power.shutdown", powerShutdown);
+  intentRegistry.register("power.restart", powerRestart);
+  intentRegistry.register("power.scheduleWake", powerScheduleWake);
+  intentRegistry.register("startup.add", startupAdd);
+  intentRegistry.register("startup.remove", startupRemove);
+  intentRegistry.register("login.add", loginAdd);
+  intentRegistry.register("login.remove", loginRemove);
+  intentRegistry.register("schedule.create", scheduleCreate);
+  intentRegistry.register("schedule.remove", scheduleRemove);
+  intentRegistry.register("wifi.toggle", wifiToggle);
+}
 
 // ── Service ───────────────────────────────────────────────────────────────────
 intentRegistry.register("service.list", serviceList);
 intentRegistry.register("service.status", serviceStatus);
-intentRegistry.register("service.start", serviceStart);
-intentRegistry.register("service.stop", serviceStop);
-intentRegistry.register("service.restart", serviceRestart);
-intentRegistry.register("service.enable", serviceEnable);
-intentRegistry.register("service.disable", serviceDisable);
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("service.start", serviceStart);
+  intentRegistry.register("service.stop", serviceStop);
+  intentRegistry.register("service.restart", serviceRestart);
+  intentRegistry.register("service.enable", serviceEnable);
+  intentRegistry.register("service.disable", serviceDisable);
+}
 
 // ── Package / Software ────────────────────────────────────────────────────────
 intentRegistry.register("package.list", packageList);
-intentRegistry.register("package.install", packageInstall);
-intentRegistry.register("package.remove", packageRemove);
-intentRegistry.register("package.upgrade", packageUpgrade);
-intentRegistry.register("package.upgradeAll", packageUpgradeAll);
+// package.install/remove/upgrade/upgradeAll — gated below
 intentRegistry.register("package.search", packageSearch);
-intentRegistry.register("software.install", softwareInstall);
-intentRegistry.register("software.uninstall", softwareUninstall);
-intentRegistry.register("software.update", softwareUpdate);
-intentRegistry.register("software.brewInstall", softwareBrewInstall);
-intentRegistry.register("software.brewUninstall", softwareBrewUninstall);
 intentRegistry.register("software.brewList", softwareBrewList);
 intentRegistry.register("software.brewSearch", softwareBrewSearch);
-intentRegistry.register("software.brewUpdate", softwareBrewUpdate);
-intentRegistry.register("software.brewUpgrade", softwareBrewUpgrade);
 intentRegistry.register("software.brewInfo", softwareBrewInfo);
 intentRegistry.register("software.brewServices", softwareBrewServices);
 intentRegistry.register("software.brewDoctor", softwareBrewDoctor);
-intentRegistry.register("software.npmInstall", softwareNpmInstall);
-intentRegistry.register("software.npmUninstall", softwareNpmUninstall);
 intentRegistry.register("software.npmList", softwareNpmList);
-intentRegistry.register("software.npmRun", softwareNpmRun);
-intentRegistry.register("software.npmInit", softwareNpmInit);
 intentRegistry.register("software.npmSearch", softwareNpmSearch);
 intentRegistry.register("software.npmOutdated", softwareNpmOutdated);
-intentRegistry.register("software.npmUpdate", softwareNpmUpdate);
-intentRegistry.register("software.pipInstall", softwarePipInstall);
-intentRegistry.register("software.pipUninstall", softwarePipUninstall);
 intentRegistry.register("software.pipList", softwarePipList);
 intentRegistry.register("software.pipFreeze", softwarePipFreeze);
 intentRegistry.register("software.pipSearch", softwarePipSearch);
 intentRegistry.register("software.pipShowVenvs", softwarePipShowVenvs);
 intentRegistry.register("software.getEnv", softwareGetEnv);
-intentRegistry.register("software.setEnv", softwareSetEnv);
-intentRegistry.register("software.unsetEnv", softwareUnsetEnv);
 intentRegistry.register("software.listEnv", softwareListEnv);
-intentRegistry.register("software.exportEnv", softwareExportEnv);
 intentRegistry.register("software.getSystemInfo", softwareGetSystemInfo);
 intentRegistry.register("software.getDiskUsage", softwareGetDiskUsage);
 intentRegistry.register("software.getMemoryUsage", softwareGetMemoryUsage);
 intentRegistry.register("software.getProcessorUsage", softwareGetProcessorUsage);
 intentRegistry.register("software.getNetworkInterfaces", softwareGetNetworkInterfaces);
 intentRegistry.register("software.getNodeVersions", softwareGetNodeVersions);
-intentRegistry.register("software.setNodeVersion", softwareSetNodeVersion);
 intentRegistry.register("software.getPythonVersions", softwareGetPythonVersions);
-intentRegistry.register("software.setPythonVersion", softwareSetPythonVersion);
 intentRegistry.register("software.getRubyVersions", softwareGetRubyVersions);
-intentRegistry.register("software.caskInstall", softwareCaskInstall);
-intentRegistry.register("software.caskUninstall", softwareCaskUninstall);
 intentRegistry.register("software.caskList", softwareCaskList);
 intentRegistry.register("software.caskSearch", softwareCaskSearch);
 intentRegistry.register("software.getInstalledApps", softwareGetInstalledApps);
 intentRegistry.register("software.getAppInfo", softwareGetAppInfo);
 intentRegistry.register("software.isAppInstalled", softwareIsAppInstalled);
 
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("package.install", packageInstall);
+  intentRegistry.register("package.remove", packageRemove);
+  intentRegistry.register("package.upgrade", packageUpgrade);
+  intentRegistry.register("package.upgradeAll", packageUpgradeAll);
+  intentRegistry.register("software.install", softwareInstall);
+  intentRegistry.register("software.uninstall", softwareUninstall);
+  intentRegistry.register("software.update", softwareUpdate);
+  intentRegistry.register("software.brewInstall", softwareBrewInstall);
+  intentRegistry.register("software.brewUninstall", softwareBrewUninstall);
+  intentRegistry.register("software.brewUpdate", softwareBrewUpdate);
+  intentRegistry.register("software.brewUpgrade", softwareBrewUpgrade);
+  intentRegistry.register("software.npmInstall", softwareNpmInstall);
+  intentRegistry.register("software.npmUninstall", softwareNpmUninstall);
+  intentRegistry.register("software.npmRun", softwareNpmRun);
+  intentRegistry.register("software.npmInit", softwareNpmInit);
+  intentRegistry.register("software.npmUpdate", softwareNpmUpdate);
+  intentRegistry.register("software.pipInstall", softwarePipInstall);
+  intentRegistry.register("software.pipUninstall", softwarePipUninstall);
+  intentRegistry.register("software.setEnv", softwareSetEnv);
+  intentRegistry.register("software.unsetEnv", softwareUnsetEnv);
+  intentRegistry.register("software.exportEnv", softwareExportEnv);
+  intentRegistry.register("software.setNodeVersion", softwareSetNodeVersion);
+  intentRegistry.register("software.setPythonVersion", softwareSetPythonVersion);
+  intentRegistry.register("software.caskInstall", softwareCaskInstall);
+  intentRegistry.register("software.caskUninstall", softwareCaskUninstall);
+}
+
 // ── Network ───────────────────────────────────────────────────────────────────
 intentRegistry.register("network.interfaces", networkInterfaces);
-intentRegistry.register("network.wifiConnect", networkWifiConnect);
-intentRegistry.register("network.wifiDisconnect", networkWifiDisconnect);
 intentRegistry.register("network.firewall", networkFirewall);
-intentRegistry.register("network.firewallToggle", networkFirewallToggle);
 intentRegistry.register("network.openPorts", networkOpenPorts);
 intentRegistry.register("network.connections", networkConnections);
 intentRegistry.register("network.routes", networkRoutes);
@@ -666,111 +677,126 @@ intentRegistry.register("network.ping", networkPing);
 intentRegistry.register("network.traceroute", networkTraceroute);
 intentRegistry.register("network.vpn", networkVpn);
 intentRegistry.register("firewall.rules", firewallRules);
-intentRegistry.register("firewall.addRule", firewallAddRule);
-intentRegistry.register("firewall.blockIP", firewallBlockIP);
-intentRegistry.register("firewall.unblockIP", firewallUnblockIP);
-intentRegistry.register("firewall.blockPort", firewallBlockPort);
-intentRegistry.register("firewall.allowPort", firewallAllowPort);
+// firewall.addRule/blockIP/unblockIP/blockPort/allowPort — gated below
 intentRegistry.register("ssh.list", sshList);
 intentRegistry.register("ssh.generate", sshGenerate);
-intentRegistry.register("security.vpn.toggle", securityVpnToggle);
-intentRegistry.register("security.dns.set", securityDnsSet);
-intentRegistry.register("security.proxy.set", securityProxySet);
+
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("network.wifiConnect", networkWifiConnect);
+  intentRegistry.register("network.wifiDisconnect", networkWifiDisconnect);
+  intentRegistry.register("network.firewallToggle", networkFirewallToggle);
+  intentRegistry.register("firewall.addRule", firewallAddRule);
+  intentRegistry.register("firewall.blockIP", firewallBlockIP);
+  intentRegistry.register("firewall.unblockIP", firewallUnblockIP);
+  intentRegistry.register("firewall.blockPort", firewallBlockPort);
+  intentRegistry.register("firewall.allowPort", firewallAllowPort);
+  intentRegistry.register("security.vpn.toggle", securityVpnToggle);
+  intentRegistry.register("security.dns.set", securityDnsSet);
+  intentRegistry.register("security.proxy.set", securityProxySet);
+}
 
 // ── Security / Pentest ──────────────────────────────────────────────────────
 intentRegistry.register("wifi.scan", wifiScan);
 intentRegistry.register("wifi.details", wifiDetails);
-intentRegistry.register("wifi.monitor.start", wifiMonitorStart);
-intentRegistry.register("wifi.monitor.stop", wifiMonitorStop);
-intentRegistry.register("network.capture", networkCapture);
-intentRegistry.register("network.scan.hosts", networkScanHosts);
-intentRegistry.register("network.scan.ports", networkScanPorts);
 intentRegistry.register("network.dns", networkDns);
 intentRegistry.register("network.whois", networkWhois);
 intentRegistry.register("security.tools", securityTools);
 intentRegistry.register("security.audit", securityAudit);
 
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("wifi.monitor.start", wifiMonitorStart);
+  intentRegistry.register("wifi.monitor.stop", wifiMonitorStop);
+  intentRegistry.register("network.capture", networkCapture);
+  intentRegistry.register("network.scan.hosts", networkScanHosts);
+  intentRegistry.register("network.scan.ports", networkScanPorts);
+}
+
 // ── Hardware / Audio / Display ────────────────────────────────────────────────
+// Read-only / default-getter intents — always available
 intentRegistry.register("audio.devices", audioDevices);
-intentRegistry.register("audio.setOutput", audioSetOutput);
-intentRegistry.register("audio.setInput", audioSetInput);
-intentRegistry.register("audio.mute", audioMute);
 intentRegistry.register("audio.sources", audioSources);
-intentRegistry.register("audio.defaultOutput", audioDefaultOutput);
-intentRegistry.register("audio.defaultInput", audioDefaultInput);
 intentRegistry.register("audio.muted", audioMuted);
-intentRegistry.register("audio.toggleMute", audioToggleMute);
 intentRegistry.register("hardware.getVolume", hardwareGetVolume);
-intentRegistry.register("hardware.setVolume", hardwareSetVolume);
-intentRegistry.register("hardware.mute", hardwareMute);
-intentRegistry.register("hardware.unmute", hardwareUnmute);
-intentRegistry.register("hardware.toggleMute", hardwareToggleMute);
 intentRegistry.register("hardware.getInputVolume", hardwareGetInputVolume);
-intentRegistry.register("hardware.setInputVolume", hardwareSetInputVolume);
 intentRegistry.register("hardware.listAudioDevices", hardwareListAudioDevices);
-intentRegistry.register("display.brightness", displayBrightness);
 intentRegistry.register("display.list", displayList);
-intentRegistry.register("display.setResolution", displaySetResolution);
-intentRegistry.register("display.nightShift", displayNightShift);
-intentRegistry.register("display.nightshift", displayNightshift);
 intentRegistry.register("hardware.getBrightness", hardwareGetBrightness);
-intentRegistry.register("hardware.setBrightness", hardwareSetBrightness);
 intentRegistry.register("hardware.getNightShift", hardwareGetNightShift);
-intentRegistry.register("hardware.setNightShift", hardwareSetNightShift);
 intentRegistry.register("hardware.listDisplays", hardwareListDisplays);
 intentRegistry.register("hardware.getResolution", hardwareGetResolution);
-intentRegistry.register("hardware.setResolution", hardwareSetResolution);
 intentRegistry.register("hardware.isDarkMode", hardwareIsDarkMode);
-intentRegistry.register("hardware.setDarkMode", hardwareSetDarkMode);
 intentRegistry.register("hardware.getAppearance", hardwareGetAppearance);
 intentRegistry.register("bluetooth.status", bluetoothStatus);
-intentRegistry.register("bluetooth.toggle", bluetoothToggle);
 intentRegistry.register("bluetooth.devices", bluetoothDevices);
 intentRegistry.register("hardware.getBluetoothStatus", hardwareGetBluetoothStatus);
-intentRegistry.register("hardware.enableBluetooth", hardwareEnableBluetooth);
-intentRegistry.register("hardware.disableBluetooth", hardwareDisableBluetooth);
 intentRegistry.register("hardware.listBluetoothDevices", hardwareListBluetoothDevices);
-intentRegistry.register("hardware.connectBluetooth", hardwareConnectBluetooth);
-intentRegistry.register("hardware.disconnectBluetooth", hardwareDisconnectBluetooth);
-intentRegistry.register("disk.eject", diskEject);
 intentRegistry.register("volume.list", volumeList);
-intentRegistry.register("volume.mount", volumeMount);
-intentRegistry.register("volume.unmount", volumeUnmount);
 intentRegistry.register("keyboard.layouts", keyboardLayouts);
-intentRegistry.register("keyboard.setLayout", keyboardSetLayout);
 intentRegistry.register("hardware.getKeyboardBacklight", hardwareGetKeyboardBacklight);
-intentRegistry.register("hardware.setKeyboardBacklight", hardwareSetKeyboardBacklight);
 intentRegistry.register("hardware.isKeyboardBacklightAuto", hardwareIsKeyboardBacklightAuto);
 intentRegistry.register("printer.list", printerList);
-intentRegistry.register("printer.default", printerDefault);
-intentRegistry.register("printer.print", printerPrint);
 intentRegistry.register("printer.queue", printerQueue);
 intentRegistry.register("memory.pressure", memoryPressure);
 intentRegistry.register("memory.swap", memorySwap);
 intentRegistry.register("memory.topProcesses", memoryTopProcesses);
-intentRegistry.register("memory.purge", memoryPurge);
 intentRegistry.register("memory.vmstats", memoryVmstats);
-intentRegistry.register("kernel.sysctl", kernelSysctl);
-intentRegistry.register("kernel.power", kernelPower);
 intentRegistry.register("hardware.getBatteryStatus", hardwareGetBatteryStatus);
 intentRegistry.register("hardware.getSleepSettings", hardwareGetSleepSettings);
-intentRegistry.register("hardware.preventSleep", hardwarePreventSleep);
-intentRegistry.register("hardware.allowSleep", hardwareAllowSleep);
-intentRegistry.register("hardware.sleep", hardwareSleep);
-intentRegistry.register("hardware.restart", hardwareRestart);
-intentRegistry.register("hardware.shutdown", hardwareShutdown);
 intentRegistry.register("hardware.listUSBDevices", hardwareListUSBDevices);
 intentRegistry.register("hardware.listThunderboltDevices", hardwareListThunderboltDevices);
 intentRegistry.register("hardware.getInputDevices", hardwareGetInputDevices);
 intentRegistry.register("hardware.ejectDisk", hardwareEjectDisk);
 intentRegistry.register("hardware.getWifiInfo", hardwareGetWifiInfo);
 intentRegistry.register("hardware.getWifiNetworks", hardwareGetWifiNetworks);
-intentRegistry.register("hardware.connectToWifi", hardwareConnectToWifi);
-intentRegistry.register("hardware.eject", hardwareEject);
-intentRegistry.register("hardware.print", hardwarePrint);
-intentRegistry.register("hardware.webcam.lock", hardwareWebcamLock);
-intentRegistry.register("hardware.mic.lock", hardwareMicLock);
 intentRegistry.register("hardware.health", hardwareHealth);
+
+// Mutating hardware/system actions — gated behind ENABLE_MUTATION_SURFACES
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("audio.defaultOutput", audioDefaultOutput);
+  intentRegistry.register("audio.defaultInput", audioDefaultInput);
+  intentRegistry.register("audio.setOutput", audioSetOutput);
+  intentRegistry.register("audio.setInput", audioSetInput);
+  intentRegistry.register("audio.mute", audioMute);
+  intentRegistry.register("audio.toggleMute", audioToggleMute);
+  intentRegistry.register("hardware.setVolume", hardwareSetVolume);
+  intentRegistry.register("hardware.mute", hardwareMute);
+  intentRegistry.register("hardware.unmute", hardwareUnmute);
+  intentRegistry.register("hardware.toggleMute", hardwareToggleMute);
+  intentRegistry.register("hardware.setInputVolume", hardwareSetInputVolume);
+  intentRegistry.register("display.brightness", displayBrightness);
+  intentRegistry.register("display.setResolution", displaySetResolution);
+  intentRegistry.register("display.nightShift", displayNightShift);
+  intentRegistry.register("display.nightshift", displayNightshift);
+  intentRegistry.register("hardware.setBrightness", hardwareSetBrightness);
+  intentRegistry.register("hardware.setNightShift", hardwareSetNightShift);
+  intentRegistry.register("hardware.setResolution", hardwareSetResolution);
+  intentRegistry.register("hardware.setDarkMode", hardwareSetDarkMode);
+  intentRegistry.register("bluetooth.toggle", bluetoothToggle);
+  intentRegistry.register("hardware.enableBluetooth", hardwareEnableBluetooth);
+  intentRegistry.register("hardware.disableBluetooth", hardwareDisableBluetooth);
+  intentRegistry.register("hardware.connectBluetooth", hardwareConnectBluetooth);
+  intentRegistry.register("hardware.disconnectBluetooth", hardwareDisconnectBluetooth);
+  intentRegistry.register("disk.eject", diskEject);
+  intentRegistry.register("volume.mount", volumeMount);
+  intentRegistry.register("volume.unmount", volumeUnmount);
+  intentRegistry.register("keyboard.setLayout", keyboardSetLayout);
+  intentRegistry.register("hardware.setKeyboardBacklight", hardwareSetKeyboardBacklight);
+  intentRegistry.register("printer.default", printerDefault);
+  intentRegistry.register("printer.print", printerPrint);
+  intentRegistry.register("memory.purge", memoryPurge);
+  intentRegistry.register("kernel.sysctl", kernelSysctl);
+  intentRegistry.register("kernel.power", kernelPower);
+  intentRegistry.register("hardware.preventSleep", hardwarePreventSleep);
+  intentRegistry.register("hardware.allowSleep", hardwareAllowSleep);
+  intentRegistry.register("hardware.sleep", hardwareSleep);
+  intentRegistry.register("hardware.restart", hardwareRestart);
+  intentRegistry.register("hardware.shutdown", hardwareShutdown);
+  intentRegistry.register("hardware.connectToWifi", hardwareConnectToWifi);
+  intentRegistry.register("hardware.eject", hardwareEject);
+  intentRegistry.register("hardware.print", hardwarePrint);
+  intentRegistry.register("hardware.webcam.lock", hardwareWebcamLock);
+  intentRegistry.register("hardware.mic.lock", hardwareMicLock);
+}
 
 // ── Browser ───────────────────────────────────────────────────────────────────
 intentRegistry.register("browser.open", browserOpen);
@@ -1159,7 +1185,6 @@ intentRegistry.register("iokit.gpu", iokitGPU);
 intentRegistry.register("iokit.cpu.usage", iokitCPUUsage);
 intentRegistry.register("iokit.memory.pressure", iokitMemoryPressure);
 intentRegistry.register("iokit.nvram.get", iokitNVRAMGet);
-intentRegistry.register("iokit.nvram.set", iokitNVRAMSet);
 intentRegistry.register("iokit.nvram.list", iokitNVRAMList);
 intentRegistry.register("iokit.pci.devices", iokitPCIDevices);
 intentRegistry.register("iokit.usb.tree", iokitUSBTree);
@@ -1168,30 +1193,38 @@ intentRegistry.register("iokit.smc.read", iokitSMCRead);
 
 // ── Kernel — deep OS kernel control ───────────────────────────────────────────
 intentRegistry.register("kernel.sysctl.get", kernelSysctlGet);
-intentRegistry.register("kernel.sysctl.set", kernelSysctlSet);
 intentRegistry.register("kernel.sysctl.all", kernelSysctlAll);
 intentRegistry.register("kernel.sysctl.prefix", kernelSysctlPrefix);
 intentRegistry.register("kernel.vm.stats", kernelVMStats);
 intentRegistry.register("kernel.swap.usage", kernelSwapUsage);
-intentRegistry.register("kernel.memory.purge", kernelPurgeMemory);
 intentRegistry.register("kernel.kext.list", kernelListKexts);
 intentRegistry.register("kernel.kext.get", kernelGetKext);
-intentRegistry.register("kernel.trace.syscalls", kernelTraceSyscalls);
 intentRegistry.register("kernel.trace.openfiles", kernelOpenFiles);
 intentRegistry.register("kernel.trace.fds", kernelFDs);
 intentRegistry.register("kernel.spotlight.query", kernelSpotlight);
 intentRegistry.register("kernel.mdutil.status", kernelMdutilStatus);
-intentRegistry.register("kernel.mdutil.control", kernelMdutilControl);
 intentRegistry.register("kernel.sip.status", kernelSIPStatus);
 intentRegistry.register("kernel.boot.args", kernelBootArgs);
 intentRegistry.register("kernel.launchctl.list", kernelLaunchctlList);
-intentRegistry.register("kernel.launchctl.load", kernelLaunchctlLoad);
-intentRegistry.register("kernel.launchctl.unload", kernelLaunchctlUnload);
-intentRegistry.register("kernel.launchctl.kickstart", kernelLaunchctlKickstart);
+
+// Dangerous mutation surfaces — gated behind OMNISTATE_ENABLE_KERNEL_MUTATION_SURFACES
+if (process.env.OMNISTATE_ENABLE_KERNEL_MUTATION_SURFACES === "true") {
+  intentRegistry.register("iokit.nvram.set", iokitNVRAMSet);
+  intentRegistry.register("kernel.sysctl.set", kernelSysctlSet);
+  intentRegistry.register("kernel.memory.purge", kernelPurgeMemory);
+  intentRegistry.register("kernel.trace.syscalls", kernelTraceSyscalls);
+  intentRegistry.register("kernel.mdutil.control", kernelMdutilControl);
+  intentRegistry.register("kernel.launchctl.load", kernelLaunchctlLoad);
+  intentRegistry.register("kernel.launchctl.unload", kernelLaunchctlUnload);
+  intentRegistry.register("kernel.launchctl.kickstart", kernelLaunchctlKickstart);
+}
 
 // ── WiFi Deep Control ─────────────────────────────────────────────────────────
-intentRegistry.register("wifi.deep.scan", wifiDeepScan);
 intentRegistry.register("wifi.signal", wifiSignal);
-intentRegistry.register("wifi.channel.set", wifiChannel);
-intentRegistry.register("wifi.capture.handshake", wifiCaptureHandshake);
-intentRegistry.register("wifi.tools.install", wifiInstallTools);
+
+if (ENABLE_MUTATION_SURFACES) {
+  intentRegistry.register("wifi.deep.scan", wifiDeepScan);
+  intentRegistry.register("wifi.channel.set", wifiChannel);
+  intentRegistry.register("wifi.capture.handshake", wifiCaptureHandshake);
+  intentRegistry.register("wifi.tools.install", wifiInstallTools);
+}

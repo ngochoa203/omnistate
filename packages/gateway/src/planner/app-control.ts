@@ -1157,7 +1157,7 @@ export function buildKeyboardAction(intent: Intent): Record<string, unknown> | n
 // Domain B/C/D → tool mapping
 // ============================================================================
 
-export function mapIntentToTool(intent: Intent): { name: string; params: Record<string, unknown> } | null {
+export function mapIntentToTool(intent: Intent): { name: string; params: Record<string, unknown>; unsupported?: boolean } | null {
   const text = intent.rawText.toLowerCase();
   const type = intent.type as IntentType;
 
@@ -1673,7 +1673,8 @@ export function mapIntentToTool(intent: Intent): { name: string; params: Record<
     }
 
     case "workflow-template": {
-      return { name: "hybrid.templates", params: {} };
+      // no implementation yet — mark unsupported so executor fails honestly
+      return { name: "hybrid.templates", params: {}, unsupported: true };
     }
 
     case "file-organization": {
@@ -1694,26 +1695,28 @@ export function mapIntentToTool(intent: Intent): { name: string; params: Record<
     }
 
     case "compliance-check": {
-      return { name: "hybrid.compliance", params: {} };
+      // no policy engine implemented yet
+      return { name: "hybrid.compliance", params: {}, unsupported: true };
     }
 
     case "resource-forecast": {
+      // needs historical data store — route unsupported
       const metric = /disk|storage/.test(text)
         ? "disk"
         : /memory|ram/.test(text)
           ? "memory"
           : "cpu";
-      return { name: "hybrid.forecast", params: { metric, days: 7 } };
+      return { name: "hybrid.forecast", params: { metric, days: 7 }, unsupported: true };
     }
 
     case "multi-app-orchestration": {
-      return { name: "hybrid.suggestAction", params: {} };
+      // no implementation yet
+      return { name: "hybrid.suggestAction", params: {}, unsupported: true };
     }
 
-    // ── Domain E: IOKit / kernel / WiFi security (no tool mapping) ──────
+    // ── Domain E: IOKit / kernel (no tool mapping) ──────
     case "iokit-hardware":
     case "kernel-control":
-    case "wifi-security":
       return null;
 
     default:
@@ -1802,7 +1805,14 @@ export async function planFromIntentDomain(
       }
 
       if (nodes.length === branchStartLen) {
-        nodes.push(actionNode("action", intent.rawText, "generic.execute", "deep", { intent: intent.rawText, entities: intent.entities }));
+        // No script, no key action, no app match → surface as unsupported rather
+        // than routing to generic.execute which would do the same safety check anyway.
+        nodes.push(actionNode("action", intent.rawText, "unsupported.capability", "auto", {
+          goal: intent.rawText,
+          unsupportedReason: `app-control: no handler for this request`,
+          legacy_tool: "generic.execute",
+          legacy_layer: "deep",
+        }));
       }
       break;
     }
@@ -1919,11 +1929,31 @@ export async function planFromIntentDomain(
     default: {
       const tool = mapIntentToTool(intent);
       if (tool) {
-        nodes.push(actionNode("execute", intent.rawText, tool.name, "deep", { ...tool.params, goal: intent.rawText, entities: intent.entities }));
+        if (tool.unsupported) {
+          // Surface as unsupported node rather than silently routing to shell.exec
+          nodes.push(actionNode("execute", intent.rawText, "unsupported.capability", "auto", {
+            goal: intent.rawText,
+            unsupportedReason: `mapIntentToTool: ${tool.name} is not implemented in current build`,
+            legacy_tool: tool.name,
+            legacy_layer: "deep",
+          }));
+        } else {
+          nodes.push(actionNode("execute", intent.rawText, tool.name, "deep", { ...tool.params, goal: intent.rawText, entities: intent.entities }));
+        }
       } else {
         const cmd = extractShellCommand(intent);
         const isRealCommand = cmd !== intent.rawText;
-        nodes.push(actionNode("execute", intent.rawText, isRealCommand ? "shell.exec" : "generic.execute", isRealCommand ? "deep" : "auto", isRealCommand ? { command: cmd } : { goal: intent.rawText }));
+        if (isRealCommand) {
+          nodes.push(actionNode("execute", intent.rawText, "shell.exec", "deep", { command: cmd }));
+        } else {
+          // No handler, no command match → unsupported rather than silent no-op
+          nodes.push(actionNode("execute", intent.rawText, "unsupported.capability", "auto", {
+            goal: intent.rawText,
+            unsupportedReason: `no tool handler matched intent type "${type}"`,
+            legacy_tool: "generic.execute",
+            legacy_layer: "auto",
+          }));
+        }
       }
     }
   }

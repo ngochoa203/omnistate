@@ -70,11 +70,8 @@ impl WhisperEngine {
     pub fn load(&self) -> OmniResult<()> {
         let params = whisper_rs::WhisperContextParameters::default();
 
-        let ctx = whisper_rs::WhisperContext::new_with_params(
-            &self.config.model_path,
-            params,
-        )
-        .map_err(|e| OmniError::AudioError(format!("Failed to load whisper model: {e}")))?;
+        let ctx = whisper_rs::WhisperContext::new_with_params(&self.config.model_path, params)
+            .map_err(|e| OmniError::AudioError(format!("Failed to load whisper model: {e}")))?;
 
         let mut guard = self
             .ctx
@@ -157,8 +154,8 @@ impl WhisperEngine {
 
             full_text.push_str(&text);
             segments.push(TranscriptionSegment {
-                start_ms: start_ts as i64 * 10, // whisper timestamps are in centiseconds
-                end_ms: end_ts as i64 * 10,
+                start_ms: start_ts * 10, // whisper timestamps are in centiseconds
+                end_ms: end_ts * 10,
                 text,
             });
         }

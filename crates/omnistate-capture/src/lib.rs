@@ -18,16 +18,16 @@
 //! Keep data on GPU as long as possible. Only map to CPU address space
 //! when you specifically need pixel bytes (OCR, coordinate reads).
 
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(target_os = "ios")]
+pub mod ios;
+#[cfg(target_os = "linux")]
+pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
-#[cfg(target_os = "linux")]
-pub mod linux;
-#[cfg(target_os = "ios")]
-pub mod ios;
-#[cfg(target_os = "android")]
-pub mod android;
 
 use omnistate_core::error::OmniResult;
 use std::time::Instant;

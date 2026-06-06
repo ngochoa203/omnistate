@@ -137,6 +137,14 @@ export class DeepLayer {
           break;
         }
         case "linux":
+          try {
+            await execAsync(`command -v ${JSON.stringify(name)} >/dev/null 2>&1`, {
+              timeout: 5_000,
+            });
+          } catch {
+            this._lastLaunchError = `App '${name}' is not installed or not on PATH.`;
+            return false;
+          }
           // Try common launch methods
           spawn(name, { detached: true, stdio: "ignore" }).unref();
           break;

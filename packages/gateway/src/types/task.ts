@@ -18,7 +18,7 @@ export interface FailureStrategy {
 
 /** Verification configuration for a step. */
 export interface VerifyConfig {
-  strategy: "screenshot" | "api" | "file" | "process" | "compound";
+  strategy: "screenshot" | "api" | "file" | "process" | "browser-state" | "compound";
   expected: string;
   timeoutMs: number;
 }

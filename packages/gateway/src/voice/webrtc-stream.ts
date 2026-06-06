@@ -49,11 +49,14 @@
  */
 
 import * as HybridAutomation from "../hybrid/automation.js";
-import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
+import { loadLlmRuntimeConfig, type LlmRuntimeConfig, type VadConfig } from "../llm/runtime-config.js";
 import { verifySpeaker } from "./verification.js";
 import { synthesize as edgeTtsSynthesize, detectLanguage, pickVoice } from "./edge-tts.js";
 import { whisperLocalClient } from "./whisper-local-client.js";
 import { AudioIngest } from "./audio-ingest.js";
+import { intentParser } from "./intent-parser.js";
+import { voiceCommandRouter, type ActionResult } from "./voice-command-router.js";
+import { deviceOptimizer, type DeviceProfile } from "./device-profiles.js";
 
 import { logger } from "../utils/logger.js";
 // ─── Protocol types ────────────────────────────────────────────────────────────
@@ -106,6 +109,29 @@ export interface VoiceStreamTtsMessage {
   contentType: string;
 }
 
+export interface VoiceStreamDiagnosticsMessage {
+  type: "voice.stream.diagnostics";
+  sessionId: string;
+  stage: "started" | "chunk" | "finalizing" | "ended";
+  mimeType?: string;
+  sampleRate?: number;
+  chunkBytes?: number;
+  totalBytes?: number;
+  chunks?: number;
+  useStreamingStt?: boolean;
+  message?: string;
+}
+
+export interface VoiceCommandResultMessage {
+  type: "voice.command.result";
+  sessionId: string;
+  intent: string;
+  success: boolean;
+  message: string;
+  action?: string;
+  data?: unknown;
+}
+
 export interface VoiceStreamErrorMessage {
   type: "voice.stream.error";
   sessionId: string;
@@ -138,6 +164,8 @@ export type VoiceStreamServerMessage =
   | VoiceStreamStartedMessage
   | VoiceStreamResultMessage
   | VoiceStreamTtsMessage
+  | VoiceStreamDiagnosticsMessage
+  | VoiceCommandResultMessage
   | VoiceStreamErrorMessage
   | VoiceStreamEndedMessage
   | VoiceStreamBargeInMessage
@@ -173,9 +201,103 @@ interface StreamSession {
   useStreamingStt: boolean;
   /** AudioIngest instance for this session (only when useStreamingStt=true). */
   audioIngest: AudioIngest | null;
+  executionPolicy: ResolvedVoiceExecutionPolicy;
 }
 
 type SendFn = (msg: VoiceStreamServerMessage) => void;
+
+export interface ResolvedVoiceExecutionPolicy {
+  orderedProviders: Array<"native" | "whisper-local" | "whisper-cloud">;
+  useLowLatencyRace: boolean;
+  useStreamingStt: boolean;
+  ttsProvider: "edge" | "rtvc" | "none";
+  ttsRate: number;
+  vadConfig: VadConfig;
+  preferredChunkMs: number;
+  powerMode: "normal" | "low_power" | "battery_saver";
+}
+
+function resolveTtsRate(profile: DeviceProfile): number {
+  const baseRate = profile.recommendedSettings.ttsVoiceSpeed || 1;
+  const powerAdjustment = profile.powerMode === "battery_saver"
+    ? 0.1
+    : profile.powerMode === "low_power"
+      ? 0.05
+      : 0;
+
+  return Math.max(0.7, Math.min(1.3, Number((baseRate + powerAdjustment).toFixed(2))));
+}
+
+function resolveVadConfig(baseVad: VadConfig, profile: DeviceProfile): VadConfig {
+  const powerAdjustments = profile.powerMode === "battery_saver"
+    ? { silenceThresholdMs: 240, speechThreshold: 0.1, minSpeechMs: 150 }
+    : profile.powerMode === "low_power"
+      ? { silenceThresholdMs: 120, speechThreshold: 0.05, minSpeechMs: 80 }
+      : { silenceThresholdMs: 0, speechThreshold: 0, minSpeechMs: 0 };
+
+  const deviceAdjustments = profile.capabilities.supportsLowLatency
+    ? { silenceThresholdMs: 0, speechThreshold: 0, minSpeechMs: 0 }
+    : { silenceThresholdMs: 80, speechThreshold: 0.02, minSpeechMs: 40 };
+
+  return {
+    ...baseVad,
+    silenceThresholdMs: Math.max(
+      baseVad.silenceThresholdMs,
+      baseVad.silenceThresholdMs + powerAdjustments.silenceThresholdMs + deviceAdjustments.silenceThresholdMs,
+    ),
+    speechThreshold: Math.min(
+      0.9,
+      Number((baseVad.speechThreshold + powerAdjustments.speechThreshold + deviceAdjustments.speechThreshold).toFixed(2)),
+    ),
+    minSpeechMs: Math.max(
+      baseVad.minSpeechMs,
+      baseVad.minSpeechMs + powerAdjustments.minSpeechMs + deviceAdjustments.minSpeechMs,
+    ),
+  };
+}
+
+export function resolveVoiceExecutionPolicy(
+  runtime: LlmRuntimeConfig,
+  profile: DeviceProfile,
+  mimeType: string,
+): ResolvedVoiceExecutionPolicy {
+  const requestedStreamingStt =
+    mimeType === "audio/pcm" || mimeType === "audio/raw" || mimeType.includes("pcm");
+
+  const configuredProviders = [
+    runtime.voice.primaryProvider,
+    ...runtime.voice.fallbackProviders,
+  ].filter((provider, index, list) => list.indexOf(provider) === index) as Array<
+    "native" | "whisper-local" | "whisper-cloud"
+  >;
+
+  const preferredProvider = profile.recommendedSettings.sttProvider;
+  const orderedProviders = [
+    preferredProvider,
+    ...configuredProviders.filter((provider) => provider !== preferredProvider),
+  ].filter((provider, index, list) => list.indexOf(provider) === index);
+
+  const useLowLatencyRace =
+    runtime.voice.lowLatency &&
+    profile.powerMode === "normal" &&
+    profile.capabilities.supportsLowLatency;
+
+  const ttsProvider =
+    profile.powerMode !== "normal" && runtime.voice.tts?.provider === "rtvc"
+      ? profile.recommendedSettings.ttsProvider
+      : (runtime.voice.tts?.provider ?? "edge");
+
+  return {
+    orderedProviders,
+    useLowLatencyRace,
+    useStreamingStt: requestedStreamingStt && profile.recommendedSettings.enableContinuousListening,
+    ttsProvider,
+    ttsRate: resolveTtsRate(profile),
+    vadConfig: resolveVadConfig(runtime.voice.vad, profile),
+    preferredChunkMs: Math.max(runtime.voice.chunkMs, profile.audioProfile.recommendedChunkMs),
+    powerMode: profile.powerMode,
+  };
+}
 
 // ─── VoiceStreamManager ────────────────────────────────────────────────────────
 
@@ -263,6 +385,15 @@ export class VoiceStreamManager {
     session.chunks.push(chunk);
     session.totalBytes += chunk.length;
     session.lastActivityAt = Date.now();
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "chunk",
+      chunkBytes: chunk.length,
+      totalBytes: session.totalBytes,
+      chunks: session.chunks.length,
+      useStreamingStt: session.useStreamingStt,
+    });
 
     // Forward PCM16 chunk through AudioIngest (which gates VAD) to streaming STT
     if (session.useStreamingStt) {
@@ -318,11 +449,9 @@ export class VoiceStreamManager {
     // Terminate any stale session first.
     this.dropSession(clientId);
 
-    // Use streaming STT when codec is PCM16 (raw PCM, compatible with whisper-local streaming API)
     const mimeType = msg.mimeType ?? "audio/webm";
-    const useStreamingStt = mimeType === "audio/pcm" || mimeType === "audio/raw" || mimeType.includes("pcm");
-
-    const vadConfig = loadLlmRuntimeConfig().voice.vad;
+    const runtime = loadLlmRuntimeConfig();
+    const executionPolicy = resolveVoiceExecutionPolicy(runtime, deviceOptimizer.getProfile(), mimeType);
 
     const session: StreamSession = {
       sessionId: msg.sessionId,
@@ -337,14 +466,15 @@ export class VoiceStreamManager {
       closed: false,
       idleTimer: null,
       send,
-      useStreamingStt,
+      useStreamingStt: executionPolicy.useStreamingStt,
       audioIngest: null,
+      executionPolicy,
     };
 
     this.sessions.set(clientId, session);
     this.resetIdleTimer(clientId, session);
 
-    if (useStreamingStt) {
+    if (session.useStreamingStt) {
       // Start the streaming STT session; emit partial events as they arrive
       const iter = whisperLocalClient.startSession(msg.sessionId);
       (async () => {
@@ -358,6 +488,9 @@ export class VoiceStreamManager {
               text: ev.text,
               provider: "whisper-local",
             });
+            if (ev.kind === "final" && ev.text.trim()) {
+              await this.routeTranscriptAndRespond(session, ev.text);
+            }
           }
         } catch (err) {
           logger.warn(
@@ -368,13 +501,13 @@ export class VoiceStreamManager {
       })();
 
       // Set up AudioIngest for VAD gating
-      if (vadConfig.enabled) {
+      if (executionPolicy.vadConfig.enabled) {
         const ingest = new AudioIngest({
           vadEnabled: true,
-          speechThreshold: vadConfig.speechThreshold,
-          silenceThreshold: vadConfig.silenceThreshold,
-          silenceThresholdMs: vadConfig.silenceThresholdMs,
-          minSpeechMs: vadConfig.minSpeechMs,
+          speechThreshold: executionPolicy.vadConfig.speechThreshold,
+          silenceThreshold: executionPolicy.vadConfig.silenceThreshold,
+          silenceThresholdMs: executionPolicy.vadConfig.silenceThresholdMs,
+          minSpeechMs: executionPolicy.vadConfig.minSpeechMs,
         });
 
         // speech.frame -> forward PCM to whisper
@@ -420,6 +553,19 @@ export class VoiceStreamManager {
       sessionId: session.sessionId,
       maxChunkBytes: MAX_CHUNK_BYTES,
     });
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "started",
+      mimeType: session.mimeType,
+      sampleRate: session.sampleRate,
+      totalBytes: 0,
+      chunks: 0,
+      useStreamingStt: session.useStreamingStt,
+      message: session.useStreamingStt
+        ? "Streaming PCM STT path enabled"
+        : "Buffered audio path enabled; final STT runs after stop",
+    });
   }
 
   private stopSession(clientId: string, sessionId: string, send: SendFn): void {
@@ -459,6 +605,16 @@ export class VoiceStreamManager {
     }
 
     const { send } = session;
+    send({
+      type: "voice.stream.diagnostics",
+      sessionId: session.sessionId,
+      stage: "finalizing",
+      mimeType: session.mimeType,
+      sampleRate: session.sampleRate,
+      totalBytes: session.totalBytes,
+      chunks: session.chunks.length,
+      useStreamingStt: session.useStreamingStt,
+    });
 
     try {
       if (session.chunks.length === 0 && !session.useStreamingStt) {
@@ -499,6 +655,14 @@ export class VoiceStreamManager {
 
         // Speaker verification and TTS are handled after final transcript by the
         // async iterator listener started in startSession.  Emit ended here.
+        send({
+          type: "voice.stream.diagnostics",
+          sessionId: session.sessionId,
+          stage: "ended",
+          totalBytes: session.totalBytes,
+          chunks: session.chunks.length,
+          useStreamingStt: true,
+        });
         send({ type: "voice.stream.ended", sessionId: session.sessionId });
         return;
       }
@@ -517,7 +681,7 @@ export class VoiceStreamManager {
       }
 
       // ── STT ──────────────────────────────────────────────────────────────────
-      const transcript = await this.transcribe(audioBuffer);
+      const transcript = await this.transcribe(audioBuffer, session.executionPolicy);
 
       if (!transcript.text) {
         const anyError = transcript.attempts.some((a) => a.status === "error");
@@ -540,6 +704,8 @@ export class VoiceStreamManager {
         text: transcript.text,
         provider: transcript.provider,
       });
+
+      await this.routeTranscriptAndRespond(session, transcript.text);
 
       // ── Speaker verification ──────────────────────────────────────────────
       const svConfig = loadLlmRuntimeConfig().voice.speakerVerification;
@@ -585,50 +751,83 @@ export class VoiceStreamManager {
         }
       }
 
-      // ── Optional TTS ──────────────────────────────────────────────────────
-      if (session.wantTts) {
-        await this.synthesizeAndSend(session, transcript.text);
-      }
-
+      send({
+        type: "voice.stream.diagnostics",
+        sessionId: session.sessionId,
+        stage: "ended",
+        totalBytes: session.totalBytes,
+        chunks: session.chunks.length,
+        useStreamingStt: false,
+      });
       send({ type: "voice.stream.ended", sessionId: session.sessionId });
     } finally {
       this.sessions.delete(clientId);
     }
   }
 
+  private async routeTranscriptAndRespond(session: StreamSession, transcript: string): Promise<ActionResult> {
+    const candidate = intentParser.feed(transcript);
+    const appEntities = candidate.entities.filter((entity) =>
+      /^(safari|chrome|finder|notes|reminders|messages|mail|calendar|photos|camera|settings|facetime|music|clock|discord|slack|whatsapp|telegram|spotify|youtube|zalo)$/i.test(entity),
+    );
+
+    const result = await voiceCommandRouter.route({
+      userId: session.userId ?? "anonymous",
+      sessionId: session.sessionId,
+      transcript,
+      intent: candidate.label,
+      entities: {
+        text: [transcript],
+        value: candidate.entities,
+        ...(appEntities.length > 0 ? { app: appEntities } : {}),
+      },
+      language: /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]/i.test(transcript)
+        ? "vi"
+        : "en",
+      conversationContext: [],
+    });
+
+    session.send({
+      type: "voice.command.result",
+      sessionId: session.sessionId,
+      intent: candidate.label,
+      success: result.success,
+      message: result.message,
+      action: result.action,
+      data: result.data,
+    });
+
+    if (session.wantTts) {
+      await this.synthesizeAndSend(session, result.tts ?? result.message);
+    }
+
+    return result;
+  }
+
   /**
    * Run STT using the same provider chain as the existing voice.transcribe handler.
    */
-  private async transcribe(audioBuffer: Buffer): Promise<{
+  private async transcribe(
+    audioBuffer: Buffer,
+    executionPolicy: ResolvedVoiceExecutionPolicy,
+  ): Promise<{
     text: string;
     provider: string;
     attempts: Array<{ provider: string; status: "ok" | "empty" | "error"; error?: string }>;
   }> {
-    const runtime = loadLlmRuntimeConfig();
-    const voice = runtime.voice;
-
-    const dedupedProviders = [
-      voice.primaryProvider,
-      ...voice.fallbackProviders,
-    ].filter((p, i, arr) => arr.indexOf(p) === i) as Array<
-      "native" | "whisper-local" | "whisper-cloud"
-    >;
-
-    const orderedProviders = voice.lowLatency
-      ? (["native", ...dedupedProviders.filter((p) => p !== "native")] as typeof dedupedProviders)
-      : dedupedProviders;
+    const orderedProviders = executionPolicy.orderedProviders;
 
     const bytes = audioBuffer.length;
     const attempts: Array<{ provider: string; status: "ok" | "empty" | "error"; error?: string }> = [];
 
     // Bug fix: Check for empty providers array
-    if (dedupedProviders.length === 0) {
+    if (orderedProviders.length === 0) {
       logger.error("[VoiceStream] No STT providers configured");
       return { text: "", provider: "", attempts: [{ provider: "none", status: "error", error: "No providers" }] };
     }
 
     // Race all providers in low-latency mode, first non-empty wins.
-    if (voice.lowLatency) {
+    if (executionPolicy.useLowLatencyRace) {
       try {
         const fastest = await Promise.any(
           orderedProviders.map(async (provider) => {
@@ -700,7 +899,7 @@ export class VoiceStreamManager {
     if (!text.trim()) return;
 
     const cfg = loadLlmRuntimeConfig();
-    const provider = cfg.voice.tts?.provider ?? "edge";
+    const provider = session.executionPolicy.ttsProvider;
 
     if (provider === "none") return;
 
@@ -708,7 +907,11 @@ export class VoiceStreamManager {
       try {
         const lang = detectLanguage(text);
         const voice = pickVoice(lang, cfg.voice);
-        const audioBuf = await edgeTtsSynthesize(text, { voice, lang });
+        const audioBuf = await edgeTtsSynthesize(text, {
+          voice,
+          lang,
+          rate: session.executionPolicy.ttsRate,
+        });
         send({
           type: "voice.stream.tts",
           sessionId: session.sessionId,
@@ -736,6 +939,7 @@ export class VoiceStreamManager {
       const result = await synthesizeRtvcSpeech({
         text,
         profileId: session.ttsProfileId ?? "default",
+        rate: session.executionPolicy.ttsRate,
       });
       send({
         type: "voice.stream.tts",

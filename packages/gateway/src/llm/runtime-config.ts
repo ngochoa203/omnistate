@@ -21,6 +21,12 @@ export interface TokenBudgetConfig {
   maxInputChars: number;
 }
 
+export interface PowerRuntimeConfig {
+  lowBatteryThreshold: number;
+  criticalBatteryThreshold: number;
+  pollIntervalMs: number;
+}
+
 export type VoiceProvider = "native" | "whisper-local" | "whisper-cloud";
 
 export interface SiriBridgeConfig {
@@ -78,6 +84,15 @@ export interface VoiceRuntimeConfig {
   };
 }
 
+export interface TransientVoiceRuntimeOverride {
+  whisperLocalModel?: WhisperLocalModel;
+  lowLatency?: boolean;
+  autoExecuteTranscript?: boolean;
+  chunkMs?: number;
+  vad?: Partial<VadConfig>;
+  wake?: Partial<VoiceRuntimeConfig["wake"]>;
+}
+
 export interface SessionMeta {
   id: string;
   name: string;
@@ -101,6 +116,7 @@ export interface LlmRuntimeConfig {
    * Phase 2 owns voice.*; do not move this field under voice.*.
    */
   fastPathThreshold: number;
+  power: PowerRuntimeConfig;
   voice: VoiceRuntimeConfig;
   session: {
     currentSessionId: string;
@@ -109,6 +125,7 @@ export interface LlmRuntimeConfig {
 }
 
 const CONFIG_PATH = resolve(homedir(), ".omnistate/llm.runtime.json");
+let transientVoiceRuntimeOverride: TransientVoiceRuntimeOverride | null = null;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -152,6 +169,11 @@ function defaultConfig(): LlmRuntimeConfig {
       intentMaxTokens: 320,
       decomposeMaxTokens: 500,
       maxInputChars: 1800,
+    },
+    power: {
+      lowBatteryThreshold: 20,
+      criticalBatteryThreshold: 10,
+      pollIntervalMs: 15_000,
     },
     voice: {
       tts: {
@@ -276,6 +298,28 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
         raw.tokenBudget?.decomposeMaxTokens ?? def.tokenBudget.decomposeMaxTokens,
       maxInputChars: raw.tokenBudget?.maxInputChars ?? def.tokenBudget.maxInputChars,
     },
+    power: {
+      lowBatteryThreshold:
+        typeof raw.power?.lowBatteryThreshold === "number" &&
+        Number.isFinite(raw.power.lowBatteryThreshold) &&
+        raw.power.lowBatteryThreshold >= 5 &&
+        raw.power.lowBatteryThreshold <= 100
+          ? Math.round(raw.power.lowBatteryThreshold)
+          : def.power.lowBatteryThreshold,
+      criticalBatteryThreshold:
+        typeof raw.power?.criticalBatteryThreshold === "number" &&
+        Number.isFinite(raw.power.criticalBatteryThreshold) &&
+        raw.power.criticalBatteryThreshold >= 1 &&
+        raw.power.criticalBatteryThreshold <= 100
+          ? Math.round(raw.power.criticalBatteryThreshold)
+          : def.power.criticalBatteryThreshold,
+      pollIntervalMs:
+        typeof raw.power?.pollIntervalMs === "number" &&
+        Number.isFinite(raw.power.pollIntervalMs) &&
+        raw.power.pollIntervalMs >= 2_000
+          ? Math.round(raw.power.pollIntervalMs)
+          : def.power.pollIntervalMs,
+    },
     voice: {
       tts: {
         provider: (raw.voice?.tts?.provider === "rtvc" ? "rtvc" : "edge") as "edge" | "rtvc",
@@ -386,11 +430,11 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
   };
 }
 
-export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
+function loadResolvedRuntimeConfig(applyOverrides: boolean): LlmRuntimeConfig {
   if (!existsSync(CONFIG_PATH)) {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return conf;
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   }
 
   try {
@@ -400,12 +444,28 @@ export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
     // writing secrets back into the JSON config file.
     const redacted = pruneSecrets(conf);
     saveLlmRuntimeConfig(redacted);
-    return conf;
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   } catch {
     const conf = defaultConfig();
     saveLlmRuntimeConfig(conf);
-    return conf;
+    return applyOverrides ? applyRuntimeOverrides(conf) : conf;
   }
+}
+
+export function loadLlmRuntimeConfig(): LlmRuntimeConfig {
+  return loadResolvedRuntimeConfig(true);
+}
+
+export function loadPersistedLlmRuntimeConfig(): LlmRuntimeConfig {
+  return loadResolvedRuntimeConfig(false);
+}
+
+function applyRuntimeOverrides(conf: LlmRuntimeConfig): LlmRuntimeConfig {
+  if (!transientVoiceRuntimeOverride) return conf;
+  return {
+    ...conf,
+    voice: applyTransientVoiceRuntimeOverride(conf.voice, transientVoiceRuntimeOverride),
+  };
 }
 
 /**
@@ -433,6 +493,41 @@ export function saveLlmRuntimeConfig(config: LlmRuntimeConfig): void {
     mode: 0o600,
   });
   chmodSync(CONFIG_PATH, 0o600);
+}
+
+export function applyTransientVoiceRuntimeOverride(
+  voice: VoiceRuntimeConfig,
+  override: TransientVoiceRuntimeOverride,
+): VoiceRuntimeConfig {
+  return {
+    ...voice,
+    whisperLocalModel: override.whisperLocalModel ?? voice.whisperLocalModel,
+    lowLatency: override.lowLatency ?? voice.lowLatency,
+    autoExecuteTranscript: override.autoExecuteTranscript ?? voice.autoExecuteTranscript,
+    chunkMs: override.chunkMs ?? voice.chunkMs,
+    vad: {
+      ...voice.vad,
+      ...override.vad,
+    },
+    wake: {
+      ...voice.wake,
+      ...override.wake,
+    },
+  };
+}
+
+export function setTransientVoiceRuntimeOverride(
+  override: TransientVoiceRuntimeOverride | null,
+): void {
+  transientVoiceRuntimeOverride = override;
+}
+
+export function clearTransientVoiceRuntimeOverride(): void {
+  transientVoiceRuntimeOverride = null;
+}
+
+export function getTransientVoiceRuntimeOverride(): TransientVoiceRuntimeOverride | null {
+  return transientVoiceRuntimeOverride;
 }
 
 export function setActiveModel(model: string): LlmRuntimeConfig {
@@ -523,6 +618,32 @@ export function setTokenBudgetField(
       conf.tokenBudget[key] = Math.round(num);
     }
   }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setPowerField(
+  key: keyof PowerRuntimeConfig,
+  value: number,
+): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  const num = Number(value);
+  if (Number.isNaN(num) || !Number.isFinite(num)) return conf;
+
+  if (key === "pollIntervalMs") {
+    if (num >= 2_000) {
+      conf.power.pollIntervalMs = Math.round(num);
+    }
+  } else if (key === "criticalBatteryThreshold") {
+    if (num >= 1 && num <= conf.power.lowBatteryThreshold) {
+      conf.power.criticalBatteryThreshold = Math.round(num);
+    }
+  } else if (key === "lowBatteryThreshold") {
+    if (num >= conf.power.criticalBatteryThreshold && num <= 100) {
+      conf.power.lowBatteryThreshold = Math.round(num);
+    }
+  }
+
   saveLlmRuntimeConfig(conf);
   return conf;
 }

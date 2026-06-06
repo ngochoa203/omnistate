@@ -1,5 +1,6 @@
 export * from "./protocol.js";
 export * from "./protocol-schemas.js";
+export * from "./capability-contracts.js";
 export * from "./auth-types.js";
 export * from "./trigger-types.js";
 export * from "./resource-types.js";

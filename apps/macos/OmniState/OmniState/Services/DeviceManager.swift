@@ -72,7 +72,8 @@ class DeviceManager: ObservableObject {
     func startPINRefresh() {
         Task { await generatePIN() }
         pinRefreshTimer = Timer.scheduledTimer(withTimeInterval: pinRefreshInterval, repeats: true) { [weak self] _ in
-            Task { await self?.generatePIN() }
+            guard let self else { return }
+            Task { await self.generatePIN() }
         }
     }
 

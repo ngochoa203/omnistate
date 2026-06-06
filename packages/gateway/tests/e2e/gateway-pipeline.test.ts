@@ -121,6 +121,68 @@ function collectMessages(
   });
 }
 
+/** Send a task and wait for both accepted and terminal gateway messages. */
+function sendTaskAndCollectTerminal(
+  ws: WebSocket,
+  goal: string,
+  timeoutMs = 8000,
+): Promise<{
+  accepted: Record<string, unknown>;
+  terminal: Record<string, unknown>;
+  events: Array<Record<string, unknown>>;
+}> {
+  return new Promise((resolve, reject) => {
+    const events: Array<Record<string, unknown>> = [];
+    let accepted: Record<string, unknown> | null = null;
+    let taskId: string | null = null;
+
+    const timer = setTimeout(() => {
+      ws.off("message", handler);
+      reject(
+        new Error(
+          `Timed out waiting for terminal task event for "${goal}"; saw ${events.map((event) => event.type).join(", ")}`,
+        ),
+      );
+    }, timeoutMs);
+
+    function finish(terminal: Record<string, unknown>) {
+      clearTimeout(timer);
+      ws.off("message", handler);
+      if (!accepted) {
+        reject(new Error(`Task "${goal}" reached terminal state without task.accepted`));
+        return;
+      }
+      resolve({ accepted, terminal, events });
+    }
+
+    function handler(raw: Buffer | string) {
+      try {
+        const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (msg.type === "task.accepted" && msg.goal === goal && typeof msg.taskId === "string") {
+          accepted = msg;
+          taskId = msg.taskId;
+          events.push(msg);
+          return;
+        }
+
+        if (!taskId || msg.taskId !== taskId) {
+          return;
+        }
+
+        events.push(msg);
+        if (msg.type === "task.complete" || msg.type === "task.error") {
+          finish(msg);
+        }
+      } catch {
+        // ignore parse errors from unrelated messages
+      }
+    }
+
+    ws.on("message", handler);
+    ws.send(JSON.stringify({ type: "task", goal, layer: "auto" }));
+  });
+}
+
 /** HTTP fetch helper returning { status, body }. */
 async function httpRequest(
   method: string,
@@ -722,37 +784,47 @@ describe("OmniState Gateway E2E Pipeline", () => {
       assert.ok(accepted.goal, "accepted message should echo the goal");
     });
 
-    it("receives at least one 'task.step' or 'task.complete' event", async () => {
-      const taskEvents: Record<string, unknown>[] = [];
-      const taskDone = new Promise<Record<string, unknown>>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          ws.off("message", handler);
-          reject(new Error(`Timed out waiting for task progress; saw ${taskEvents.map((m) => m.type).join(",")}`));
-        }, 8000);
+    it("returns a terminal typed task payload instead of passing on raw progress", async () => {
+      const { accepted, terminal, events } = await sendTaskAndCollectTerminal(ws, "/status");
 
-        function handler(raw: Buffer | string) {
-          try {
-            const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
-            taskEvents.push(msg);
-            if (["task.complete", "task.error", "task.step", "task.verify"].includes(msg.type as string)) {
-              clearTimeout(timer);
-              ws.off("message", handler);
-              resolve(msg);
-            }
-          } catch {
-            // ignore
-          }
-        }
+      assert.ok(typeof accepted.taskId === "string" && accepted.taskId.length > 0);
+      assert.equal(terminal.type, "task.complete");
 
-        ws.on("message", handler);
-      });
-
-      ws.send(JSON.stringify({ type: "task", goal: "/status", layer: "auto" }));
-      const result = await taskDone;
-
+      const result = terminal.result as Record<string, unknown> | undefined;
+      assert.ok(result, "task.complete should include a result payload");
+      assert.equal(result?.goal, "/status");
+      assert.equal(typeof result?.mode, "string");
+      assert.equal(typeof result?.intentType, "string");
+      assert.ok(Array.isArray(result?.stepData), "stepData should be an array");
       assert.ok(
-        ["task.complete", "task.error", "task.step", "task.verify"].includes(result.type as string),
-        `Unexpected event type: ${result.type}`,
+        ["verified", "unverified", "unsupported"].includes(String(result?.claimStatus)),
+        `Unexpected claimStatus: ${String(result?.claimStatus)}`,
+      );
+      const verifyEvents = events.filter((event) => event.type === "task.verify");
+      if (verifyEvents.length > 0) {
+        assert.ok(
+          verifyEvents.every((event) => ["pass", "fail", "ambiguous"].includes(String(event.result))),
+          `Unexpected task.verify result values: ${verifyEvents.map((event) => String(event.result)).join(", ")}`,
+        );
+      }
+    });
+
+    it("fails honestly when a flagged runtime capability is blocked by policy", async () => {
+      const { accepted, terminal, events } = await sendTaskAndCollectTerminal(ws, "run ls -la");
+
+      assert.ok(typeof accepted.taskId === "string" && accepted.taskId.length > 0);
+      assert.equal(terminal.type, "task.error");
+      assert.match(String(terminal.error ?? ""), /shell\.exec|blocked by default/i);
+
+      const failedSteps = events.filter((event) => event.type === "task.step" && event.status === "failed");
+      assert.ok(failedSteps.length >= 1, "expected at least one failed task.step event");
+
+      const verifyEvent = events.find((event) => event.type === "task.verify");
+      assert.ok(verifyEvent, "expected a task.verify event for blocked capability");
+      assert.equal(verifyEvent?.result, "ambiguous");
+      assert.equal(
+        (verifyEvent?.verification as Record<string, unknown> | undefined)?.status,
+        "unsupported",
       );
     });
 

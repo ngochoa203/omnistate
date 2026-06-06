@@ -14,7 +14,7 @@ import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig, saveLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setPowerField, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider, deleteProvider } from "../llm/runtime-config.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
@@ -24,6 +24,15 @@ import { execAsync, execFileAsync, isAllowedFilePath, mimeForPath, sniffAudioFor
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Gateway = any;
+
+function decodeBase64AudioChunk(value: unknown): Buffer | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length % 4 === 1) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) return null;
+  const decoded = Buffer.from(normalized, "base64");
+  return decoded.length > 0 ? decoded : null;
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // handleSiriBridgeRequest — HTTP handler for Siri bridge and REST endpoints
@@ -1094,8 +1103,14 @@ export async function handleMessage(
           taskId,
           result: {
             goal: msg.goal,
+            mode: "command",
+            stepsCompleted: 0,
+            intentType: "command-mode",
+            confidence: 1,
             command: true,
             output: commandResult.output,
+            stepData: [],
+            claimStatus: "unverified",
             ...(commandResult.data ? { commandData: commandResult.data } : {}),
           },
         } as ServerMessage);
@@ -1133,10 +1148,15 @@ export async function handleMessage(
             result: {
               goal: msg.goal,
               mode: "chat",
+              stepsCompleted: 0,
+              intentType: "chat-mode",
+              confidence: 1,
               route: requestedMode,
               providerId: llm.providerId,
               model: llm.model,
               output: llm.text,
+              stepData: [],
+              claimStatus: "unverified",
               attachmentCount: Array.isArray((msg as { attachments?: TaskAttachment[] }).attachments)
                 ? ((msg as { attachments?: TaskAttachment[] }).attachments?.length ?? 0)
                 : 0,
@@ -1163,9 +1183,14 @@ export async function handleMessage(
             result: {
               goal: msg.goal,
               mode: "chat",
+              stepsCompleted: 0,
+              intentType: "chat-mode",
+              confidence: 0,
               route: requestedMode,
               output: fallback,
               warning: err instanceof Error ? err.message : String(err),
+              stepData: [],
+              claimStatus: "unverified",
             },
           } as ServerMessage);
           incrementSessionUsage();
@@ -1251,6 +1276,23 @@ export async function handleMessage(
       break;
     }
 
+    case "voice.stream.chunk": {
+      const chunk = decodeBase64AudioChunk((msg as any).chunk ?? (msg as any).audio);
+      if (!chunk) {
+        gateway.safeSend(ws, {
+          type: "voice.stream.error",
+          sessionId: (msg as any).sessionId,
+          error: "Invalid or empty base64 audio chunk",
+          code: "STT_EMPTY_AUDIO",
+        } as unknown as ServerMessage);
+        break;
+      }
+      gateway.streamManager.handleBinaryFrame(clientId, chunk, (serverMsg: any) => {
+        gateway.safeSend(ws, serverMsg as unknown as ServerMessage);
+      });
+      break;
+    }
+
     case "voice.session.cancel": {
       gateway.streamManager.dropSession(msg.sessionId);
       break;
@@ -1331,7 +1373,15 @@ export async function handleMessage(
         gateway.safeSend(ws, {
           type: "system.info",
           id,
-          data: { battery, wifi, disk, cpu, memory, hostname },
+          data: {
+            battery,
+            wifi,
+            disk,
+            cpu,
+            memory,
+            power: gateway.powerManager?.getState?.() ?? null,
+            hostname,
+          },
         });
       } catch (err: any) {
         gateway.safeSend(ws, {
@@ -1343,6 +1393,7 @@ export async function handleMessage(
             disk: null,
             cpu: null,
             memory: null,
+            power: gateway.powerManager?.getState?.() ?? null,
             hostname: "unknown",
             error: err instanceof Error ? err.message : String(err),
           },
@@ -1484,6 +1535,21 @@ export async function handleMessage(
           case "voice.siri.token":
             handled = true;
             config = setSiriField("token", String(msg.value));
+            break;
+          case "power.lowBatteryThreshold":
+            handled = true;
+            config = setPowerField("lowBatteryThreshold", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
+            break;
+          case "power.criticalBatteryThreshold":
+            handled = true;
+            config = setPowerField("criticalBatteryThreshold", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
+            break;
+          case "power.pollIntervalMs":
+            handled = true;
+            config = setPowerField("pollIntervalMs", Number(msg.value));
+            gateway.applyPowerPolicyFromRuntimeConfig?.();
             break;
           case "vad.silenceThresholdMs": {
             handled = true;

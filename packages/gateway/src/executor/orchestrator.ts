@@ -31,6 +31,9 @@ import type { StructuredResponse } from "../intents/index.js";
 import { WorkingMemory } from "../memory/working-memory.js";
 import { TraceContext } from "../tracing/tracer.js";
 import { exportTrace } from "../tracing/exporters.js";
+import { getRuntimeCapabilityGate } from "../verification/capability-contracts.js";
+import { logger } from "../utils/logger.js";
+import type { VerificationResult } from "@omnistate/shared";
 
 /**
  * Converts a StructuredResponse from the intent registry into the legacy
@@ -48,6 +51,95 @@ function wrapResult(sr: StructuredResponse): Record<string, unknown> {
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeExecutionVerification(stepResults: StepResult[]): VerificationResult | undefined {
+  const verificationResults = stepResults
+    .map((step) => step.verification)
+    .filter((step): step is VerificationResult => Boolean(step));
+
+  if (verificationResults.length === 0) {
+    return undefined;
+  }
+
+  const contradicted = verificationResults.find((result) => result.status === "contradicted");
+  if (contradicted) return contradicted;
+
+  const unsupported = verificationResults.every((result) => result.status === "unsupported");
+  if (unsupported) return verificationResults[0];
+
+  const unverified = verificationResults.find((result) => result.status === "unverified");
+  if (unverified) return unverified;
+
+  return verificationResults.slice().sort((a, b) => b.confidence - a.confidence)[0];
+}
+
+function buildCapabilityGate(tool: string): { error: string; verification: VerificationResult } | null {
+  if (tool === "unsupported.capability" || tool.startsWith("verify.")) {
+    return null;
+  }
+
+  const gate = getRuntimeCapabilityGate(tool);
+  if (!gate) {
+    return null;
+  }
+
+  let reason: string | null = null;
+
+  if (gate.status === "unsupported") {
+    reason = `Capability "${tool}" is marked unsupported in the current build.`;
+  } else if (gate.status === "flagged") {
+    reason = `Capability "${tool}" is flagged and blocked by default in the current build.`;
+  } else if (gate.allowedByDefault === false) {
+    const constraints: string[] = [];
+    if (gate.requiresPrivilege) constraints.push("privileged access");
+    if (gate.requiresConfirmation) constraints.push("explicit confirmation");
+    const suffix = constraints.length > 0 ? ` It requires ${constraints.join(" and ")}.` : "";
+    reason = `Capability "${tool}" is not enabled by default in the current build.${suffix}`;
+  }
+
+  if (!reason) {
+    return null;
+  }
+
+  return {
+    error: reason,
+    verification: {
+      status: "unsupported",
+      confidence: 1,
+      verifier: "heuristic",
+      evidence: [
+        {
+          type: "heuristic-note",
+          summary: reason,
+          details: {
+            tool,
+            status: gate.status,
+            riskTier: gate.riskTier,
+            policy: {
+              allowedByDefault: gate.allowedByDefault,
+              requiresPrivilege: gate.requiresPrivilege ?? false,
+              requiresConfirmation: gate.requiresConfirmation ?? false,
+            },
+          },
+        },
+      ],
+      summary: reason,
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
+function shouldRetryFailure(result: StepResult): boolean {
+  if (result.verification?.status === "unsupported") {
+    return false;
+  }
+
+  if (typeof result.error === "string" && /blocked by default|not enabled by default|marked unsupported/i.test(result.error)) {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizeToolAlias(
@@ -234,6 +326,20 @@ export class Orchestrator {
       if (result.status === "ok") {
         completed.add(node.id);
       } else {
+        if (!shouldRetryFailure(result)) {
+          const stepResults = Array.from(results.values());
+          exportTrace(this.traceCtx.getAllSpans()).catch(() => {});
+          return {
+            taskId: plan.taskId,
+            status: "failed",
+            completedSteps: completed.size,
+            totalSteps: plan.nodes.length,
+            error: result.error,
+            stepResults,
+            verificationSummary: summarizeExecutionVerification(stepResults),
+          };
+        }
+
         // Attempt retry
         const retried = await this.retry.attemptRetry(
           node,
@@ -244,6 +350,7 @@ export class Orchestrator {
           completed.add(node.id);
           results.set(node.id, retried);
         } else {
+          const stepResults = Array.from(results.values());
           exportTrace(this.traceCtx.getAllSpans()).catch(() => {});
           return {
             taskId: plan.taskId,
@@ -251,18 +358,21 @@ export class Orchestrator {
             completedSteps: completed.size,
             totalSteps: plan.nodes.length,
             error: retried.error,
-            stepResults: Array.from(results.values()),
+            stepResults,
+            verificationSummary: summarizeExecutionVerification(stepResults),
           };
         }
       }
     }
 
+    const stepResults = Array.from(results.values());
     const finalResult = {
       taskId: plan.taskId,
       status: "complete" as const,
       completedSteps: completed.size,
       totalSteps: plan.nodes.length,
-      stepResults: Array.from(results.values()),
+      stepResults,
+      verificationSummary: summarizeExecutionVerification(stepResults),
     };
 
     this.workingMemory.set("lastTaskResult", {
@@ -312,11 +422,30 @@ export class Orchestrator {
       if (node.verify) {
         const verified = await verifyStep(node, result);
         if (!verified.passed) {
-          return { ...result, status: "failed", error: verified.reason };
+          return {
+            ...result,
+            status: "failed",
+            error: verified.reason,
+            verification: verified.verification,
+          };
         }
+        return { ...result, verification: verified.verification };
       }
 
       return result;
+    }
+
+    const gated = buildCapabilityGate(tool);
+    if (gated) {
+      logger.warn({ tool, reason: gated.error }, "[orchestrator] capability blocked by runtime gate");
+      return {
+        nodeId: node.id,
+        status: "failed",
+        layer,
+        durationMs: Date.now() - startMs,
+        error: gated.error,
+        verification: gated.verification,
+      };
     }
 
     try {
@@ -368,8 +497,14 @@ export class Orchestrator {
     if (node.verify) {
       const verified = await verifyStep(node, result);
       if (!verified.passed) {
-        return { ...result, status: "failed", error: verified.reason };
+        return {
+          ...result,
+          status: "failed",
+          error: verified.reason,
+          verification: verified.verification,
+        };
       }
+      return { ...result, verification: verified.verification };
     }
 
     return result;
@@ -467,6 +602,18 @@ export class Orchestrator {
         const info = this.deep.getSystemInfo();
         return { info };
       }
+      // unsupported.capability — honest fail node from planner for unimplemented paths
+      case "unsupported.capability": {
+        const reason = (params as any).unsupportedReason ?? "capability not implemented in current build";
+        logger.warn({ tool: "unsupported.capability", reason, params }, "[orchestrator] unsupported node executed");
+        return {
+          success: false,
+          output: "",
+          error: `Unsupported: ${reason}`,
+          unsupported: true,
+        };
+      }
+
       case "generic.execute": {
         const raw =
           (params as any).command ??
@@ -3289,6 +3436,7 @@ export interface StepResult {
   durationMs: number;
   data?: Record<string, unknown>;
   error?: string;
+  verification?: VerificationResult;
 }
 
 export interface ExecutionResult {
@@ -3298,6 +3446,7 @@ export interface ExecutionResult {
   totalSteps: number;
   error?: string;
   stepResults?: StepResult[];
+  verificationSummary?: VerificationResult;
 }
 
 // Re-export helper utilities from split modules for backward compatibility

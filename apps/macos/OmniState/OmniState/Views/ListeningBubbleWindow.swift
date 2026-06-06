@@ -43,8 +43,9 @@ final class ListeningBubbleController: ObservableObject {
     private func scheduleIdleHide() {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: idleTimeout, repeats: false) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.hide()
+                self.hide()
             }
         }
     }

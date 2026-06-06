@@ -20,13 +20,14 @@
  *   - Tab management / navigation  → standard AppleScript via `osascript`
  */
 
-import { exec, spawn } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import type { SurfaceLayer } from "./surface.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ------------------------------------------------------------------
 // Public interfaces
@@ -111,10 +112,14 @@ async function runAppleScript(
   script: string,
   timeoutMs: number = 15_000
 ): Promise<string> {
-  const { stdout } = await execAsync(
-    `osascript -e ${JSON.stringify(script)}`,
-    { timeout: timeoutMs }
-  );
+  const lines = script
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+  const args = lines.flatMap((line) => ["-e", line]);
+  const { stdout } = await execFileAsync("osascript", args, {
+    timeout: timeoutMs,
+  });
   return stdout.trim();
 }
 
@@ -126,9 +131,10 @@ async function runJxa(
   script: string,
   timeoutMs: number = 15_000
 ): Promise<string> {
-  const { stdout } = await execAsync(
-    `osascript -l JavaScript -e ${JSON.stringify(script)}`,
-    { timeout: timeoutMs }
+  const { stdout } = await execFileAsync(
+    "osascript",
+    ["-l", "JavaScript", "-e", script],
+    { timeout: timeoutMs },
   );
   return stdout.trim();
 }
@@ -213,21 +219,35 @@ export class BrowserLayer {
     const b = await this.detectBrowser(browser);
 
     if (b === "safari") {
-      const script = url
-        ? `tell application "Safari"
+      if (url) {
+        // `make new tab with properties {URL:...}` frequently blocks while Safari
+        // resolves/loads the page. `open location` is a reliable way to open the
+        // destination and keep automation responsive.
+        await runAppleScript(
+          `tell application "Safari"
              activate
-             tell window 1 to set newTab to make new tab with properties {URL:"${escapeForAppleScript(url)}"}
-             set current tab of window 1 to newTab
-             return (index of newTab as string) & "|" & (URL of newTab) & "|" & (name of newTab)
+             open location "${escapeForAppleScript(url)}"
            end tell`
-        : `tell application "Safari"
-             activate
-             tell window 1 to set newTab to make new tab
-             set current tab of window 1 to newTab
-             return (index of newTab as string) & "|" & "" & "|" & ""
-           end tell`;
+        );
+        return {
+          index: 1,
+          url,
+          title: "",
+          active: true,
+          windowIndex: 1,
+        };
+      }
 
-      const out = await runAppleScript(script);
+      const out = await runAppleScript(
+        `tell application "Safari"
+           activate
+         end tell
+         tell application "System Events"
+           keystroke "t" using command down
+         end tell
+         delay 0.1
+         return "1||"`
+      );
       const [idx, tabUrl, title] = out.split("|");
       return {
         index: parseInt(idx ?? "1", 10),

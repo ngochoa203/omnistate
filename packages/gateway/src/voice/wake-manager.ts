@@ -224,6 +224,7 @@ export class WakeManager {
 
     // Initialize adaptive threshold from config or defaults
     this.currentThreshold = options.config.threshold ?? 0.5;
+    this.commandWindowSec = options.config.commandWindowSec;
 
     if (!options.config.enabled) return;
     if (!options.token) {

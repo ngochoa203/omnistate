@@ -254,8 +254,6 @@ export const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:iokit|smc\s*key|thermal\s*sensor|gpu\s*temp|battery\s*health|nvram|usb\s*tree|pci\s*device|hardware\s*sensor)\b/i, 'iokit-hardware'],
   // Kernel control
   [/\b(?:sysctl|kext(?:stat|load|unload)?|kernel\s*extension|vm\s*stat|dtrace|dtruss|syscall\s*trace|spotlight\s*index|launchctl|launchd|purge\s*memory|kernel\s*param)\b/i, 'kernel-control'],
-  // WiFi security
-  [/\b(?:aircrack|airodump|aireplay|handshake\s*capture|wifi\s*(?:monitor|capture|packet|deauth|attack|crack)|packet\s*capture|deauth(?:entication)?|wpa\s*(?:crack|handshake)|channel\s*hop)\b/i, 'wifi-security'],
 
   // Non-technical user phrases
   [/\b(?:mở|bật|tắt|đóng|dừng)\s+(?:ứng\s*dụng|app|app\s*)\b/i, "app-control"],
@@ -263,6 +261,21 @@ export const PHRASE_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:chạy\s*(?:ổn\s*định|êm|tốt|mượt|tốt\s*không))\b/i, "system-query"],
   [/\b(?:làm\s*gì|xoay\s*sở|giúp\s*được\s*gì|dùng\s*được\s*gì)\b/i, "system-query"],
   [/\b(?:bật|tắt)\s*(?:wifi|wi-fi|wifi|bluetooth|bt|âm\s*lượng|volume|màn\s*hình|screen|brightness)\b/i, "multi-step"],
+
+  // ── Vietnamese browser reliability regression — mixed-language commands ──
+  // These patterns use "ở" (preposition "at/on") before the browser name,
+  // e.g. "ở Safari hãy mở youtube ở tab mới". Without the pattern, the "ở Safari"
+  // fragment can trigger app-launch of a bogus "Safari hãy mở youtube" app.
+  [/\b(?:ở|tại)\s+(?:safari|chrome|firefox|brave|arc|edge|trình\s*duyệt)\b.*\b(?:mở|open|tìm|search)\b/i, "app-control"],
+  [/\b(?:mở|open|tìm|search)\b.*\b(?:ở|tại)\s+(?:safari|chrome|firefox|brave|arc|edge)\b/i, "app-control"],
+  // "vào notion rồi tạo tab mới" — "vào" = navigate, "tạo tab mới" = new tab
+  [/\b(?:vào|truy\s*cập|navigate)\s+(?:notion|github|google|facebook|youtube|tiktok|instagram)\b/i, "app-control"],
+  // "mở github trên chrome" / "open github on chrome" — explicit browser specifier
+  [/\b(?:mở|open|launch)\s+\S+\s+(?:trên|on|bằng)\s+(?:safari|chrome|firefox|brave|arc|edge)\b/i, "app-control"],
+  // "tìm video X rồi mở kết quả đầu tiên" — search + click-first-result pattern
+  [/\b(?:tìm|find|search)\s+(?:video|clip|bài)\s+\S+.*\b(?:rồi|then| sau\s*đó)\s+(?:mở|open|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i, "app-control"],
+  // Standalone "tạo tab mới" on any app — tab creation in browser/app context
+  [/\b(?:tạo|mở)\s+(?:tab|cửa\s*sổ)\s+(?:mới|new)\b/i, "app-control"],
 ];
 
 // ============================================================================
@@ -329,6 +342,21 @@ export const HEURISTIC_RULES: Array<{
   type: IntentType;
   entityExtractor?: (m: RegExpMatchArray) => Record<string, Entity>;
 }> = [
+  {
+    pattern: /(?:^|\s)(?:ở|trong)\s+(safari|chrome|firefox|brave|arc|edge)\b[\s,]*.*?(?:hãy\s+)?(?:mở|open)\s+(.+?)\s+(?:ở|trong)\s+tab\s+mới\b/i,
+    type: "app-control",
+    entityExtractor: (m) => ({
+      app: { type: "app", value: m[1]?.trim() ?? "Safari" },
+      query: { type: "text", value: m[2]?.trim() ?? "" },
+    }),
+  },
+  {
+    pattern: /\b(?:vào|mở|open)\s+(notion|github|youtube|google|facebook|gmail)\b.*?\b(?:rồi|then|sau đó)\b.*?\b(?:tab\s*mới|new\s*tab)\b/i,
+    type: "multi-step",
+    entityExtractor: (m) => ({
+      app: { type: "app", value: m[1]?.trim() ?? "" },
+    }),
+  },
   {
     pattern: /\b(send\s+email|compose\s+email|write\s+email|open\s+mail|mail\s+app|g[iử]i\s*email|thư\s*điện\s*tử|(?:email|mail)\b(?!\s*:))\b/i,
     type: "app-control",
@@ -428,9 +456,39 @@ export const HEURISTIC_RULES: Array<{
     type: "security-management",
     entityExtractor: () => ({}),
   },
+  // ── Vietnamese browser reliability regression — insert BEFORE greedy app-launch rule ──
+  // These more-specific patterns must fire BEFORE the greedy "open.*chrome|safari" rule,
+  // which would otherwise swallow "ở Safari hãy mở youtube" as app-launch (bogus "Safari hãy mở").
   {
-    pattern:
-      /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
+    // NOTE: \b after Unicode "ở"/"tại" is unreliable (word boundary fails when
+    // adjacent chars are mixed Unicode/ASCII). Use (?=\s|$) after the keyword
+    // instead of \b, and require the pattern to start at ^ or follow whitespace.
+    pattern: /(?:^|(?<=\s))(?:ở|tại)\s+(?:safari|chrome|firefox|brave|arc|edge|trình\s*duyệt)(?=\s|$)/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(?:mở|open)\s+\S+.*\b(?:trên|on|bằng)\s+(?:safari|chrome|firefox|brave|arc|edge)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(?:vào|truy\s*cập|navigate)\s+(?:notion|github|google|facebook|youtube|tiktok|instagram)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(?:tạo|mở)\s+(?:tab|cửa\s*sổ)\s+(?:mới|new)\b/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(?:tìm|find|search)\s+(?:video|clip|bài)\s+\S+.*\b(?:rồi|then)\s+(?:mở|open|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i,
+    type: "app-control",
+    entityExtractor: () => ({}),
+  },
+  {
+    pattern: /\b(open|launch|start|activate|switch to)\b.{0,40}\b(app|application|browser|terminal|vscode|slack|chrome|safari|finder|xcode)\b/i,
     type: "app-launch",
     entityExtractor: (m) => ({
       app: { type: "app", value: m[0] },
@@ -960,6 +1018,12 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "file-operation",
       confidence: 0.95,
     },
+    // Fix: "tìm file trùng" / "find duplicate files" → file.search
+    {
+      pattern: /^(?:tìm\s+file\s+trùng|find\s+duplicate\s+files?)$/i,
+      type: "file.search",
+      confidence: 0.97,
+    },
     // Fix: "tìm kiếm file" → file.search
     {
       pattern: /^tìm\s*kiếm\s+file/i,
@@ -1031,9 +1095,18 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: "multi-step",
       confidence: 0.96,
     },
-    // FIX: Add "xong" to blacklist so "Mở zalo xong đóng" → multi-step (NOT app-launch)
+    // Vietnamese tab/browser commands → app-control (MUST come before greedy app-launch blacklist)
+    // "mở tab mới" / "tạo tab mới" → app-control
     {
-      pattern: /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+(?!.*(?:bằng|qua|tại|trong|sau\s*đó|rồi|tiếp\s*theo|truy\s*cập|video\s*đầ|kết\s*quả|for\s+\d|then\s|after\s*that|afterwards|xong|done|finished|completed))(?=.*[a-zA-ZÀ-ỹ])[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?(?:\s+(?:app|application|ứng\s*dụng))?(?=\s*$)/i,
+      pattern: /^(?:mở|open|tạo)\s+(?:tab|cửa\s*sổ|window)\s+(?:mới|new)\b$/i,
+      type: "app-control",
+      confidence: 0.97,
+    },
+    // FIX: Add "xong" to blacklist so "Mở zalo xong đóng" → multi-step (NOT app-launch)
+    // FIX: Also exclude "trên" and "ở " to prevent swallowing Vietnamese browser commands
+    //       e.g. "mở github trên chrome" / "ở Safari hãy mở youtube"
+    {
+      pattern: /^(?:open|launch|start|activate|mở|khởi?\s*động)\s+(?!.*(?:bằng|qua|tại|trong|sau\s*đó|rồi|tiếp\s*theo|truy\s*cập|video\s*đầ|kết\s*quả|for\s+\d|then\s|after\s*that|afterwards|xong|done|finished|completed|trên|ở\s))(?=.*[a-zA-ZÀ-ỹ])[a-zA-ZÀ-ỹ][a-zA-ZÀ-ỹ0-9\s\-\.]{0,40}?(?:\s+(?:app|application|ứng\s*dụng))?(?=\s*$)/i,
       type: "app-launch",
       confidence: 0.97,
     },
@@ -1091,6 +1164,12 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       pattern: /^(?:tìm|tìm\s*kiếm|search|find)\s+[a-zA-ZÀ-ỹ0-9\s\-\.]{1,40}?\s+(?:rồi|sau\s*đó|then)\s+(?:gửi|send|share|email|nén|compress|mở|open)/i,
       type: "multi-step",
       confidence: 0.97,
+    },
+    // "tìm video X rồi mở kết quả đầu tiên" → app-control (MUST come before generic "tìm X rồi Y → multi-step")
+    {
+      pattern: /^tìm\s+video\s+.{1,40}?\s+rồi\s+(?:mở|open|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i,
+      type: "app-control",
+      confidence: 0.98,
     },
     // "tải file X rồi Y" — download + action
     {
@@ -1428,12 +1507,6 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       type: 'kernel-control',
       confidence: 0.93,
     },
-    // ── WiFi security ──
-    {
-      pattern: /\b(?:aircrack|airodump|aireplay|capture\s*handshake|wifi\s*(?:monitor\s*mode|packet\s*capture|deauth|crack|attack)|deauth(?:entication)?\s*attack|wpa\s*(?:handshake|crack)|channel\s*hop(?:ping)?|install\s*aircrack)\b/i,
-      type: 'wifi-security',
-      confidence: 0.95,
-    },
     // ── Non-technical user natural language ──
     // FIX: \b doesn't work reliably with Vietnamese diacritics + /i flag — use negative lookbehind
     // "(?<![a-zA-ZÀ-ỹ])" ensures "làm gì" is at start or after whitespace, not after a letter
@@ -1541,6 +1614,49 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
       pattern: /\b(?:màn\s*hình\s*(?:của\s*)?tôi|brightness|màn\s*hình)\s*(?:sáng|tối|tăng|giảm)\b/i,
       type: "display-management",
       confidence: 0.93,
+    },
+    // ── Vietnamese browser reliability regression — catch before greedy app-launch rule ──
+    // "ở Safari hãy mở youtube ở tab mới" / "ở Chrome hãy mở youtube" → app-control
+    {
+      pattern: /(?:^|\s)(?:ở|tại)\s+(?:safari|chrome|firefox|brave|arc|edge)(?=\s|$)/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    // "mở github trên chrome" / "mở youtube trên safari" → app-control
+    {
+      pattern: /^mở\s+\S+\s+(?:trên|on|bằng)\s+(?:safari|chrome|firefox|brave|arc|edge)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    // "vào notion" / "vào github" / "vào google" → app-control
+    {
+      pattern: /^vào\s+(?:notion|github|google|facebook|youtube|tiktok|instagram)\b/i,
+      type: "app-control",
+      confidence: 0.95,
+    },
+    // "vào notion rồi tạo tab mới" → app-control (catch before "mở X rồi Y" multi-step rule fires)
+    {
+      pattern: /^vào\s+\S+\s+(?:rồi|sau\s*đó|then|after)\s+(?:tạo\s+)?(?:tab|cửa\s*sổ)\s+(?:mới|new)\b/i,
+      type: "app-control",
+      confidence: 0.96,
+    },
+    // "tạo tab mới" / "tạo cửa sổ mới" alone → app-control
+    {
+      pattern: /^tạo\s+(?:tab|cửa\s*sổ|window)\s+(?:mới|new)\b$/i,
+      type: "app-control",
+      confidence: 0.96,
+    },
+    // "mở tab mới" / "open tab mới" → app-control (NOT multi-step/app-launch)
+    {
+      pattern: /^(?:mở|open)\s+tab\s+(?:mới|new)\b$/i,
+      type: "app-control",
+      confidence: 0.96,
+    },
+    // "tìm video React rồi mở kết quả đầu tiên" → app-control
+    {
+      pattern: /^tìm\s+video\s+\S+.*\brồi\s+(?:mở|open|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i,
+      type: "app-control",
+      confidence: 0.96,
     },
   ];
 
@@ -1650,6 +1766,12 @@ export async function classifyIntent(text: string, context?: IntentContext): Pro
     // through the generic translate-ui pattern (let the detectMissingParams logic handle it)
     const hasTargetLang = /\b(sang|to|in)\s+(?:tiếng\s+)?(anh|việt|pháp|nhật|trung|hàn|đức|ý|english|vietnamese|french|japanese|chinese|korean|german|italian)\b/i.test(normalized);
     const isTranslateText = /\b(dịch|translate)\b/i.test(normalized);
+
+    // EARLY OVERRIDE: "tìm video X rồi mở kết quả đầu tiên" → app-control
+    // Must check BEFORE PHRASE_PATTERNS loop, which otherwise overrides multi-step result
+    if (/^tìm\s+video\s+.{1,40}?\s+rồi\s+(?:mở|open|click)\s+(?:kết\s*quả\s*)?đầu\s*tiên\b/i.test(text)) {
+      return { type: "app-control", confidence: 0.98, entities: result.entities, rawText: text };
+    }
 
     for (const [regex, intentType] of PHRASE_PATTERNS) {
       // Skip the generic translate-ui pattern when a specific target language is given

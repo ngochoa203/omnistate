@@ -5,7 +5,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { VoiceStreamManager } from "../webrtc-stream.js";
+import { VoiceStreamManager, resolveVoiceExecutionPolicy } from "../webrtc-stream.js";
+import type { LlmRuntimeConfig } from "../../llm/runtime-config.js";
+import type { DeviceProfile } from "../device-profiles.js";
 
 // Stub heavy dependencies that aren't needed for these unit tests
 vi.mock("../../hybrid/automation.js", () => ({
@@ -17,7 +19,13 @@ vi.mock("../../llm/runtime-config.js", () => ({
       primaryProvider: "whisper-local",
       fallbackProviders: [],
       lowLatency: false,
-      speakerVerification: null,
+      vad: {
+        enabled: true,
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
+      },
       tts: { provider: "none" },
     },
   }),
@@ -119,5 +127,164 @@ describe("VoiceStreamManager", () => {
     const beforeCount = messages.length;
     manager.handleBinaryFrame(CLIENT_ID, makeChunk(512), send);
     expect(messages.length).toBe(beforeCount);
+  });
+});
+
+describe("resolveVoiceExecutionPolicy", () => {
+  const runtime = {
+    activeProviderId: "x",
+    activeModel: "y",
+    fallbackProviderIds: [],
+    providers: [],
+    fastPathThreshold: 0.92,
+    tokenBudget: {
+      compactPrompt: true,
+      intentMaxTokens: 100,
+      decomposeMaxTokens: 100,
+      maxInputChars: 1000,
+    },
+    power: {
+      lowBatteryThreshold: 20,
+      criticalBatteryThreshold: 10,
+      pollIntervalMs: 15000,
+    },
+    voice: {
+      primaryProvider: "native",
+      fallbackProviders: ["whisper-local", "whisper-cloud"],
+      lowLatency: true,
+      autoExecuteTranscript: true,
+      whisperLocalModel: "small",
+      chunkMs: 220,
+      tts: { provider: "rtvc" },
+      siri: {
+        enabled: false,
+        mode: "handoff",
+        shortcutName: "",
+        endpoint: "",
+        token: "",
+      },
+      vad: {
+        enabled: true,
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
+      },
+      wake: {
+        enabled: true,
+        phrase: "hey mimi",
+        cooldownMs: 2500,
+        commandWindowSec: 7,
+        engine: "oww",
+        aliases: [],
+        threshold: 0.5,
+      },
+    },
+    session: {
+      currentSessionId: "default",
+      sessions: [],
+    },
+  } satisfies LlmRuntimeConfig;
+
+  function makeProfile(
+    powerMode: DeviceProfile["powerMode"],
+    overrides?: Partial<DeviceProfile["recommendedSettings"]>,
+  ): DeviceProfile {
+    return {
+      deviceType: "macos",
+      capabilities: {
+        maxSampleRate: 48000,
+        supportsStereo: true,
+        hasGoodMicrophone: true,
+        hasGoodSpeaker: true,
+        supportsLowLatency: true,
+        supportsHardwareAcceleration: true,
+        maxConcurrentStreams: 4,
+        supportsWakeWordDsp: true,
+      },
+      audioProfile: {
+        inputLatencyMs: 5,
+        outputLatencyMs: 10,
+        recommendedChunkMs: 260,
+        bufferSize: 1024,
+        noiseSuppression: true,
+        echoCancellation: true,
+        automaticGainControl: true,
+      },
+      powerMode,
+      recommendedSettings: {
+        sttProvider: "whisper-local",
+        whisperModel: "small",
+        vadEnabled: true,
+        vadSpeechThreshold: 0.5,
+        vadSilenceThreshold: 0.35,
+        wakeEngine: "personal",
+        wakeThreshold: 0.5,
+        ttsProvider: "edge",
+        ttsVoiceSpeed: 1.0,
+        enableContinuousListening: powerMode !== "battery_saver",
+        enableOnDeviceProcessing: powerMode === "normal",
+        ...overrides,
+      },
+      confidence: 1,
+    };
+  }
+
+  it("prioritizes the device profile STT provider and preserves chunk guidance", () => {
+    const policy = resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm");
+    expect(policy.orderedProviders[0]).toBe("whisper-local");
+    expect(policy.preferredChunkMs).toBe(260);
+  });
+
+  it("disables streaming and low-latency race in battery saver", () => {
+    const policy = resolveVoiceExecutionPolicy(runtime, makeProfile("battery_saver"), "audio/pcm");
+    expect(policy.useStreamingStt).toBe(false);
+    expect(policy.useLowLatencyRace).toBe(false);
+  });
+
+  it("falls back from rtvc to edge TTS in low-power modes", () => {
+    const policy = resolveVoiceExecutionPolicy(runtime, makeProfile("low_power"), "audio/webm");
+    expect(policy.ttsProvider).toBe("edge");
+  });
+
+  it("raises TTS cadence in constrained power modes", () => {
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm").ttsRate).toBe(1);
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("low_power"), "audio/webm").ttsRate).toBe(1.05);
+    expect(resolveVoiceExecutionPolicy(runtime, makeProfile("battery_saver"), "audio/webm").ttsRate).toBe(1.1);
+  });
+
+  it("respects the device profile base TTS speed before power adjustments", () => {
+    const policy = resolveVoiceExecutionPolicy(
+      runtime,
+      makeProfile("low_power", { ttsVoiceSpeed: 0.95 }),
+      "audio/webm",
+    );
+    expect(policy.ttsRate).toBe(1);
+  });
+
+  it("raises VAD buffering thresholds in constrained power modes", () => {
+    const normal = resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm");
+    const saver = resolveVoiceExecutionPolicy(runtime, makeProfile("battery_saver"), "audio/webm");
+
+    expect(saver.vadConfig.silenceThresholdMs).toBeGreaterThan(normal.vadConfig.silenceThresholdMs);
+    expect(saver.vadConfig.minSpeechMs).toBeGreaterThan(normal.vadConfig.minSpeechMs);
+    expect(saver.vadConfig.speechThreshold).toBeGreaterThan(normal.vadConfig.speechThreshold);
+  });
+
+  it("adds extra VAD damping for devices without low-latency audio", () => {
+    const policy = resolveVoiceExecutionPolicy(
+      runtime,
+      {
+        ...makeProfile("normal"),
+        capabilities: {
+          ...makeProfile("normal").capabilities,
+          supportsLowLatency: false,
+        },
+      },
+      "audio/webm",
+    );
+
+    expect(policy.vadConfig.silenceThresholdMs).toBeGreaterThan(runtime.voice.vad.silenceThresholdMs);
+    expect(policy.vadConfig.minSpeechMs).toBeGreaterThan(runtime.voice.vad.minSpeechMs);
   });
 });

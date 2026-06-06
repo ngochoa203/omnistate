@@ -11,6 +11,14 @@ vi.mock("../llm/runtime-config.js", () => ({
       primaryProvider: "native",
       fallbackProviders: [],
       lowLatency: false,
+      vad: {
+        enabled: true,
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
+      },
+      tts: { provider: "none" },
     },
   })),
 }));
@@ -139,6 +147,6 @@ describe("VoiceStreamManager — STT pipeline", () => {
     expect(resultMsg).toBeDefined();
     expect(resultMsg.kind).toBe("final");
     expect(resultMsg.text).toBe("turn off the lights");
-    expect(resultMsg.provider).toBe("native");
+    expect(resultMsg.provider).toBe("whisper-local");
   });
 });

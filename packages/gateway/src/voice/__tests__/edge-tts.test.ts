@@ -1,6 +1,6 @@
 import { readFile, unlink } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { detectLanguage, pickVoice, synthesize } from "../edge-tts.js";
+import { detectLanguage, formatEdgeTtsRate, pickVoice, synthesize } from "../edge-tts.js";
 
 // ---------------------------------------------------------------------------
 // Mock node:child_process so no real Python is spawned
@@ -92,6 +92,23 @@ describe("pickVoice", () => {
   });
 });
 
+describe("formatEdgeTtsRate", () => {
+  it("formats the neutral rate as +0%", () => {
+    expect(formatEdgeTtsRate()).toBe("+0%");
+    expect(formatEdgeTtsRate(1)).toBe("+0%");
+  });
+
+  it("formats positive and negative deltas as percentages", () => {
+    expect(formatEdgeTtsRate(1.1)).toBe("+10%");
+    expect(formatEdgeTtsRate(0.95)).toBe("-5%");
+  });
+
+  it("clamps extreme values to the supported window", () => {
+    expect(formatEdgeTtsRate(2)).toBe("+30%");
+    expect(formatEdgeTtsRate(0.2)).toBe("-30%");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // synthesize
 // ---------------------------------------------------------------------------
@@ -113,7 +130,9 @@ describe("synthesize", () => {
     expect(args).toContain("--text");
     expect(args).toContain("xin chào");
     expect(args).toContain("--voice");
+    expect(args).toContain("--rate");
     expect(args).toContain("--output");
+    expect(args).toContain("+0%");
 
     expect(result).toEqual(fakeBuffer);
   });
@@ -152,6 +171,17 @@ describe("synthesize", () => {
     const [, args] = mockExecFile.mock.calls[0];
     const voiceIdx = (args as string[]).indexOf("--voice");
     expect((args as string[])[voiceIdx + 1]).toBe("en-US-GuyNeural");
+  });
+
+  it("passes a formatted TTS rate to the python wrapper", async () => {
+    makeExecFileSuccess();
+    mockReadFile.mockResolvedValue(fakeBuffer as any);
+
+    await synthesize("hello", { rate: 1.1 });
+
+    const [, args] = mockExecFile.mock.calls[0];
+    const rateIdx = (args as string[]).indexOf("--rate");
+    expect((args as string[])[rateIdx + 1]).toBe("+10%");
   });
 
   it("rejects invalid voice identifier (allowlist regex)", async () => {

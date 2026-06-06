@@ -47,6 +47,11 @@ function makeConfig(): LlmRuntimeConfig {
       maxInputChars: 1400,
     },
     fastPathThreshold: 0.92,
+    power: {
+      lowBatteryThreshold: 20,
+      criticalBatteryThreshold: 10,
+      pollIntervalMs: 15_000,
+    },
     voice: {
       whisperLocalModel: "small",
       lowLatency: true,

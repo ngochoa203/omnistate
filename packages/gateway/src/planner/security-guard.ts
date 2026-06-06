@@ -51,6 +51,13 @@ const SECURITY_RULES: Array<{
     userMessage_en: '⛔ Dangerous command: Cannot delete root or home directory. This action is irreversible.',
   },
   {
+    pattern: /(?:xóa|xoá|delete|remove|wipe|erase|thực\s*thi\s*lệnh\s*xóa)\s+(?:toàn\s*bộ\s*)?(?:thư\s*mục|folder|directory)?\s*(?:\/Users\/[^/\s]+\/Documents|~\/Documents|\$HOME\/Documents)\b/i,
+    category: 'DESTRUCTIVE_SYSTEM',
+    reason: 'Destructive deletion of Documents directory',
+    userMessage_vi: '⛔ Lệnh nguy hiểm: Không thể tự động xóa toàn bộ thư mục Documents. Hành động này cần xác nhận rõ qua UI hoặc Voice trước khi tiếp tục.',
+    userMessage_en: '⛔ Dangerous command: Cannot automatically delete the Documents directory. This requires explicit UI or voice confirmation first.',
+  },
+  {
     pattern: /(?:format|wipe|erase)\s+(?:toàn\s*bộ\s*)?(?:ổ\s*cứng|hard\s*drive|system\s*disk)\b/i,
     category: 'DESTRUCTIVE_SYSTEM',
     reason: 'Full disk format/wipe attempt',

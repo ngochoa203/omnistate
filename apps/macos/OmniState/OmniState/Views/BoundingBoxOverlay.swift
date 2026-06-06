@@ -35,12 +35,13 @@ final class BoundingBoxController: ObservableObject {
 
         // Schedule removal
         let timer = Timer.scheduledTimer(withTimeInterval: Double(durationMs) / 1000.0, repeats: false) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.activeBoxes.removeAll { $0.id == box.id }
-                self?.hideTimers.removeValue(forKey: box.id)
+                self.activeBoxes.removeAll { $0.id == box.id }
+                self.hideTimers.removeValue(forKey: box.id)
                 // Hide window if no more boxes
-                if self?.activeBoxes.isEmpty == true {
-                    self?.overlayWindow?.orderOut(nil)
+                if self.activeBoxes.isEmpty {
+                    self.overlayWindow?.orderOut(nil)
                 }
             }
         }

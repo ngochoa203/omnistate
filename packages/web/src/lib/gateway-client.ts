@@ -181,13 +181,15 @@ export class GatewayClient {
     this.send({ type: "voice.transcribe", id: msgId, audio: audioBase64 } as ClientMessage);
   }
 
-  startVoiceStream(options: { sessionId?: string; mimeType?: string; sampleRate?: number } = {}): string {
+  startVoiceStream(options: { sessionId?: string; mimeType?: string; sampleRate?: number; wantTts?: boolean; ttsProfileId?: string } = {}): string {
     const sessionId = options.sessionId || `voice-${Date.now()}`;
     this.send({
       type: "voice.stream.start",
       sessionId,
       mimeType: options.mimeType,
       sampleRate: options.sampleRate,
+      wantTts: options.wantTts,
+      ttsProfileId: options.ttsProfileId,
     } as unknown as ClientMessage);
     return sessionId;
   }
