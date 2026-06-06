@@ -46,6 +46,8 @@ export type ClientMessage =
   | VoiceEnrollSampleMessage
   | VoiceEnrollCancelMessage
   | VoiceEnrollFinalizeMessage
+  | VoiceRuntimeStatusQueryMessage
+  | VoiceRuntimeInstallMessage
   | ToolsListMessage;
 
 export interface ConnectMessage {
@@ -195,6 +197,7 @@ export interface RuntimeConfigSetMessage {
     | "apiKey"
     | "voice.lowLatency"
     | "voice.autoExecuteTranscript"
+    | "voice.tts.provider"
     | "voice.wake.enabled"
     | "voice.wake.phrase"
     | "voice.wake.cooldownMs"
@@ -219,6 +222,16 @@ export interface RuntimeConfigSetMessage {
     | "power.criticalBatteryThreshold"
     | "power.pollIntervalMs";
   value: string | boolean | number;
+}
+
+export interface VoiceRuntimeStatusQueryMessage {
+  type: "voice.runtime.status";
+}
+
+export interface VoiceRuntimeInstallMessage {
+  type: "voice.runtime.install";
+  force?: boolean;
+  setDefault?: boolean;
 }
 
 export interface RuntimeConfigUpsertProviderMessage {
@@ -434,6 +447,7 @@ export type ServerMessage =
   | VoiceEnrollProgressMessage
   | VoiceEnrollDoneMessage
   | VoiceEnrollErrorMessage
+  | VoiceRuntimeStatusMessage
   | ToolsListResultMessage;
 
 export interface ConnectedMessage {
@@ -881,6 +895,20 @@ export interface VoiceEnrollErrorMessage {
   type: "voice.enroll.error";
   code: string;
   message: string;
+}
+
+export interface VoiceRuntimeStatusMessage {
+  type: "voice.runtime.status";
+  provider: "omnistate-voice";
+  state: "not_installed" | "installing" | "ready" | "failed";
+  message: string;
+  managed: boolean;
+  progress: number;
+  runtimeRoot: string;
+  pythonPath?: string;
+  activeStep?: string;
+  lastError?: string;
+  activeProvider?: string;
 }
 
 // ── Tools List (Gateway → Client) ────────────────────────────────────────────

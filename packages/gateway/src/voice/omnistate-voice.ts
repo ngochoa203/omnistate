@@ -10,6 +10,34 @@ const execFileAsync = promisify(execFile);
 
 const omniStateVoiceScriptPath = resolve(process.cwd(), "scripts/voice/omnistate_voice_tts.py");
 
+export type OmniStateVoiceRuntimeInstallState =
+  | "not_installed"
+  | "installing"
+  | "ready"
+  | "failed";
+
+export interface OmniStateVoiceRuntimeStatus {
+  provider: "omnistate-voice";
+  state: OmniStateVoiceRuntimeInstallState;
+  message: string;
+  managed: boolean;
+  progress: number;
+  runtimeRoot: string;
+  pythonPath?: string;
+  activeStep?: string;
+  lastError?: string;
+}
+
+let runtimeStatus: OmniStateVoiceRuntimeStatus = {
+  provider: "omnistate-voice",
+  state: "not_installed",
+  message: "OmniState Voice runtime is not installed yet.",
+  managed: true,
+  progress: 0,
+  runtimeRoot: "",
+};
+let activeInstallPromise: Promise<OmniStateVoiceRuntimeStatus> | null = null;
+
 function getManagedRuntimeRoot(): string {
   return resolve(homedir(), ".omnistate/runtime/omnistate-voice");
 }
@@ -32,32 +60,146 @@ function resolveBootstrapPython(): string {
     ?? "python3";
 }
 
-async function ensureManagedPythonExec(): Promise<string> {
+function currentConfiguredPython(): string | null {
+  const configured = process.env.OMNISTATE_VOICE_PYTHON?.trim()
+    ?? process.env.OMNISTATE_OMNIVOICE_PYTHON?.trim()
+    ?? process.env.OMNISTATE_RTC_PYTHON?.trim();
+  return configured || null;
+}
+
+function buildRuntimeStatus(
+  overrides: Partial<OmniStateVoiceRuntimeStatus> = {},
+): OmniStateVoiceRuntimeStatus {
+  return {
+    provider: "omnistate-voice",
+    state: "not_installed",
+    message: "OmniState Voice runtime is not installed yet.",
+    managed: !currentConfiguredPython(),
+    progress: 0,
+    runtimeRoot: getManagedRuntimeRoot(),
+    ...overrides,
+  };
+}
+
+function updateRuntimeStatus(
+  overrides: Partial<OmniStateVoiceRuntimeStatus>,
+  onStatus?: (status: OmniStateVoiceRuntimeStatus) => void,
+): OmniStateVoiceRuntimeStatus {
+  runtimeStatus = buildRuntimeStatus({
+    ...runtimeStatus,
+    ...overrides,
+  });
+  onStatus?.(runtimeStatus);
+  return runtimeStatus;
+}
+
+export async function getOmniStateVoiceRuntimeStatus(): Promise<OmniStateVoiceRuntimeStatus> {
   const configured = process.env.OMNISTATE_VOICE_PYTHON?.trim()
     ?? process.env.OMNISTATE_OMNIVOICE_PYTHON?.trim()
     ?? process.env.OMNISTATE_RTC_PYTHON?.trim();
   if (configured) {
-    return configured;
+    if (existsSync(configured)) {
+      return updateRuntimeStatus({
+        state: "ready",
+        message: "Using configured OmniState Voice Python runtime.",
+        managed: false,
+        progress: 100,
+        pythonPath: configured,
+        activeStep: "configured_python",
+        lastError: undefined,
+      });
+    }
+    return updateRuntimeStatus({
+      state: "failed",
+      message: "Configured OmniState Voice Python runtime was not found.",
+      managed: false,
+      progress: 0,
+      pythonPath: configured,
+      activeStep: "configured_python_missing",
+      lastError: `Missing configured Python runtime: ${configured}`,
+    });
   }
 
   const managedPython = getManagedPythonExecPath();
   if (existsSync(managedPython)) {
-    return managedPython;
+    return updateRuntimeStatus({
+      state: "ready",
+      message: "OmniState Voice runtime is ready.",
+      managed: true,
+      progress: 100,
+      pythonPath: managedPython,
+      activeStep: "ready",
+      lastError: undefined,
+    });
+  }
+
+  if (activeInstallPromise) {
+    return runtimeStatus;
+  }
+
+  return updateRuntimeStatus({
+    state: "not_installed",
+    message: "OmniState Voice runtime is not installed yet.",
+    managed: true,
+    progress: 0,
+    pythonPath: managedPython,
+    activeStep: "idle",
+    lastError: undefined,
+  });
+}
+
+async function installManagedPythonExec(
+  onStatus?: (status: OmniStateVoiceRuntimeStatus) => void,
+): Promise<string> {
+  const existing = await getOmniStateVoiceRuntimeStatus();
+  if (existing.state === "ready" && existing.pythonPath) {
+    return existing.pythonPath;
+  }
+
+  const configured = currentConfiguredPython();
+  if (configured) {
+    throw new Error(`Configured OmniState Voice Python runtime was not found: ${configured}`);
   }
 
   const runtimeRoot = getManagedRuntimeRoot();
   const venvDir = getManagedVenvDir();
+  const managedPython = getManagedPythonExecPath();
   const bootstrapPython = resolveBootstrapPython();
   await mkdir(runtimeRoot, { recursive: true });
 
+  updateRuntimeStatus({
+    state: "installing",
+    message: "Creating OmniState Voice runtime environment…",
+    managed: true,
+    progress: 10,
+    pythonPath: managedPython,
+    activeStep: "create_venv",
+    lastError: undefined,
+  }, onStatus);
   await execFileAsync(bootstrapPython, ["-m", "venv", venvDir], {
     timeout: 180_000,
     maxBuffer: 1024 * 1024 * 8,
   });
+  updateRuntimeStatus({
+    state: "installing",
+    message: "Upgrading pip for OmniState Voice runtime…",
+    managed: true,
+    progress: 35,
+    pythonPath: managedPython,
+    activeStep: "upgrade_pip",
+  }, onStatus);
   await execFileAsync(managedPython, ["-m", "pip", "install", "--upgrade", "pip"], {
     timeout: 180_000,
     maxBuffer: 1024 * 1024 * 8,
   });
+  updateRuntimeStatus({
+    state: "installing",
+    message: "Installing OmniState Voice runtime dependencies…",
+    managed: true,
+    progress: 60,
+    pythonPath: managedPython,
+    activeStep: "install_dependencies",
+  }, onStatus);
   await execFileAsync(
     managedPython,
     ["-m", "pip", "install", "torch", "torchaudio", "soundfile", "omnivoice"],
@@ -67,7 +209,80 @@ async function ensureManagedPythonExec(): Promise<string> {
     },
   );
 
+  updateRuntimeStatus({
+    state: "ready",
+    message: "OmniState Voice runtime is ready.",
+    managed: true,
+    progress: 100,
+    pythonPath: managedPython,
+    activeStep: "ready",
+    lastError: undefined,
+  }, onStatus);
+
   return managedPython;
+}
+
+export async function installOmniStateVoiceRuntime(options?: {
+  force?: boolean;
+  onStatus?: (status: OmniStateVoiceRuntimeStatus) => void;
+}): Promise<OmniStateVoiceRuntimeStatus> {
+  const onStatus = options?.onStatus;
+  const current = await getOmniStateVoiceRuntimeStatus();
+  if (!options?.force && current.state === "ready") {
+    onStatus?.(current);
+    return current;
+  }
+
+  if (!options?.force && activeInstallPromise) {
+    onStatus?.(runtimeStatus);
+    return activeInstallPromise;
+  }
+
+  activeInstallPromise = (async () => {
+    try {
+      const pythonPath = await installManagedPythonExec(onStatus);
+      return updateRuntimeStatus({
+        state: "ready",
+        message: "OmniState Voice runtime is ready.",
+        managed: !currentConfiguredPython(),
+        progress: 100,
+        pythonPath,
+        activeStep: "ready",
+        lastError: undefined,
+      }, onStatus);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return updateRuntimeStatus({
+        state: "failed",
+        message: "OmniState Voice runtime installation failed.",
+        managed: !currentConfiguredPython(),
+        progress: 0,
+        activeStep: "failed",
+        lastError: message,
+      }, onStatus);
+    } finally {
+      activeInstallPromise = null;
+    }
+  })();
+
+  return activeInstallPromise;
+}
+
+async function ensureManagedPythonExec(): Promise<string> {
+  const configured = currentConfiguredPython();
+  if (configured) {
+    if (!existsSync(configured)) {
+      throw new Error(`Configured OmniState Voice Python runtime was not found: ${configured}`);
+    }
+    await getOmniStateVoiceRuntimeStatus();
+    return configured;
+  }
+
+  const status = await installOmniStateVoiceRuntime();
+  if (status.state !== "ready" || !status.pythonPath) {
+    throw new Error(status.lastError ?? "OmniState Voice runtime is not ready");
+  }
+  return status.pythonPath;
 }
 
 function getProfileRootDir(): string {

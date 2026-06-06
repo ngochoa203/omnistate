@@ -3658,6 +3658,88 @@ struct ContentView: View {
                     }
                 }
 
+                GlowCard(glow: CyberColor.cyan.opacity(0.16)) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionLabel(text: tx("Local Voice", "Local Voice"))
+
+                        Text(tx("Chuẩn bị sẵn OmniState Voice trên máy này để TTS local chạy ngay khi cần, không bắt user tự cài Python hay package.", "Prepare OmniState Voice on this Mac so local TTS is ready without manual Python or package setup."))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(CyberColor.textMuted)
+
+                        HStack(spacing: 8) {
+                            CyberBadge(
+                                text: tx("Provider \(socketClient.voiceTtsProvider)", "Provider \(socketClient.voiceTtsProvider)"),
+                                color: socketClient.voiceTtsProvider == "omnistate-voice" ? CyberColor.green : CyberColor.orange
+                            )
+                            CyberBadge(
+                                text: tx("State \(socketClient.voiceRuntimeState)", "State \(socketClient.voiceRuntimeState)"),
+                                color: socketClient.voiceRuntimeState == "ready"
+                                    ? CyberColor.green
+                                    : socketClient.voiceRuntimeState == "installing"
+                                        ? CyberColor.cyan
+                                        : socketClient.voiceRuntimeState == "failed"
+                                            ? CyberColor.red
+                                            : CyberColor.orange
+                            )
+                            CyberBadge(
+                                text: socketClient.voiceRuntimeManaged ? tx("Managed runtime", "Managed runtime") : tx("Custom Python", "Custom Python"),
+                                color: socketClient.voiceRuntimeManaged ? CyberColor.cyan : CyberColor.purple
+                            )
+                        }
+
+                        if !socketClient.voiceRuntimeMessage.isEmpty {
+                            Text(socketClient.voiceRuntimeMessage)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(CyberColor.textSecondary)
+                        }
+
+                        if socketClient.voiceRuntimeState == "installing" {
+                            ProgressView(value: Double(socketClient.voiceRuntimeProgress), total: 100)
+                                .progressViewStyle(.linear)
+                                .tint(CyberColor.cyan.opacity(0.8))
+                            Text(tx("Đang cài runtime local: \(socketClient.voiceRuntimeProgress)%", "Installing local runtime: \(socketClient.voiceRuntimeProgress)%"))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(CyberColor.textMuted)
+                        }
+
+                        if !socketClient.voiceRuntimePythonPath.isEmpty {
+                            Text(socketClient.voiceRuntimePythonPath)
+                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .foregroundColor(CyberColor.textMuted)
+                                .textSelection(.enabled)
+                        }
+
+                        if !socketClient.voiceRuntimeLastError.isEmpty {
+                            Text(socketClient.voiceRuntimeLastError)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(CyberColor.red.opacity(0.85))
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(socketClient.voiceRuntimeState == "ready"
+                                ? tx("Repair / update runtime", "Repair / update runtime")
+                                : tx("Install Local Voice", "Install Local Voice")) {
+                                socketClient.installVoiceRuntime(setDefault: true, force: socketClient.voiceRuntimeState == "ready")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CyberColor.cyan.opacity(0.8))
+                            .disabled(socketClient.voiceRuntimeState == "installing")
+
+                            Button(tx("Use as default TTS", "Use as default TTS")) {
+                                socketClient.setRuntimeConfig(key: "voice.tts.provider", value: "omnistate-voice")
+                                socketClient.queryRuntimeConfig()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(socketClient.voiceRuntimeState == "installing")
+
+                            Button(tx("Refresh runtime status", "Refresh runtime status")) {
+                                socketClient.queryVoiceRuntimeStatus()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+
                 GlowCard(glow: CyberColor.green.opacity(0.16)) {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(text: tx("Power & Efficiency", "Power & Efficiency"))

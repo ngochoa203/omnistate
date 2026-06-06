@@ -19,7 +19,12 @@ vi.mock("node:fs/promises", () => ({
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
-import { normalizeOmniStateVoiceRate, synthesizeOmniStateVoiceSpeech } from "../omnistate-voice.js";
+import {
+  getOmniStateVoiceRuntimeStatus,
+  installOmniStateVoiceRuntime,
+  normalizeOmniStateVoiceRate,
+  synthesizeOmniStateVoiceSpeech,
+} from "../omnistate-voice.js";
 
 const mockExecFile = vi.mocked(execFile);
 const mockExistsSync = vi.mocked(existsSync);
@@ -50,8 +55,28 @@ describe("synthesizeOmniStateVoiceSpeech", () => {
     vi.clearAllMocks();
     process.env.OMNISTATE_RTC_PROFILE_DIR = "/tmp/omnistate-test-profiles";
     delete process.env.OMNISTATE_VOICE_PYTHON;
+    delete process.env.OMNISTATE_OMNIVOICE_PYTHON;
     mockMkdir.mockResolvedValue(undefined as any);
     mockExistsSync.mockReturnValue(true);
+  });
+
+  it("reports ready when a managed runtime already exists", async () => {
+    const status = await getOmniStateVoiceRuntimeStatus();
+
+    expect(status.state).toBe("ready");
+    expect(status.managed).toBe(true);
+    expect(status.pythonPath).toContain(".venv");
+  });
+
+  it("reports failed when a configured runtime is missing", async () => {
+    process.env.OMNISTATE_VOICE_PYTHON = "/missing/python3";
+    mockExistsSync.mockImplementation((value) => value === "/missing/python3" ? false : true);
+
+    const status = await getOmniStateVoiceRuntimeStatus();
+
+    expect(status.state).toBe("failed");
+    expect(status.managed).toBe(false);
+    expect(status.lastError).toContain("/missing/python3");
   });
 
   it("passes a reference speaker clip when a profile sample exists", async () => {
@@ -92,6 +117,23 @@ describe("synthesizeOmniStateVoiceSpeech", () => {
     expect(mockExecFile.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(["-m", "venv"]));
     expect(mockExecFile.mock.calls[1]?.[1]).toEqual(expect.arrayContaining(["-m", "pip", "install", "--upgrade", "pip"]));
     expect(mockExecFile.mock.calls[2]?.[1]).toEqual(expect.arrayContaining(["-m", "pip", "install", "torch", "torchaudio", "soundfile", "omnivoice"]));
+  });
+
+  it("emits installing and ready status updates during managed runtime install", async () => {
+    makeExecFileSuccess();
+    mockExistsSync.mockReturnValue(false);
+    const states: string[] = [];
+
+    const status = await installOmniStateVoiceRuntime({
+      force: true,
+      onStatus: (next) => {
+        states.push(next.state);
+      },
+    });
+
+    expect(states).toContain("installing");
+    expect(status.state).toBe("ready");
+    expect(status.progress).toBe(100);
   });
 
   it("falls back to auto voice when no speaker profile is available", async () => {

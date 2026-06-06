@@ -41,6 +41,8 @@ export type ClientMessage =
   | PermissionHistoryMessage
   | PermissionStartMessage
   | PermissionStopMessage
+  | VoiceRuntimeStatusQueryMessage
+  | VoiceRuntimeInstallMessage
   | EventsQueryMessage
   | EventRulesListMessage
   | EventRuleAddMessage
@@ -230,6 +232,16 @@ export interface RuntimeConfigSetMessage {
   value: string | boolean | number;
 }
 
+export interface VoiceRuntimeStatusQueryMessage {
+  type: "voice.runtime.status";
+}
+
+export interface VoiceRuntimeInstallMessage {
+  type: "voice.runtime.install";
+  force?: boolean;
+  setDefault?: boolean;
+}
+
 export interface RuntimeConfigUpsertProviderMessage {
   type: "runtime.config.upsertProvider";
   provider: {
@@ -357,7 +369,8 @@ export type ServerMessage =
   | MemoryRecordDeletedMessage
   | EventsListMessage
   | EventRulesListResultMessage
-  | EventBusStreamMessage;
+  | EventBusStreamMessage
+  | VoiceRuntimeStatusMessage;
 
 export interface ConnectedMessage {
   type: "connected";
@@ -533,6 +546,20 @@ export interface RuntimeConfigAckMessage {
   key: RuntimeConfigSetMessage["key"];
   message: string;
   config: unknown;
+}
+
+export interface VoiceRuntimeStatusMessage {
+  type: "voice.runtime.status";
+  provider: "omnistate-voice";
+  state: "not_installed" | "installing" | "ready" | "failed";
+  message: string;
+  managed: boolean;
+  progress: number;
+  runtimeRoot: string;
+  pythonPath?: string;
+  activeStep?: string;
+  lastError?: string;
+  activeProvider?: string;
 }
 
 export interface StatusReplyMessage {

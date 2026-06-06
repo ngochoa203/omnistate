@@ -16,6 +16,7 @@ import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig, saveLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { setActiveModel, setActiveProvider, setPowerField, setSiriField, setVoiceField, setVoiceTtsProvider, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider, deleteProvider } from "../llm/runtime-config.js";
+import { getOmniStateVoiceRuntimeStatus, installOmniStateVoiceRuntime } from "../voice/omnistate-voice.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
 import { applyRequestId } from "./request-context.js";
@@ -24,6 +25,31 @@ import { execAsync, execFileAsync, isAllowedFilePath, mimeForPath, sniffAudioFor
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Gateway = any;
+
+async function buildRuntimeConfigReportConfig() {
+  const config = loadLlmRuntimeConfig();
+  const runtimeStatus = await getOmniStateVoiceRuntimeStatus();
+  return {
+    ...config,
+    voice: {
+      ...config.voice,
+      tts: {
+        ...config.voice.tts,
+        runtimeStatus,
+      },
+    },
+  };
+}
+
+async function buildVoiceRuntimeStatusMessage(): Promise<ServerMessage> {
+  const runtime = loadLlmRuntimeConfig();
+  const status = await getOmniStateVoiceRuntimeStatus();
+  return {
+    type: "voice.runtime.status",
+    ...status,
+    activeProvider: runtime.voice.tts?.provider ?? "omnistate-voice",
+  } as ServerMessage;
+}
 
 function decodeBase64AudioChunk(value: unknown): Buffer | null {
   if (typeof value !== "string") return null;
@@ -1463,7 +1489,7 @@ export async function handleMessage(
     }
 
     case "runtime.config.get": {
-      const config = loadLlmRuntimeConfig();
+      const config = await buildRuntimeConfigReportConfig();
       gateway.safeSend(ws, {
         type: "runtime.config.report",
         config,
@@ -1471,8 +1497,41 @@ export async function handleMessage(
       break;
     }
 
+    case "voice.runtime.status": {
+      gateway.safeSend(ws, await buildVoiceRuntimeStatusMessage());
+      break;
+    }
+
+    case "voice.runtime.install": {
+      gateway.safeSend(ws, await buildVoiceRuntimeStatusMessage());
+      const installMessage = msg as Extract<ClientMessage, { type: "voice.runtime.install" }>;
+      const emitStatus = (status: Awaited<ReturnType<typeof getOmniStateVoiceRuntimeStatus>>) => {
+        const runtime = loadLlmRuntimeConfig();
+        gateway.broadcast({
+          type: "voice.runtime.status",
+          ...status,
+          activeProvider: runtime.voice.tts?.provider ?? "omnistate-voice",
+        } as ServerMessage);
+      };
+
+      const status = await installOmniStateVoiceRuntime({
+        force: installMessage.force === true,
+        onStatus: emitStatus,
+      });
+
+      if (status.state === "ready" && installMessage.setDefault !== false) {
+        setVoiceTtsProvider("omnistate-voice");
+      }
+
+      gateway.safeSend(ws, await buildVoiceRuntimeStatusMessage());
+      gateway.safeSend(ws, {
+        type: "runtime.config.report",
+        config: await buildRuntimeConfigReportConfig(),
+      } as ServerMessage);
+      break;
+    }
+
     case "runtime.config.set": {
-      let config = loadLlmRuntimeConfig();
       const key = String((msg as RuntimeConfigSetMessage).key);
       let handled = false;
 
@@ -1480,35 +1539,35 @@ export async function handleMessage(
         switch (key) {
           case "provider":
             handled = true;
-            config = setActiveProvider(String(msg.value));
+            setActiveProvider(String(msg.value));
             break;
           case "model":
             handled = true;
-            config = setActiveModel(String(msg.value));
+            setActiveModel(String(msg.value));
             break;
           case "baseURL":
             handled = true;
-            config = updateActiveProviderField("baseURL", String(msg.value));
+            updateActiveProviderField("baseURL", String(msg.value));
             break;
           case "apiKey":
             handled = true;
-            config = updateActiveProviderField("apiKey", String(msg.value));
+            updateActiveProviderField("apiKey", String(msg.value));
             break;
           case "voice.lowLatency":
             handled = true;
-            config = setVoiceField("lowLatency", Boolean(msg.value));
+            setVoiceField("lowLatency", Boolean(msg.value));
             break;
           case "voice.autoExecuteTranscript":
             handled = true;
-            config = setVoiceField("autoExecuteTranscript", Boolean(msg.value));
+            setVoiceField("autoExecuteTranscript", Boolean(msg.value));
             break;
           case "voice.tts.provider":
             handled = true;
-            config = setVoiceTtsProvider(String(msg.value));
+            setVoiceTtsProvider(String(msg.value));
             break;
           case "voice.wake.enabled": {
             handled = true;
-            config = setWakeField("enabled", Boolean(msg.value));
+            setWakeField("enabled", Boolean(msg.value));
             if (gateway.wakeManager) {
               const runtime = loadLlmRuntimeConfig();
               if (msg.value) {
@@ -1525,49 +1584,49 @@ export async function handleMessage(
           }
           case "voice.wake.phrase":
             handled = true;
-            config = setWakeField("phrase", String(msg.value));
+            setWakeField("phrase", String(msg.value));
             break;
           case "voice.wake.cooldownMs":
             handled = true;
-            config = setWakeField("cooldownMs", Number(msg.value));
+            setWakeField("cooldownMs", Number(msg.value));
             break;
           case "voice.wake.commandWindowSec":
             handled = true;
-            config = setWakeField("commandWindowSec", Number(msg.value));
+            setWakeField("commandWindowSec", Number(msg.value));
             break;
           case "voice.siri.enabled":
             handled = true;
-            config = setSiriField("enabled", Boolean(msg.value));
+            setSiriField("enabled", Boolean(msg.value));
             break;
           case "voice.siri.mode":
             handled = true;
-            config = setSiriField("mode", String(msg.value));
+            setSiriField("mode", String(msg.value));
             break;
           case "voice.siri.shortcutName":
             handled = true;
-            config = setSiriField("shortcutName", String(msg.value));
+            setSiriField("shortcutName", String(msg.value));
             break;
           case "voice.siri.endpoint":
             handled = true;
-            config = setSiriField("endpoint", String(msg.value));
+            setSiriField("endpoint", String(msg.value));
             break;
           case "voice.siri.token":
             handled = true;
-            config = setSiriField("token", String(msg.value));
+            setSiriField("token", String(msg.value));
             break;
           case "power.lowBatteryThreshold":
             handled = true;
-            config = setPowerField("lowBatteryThreshold", Number(msg.value));
+            setPowerField("lowBatteryThreshold", Number(msg.value));
             gateway.applyPowerPolicyFromRuntimeConfig?.();
             break;
           case "power.criticalBatteryThreshold":
             handled = true;
-            config = setPowerField("criticalBatteryThreshold", Number(msg.value));
+            setPowerField("criticalBatteryThreshold", Number(msg.value));
             gateway.applyPowerPolicyFromRuntimeConfig?.();
             break;
           case "power.pollIntervalMs":
             handled = true;
-            config = setPowerField("pollIntervalMs", Number(msg.value));
+            setPowerField("pollIntervalMs", Number(msg.value));
             gateway.applyPowerPolicyFromRuntimeConfig?.();
             break;
           case "vad.silenceThresholdMs": {
@@ -1577,7 +1636,6 @@ export async function handleMessage(
             if (!Number.isNaN(n) && Number.isFinite(n) && n >= 50) {
               conf.voice.vad.silenceThresholdMs = Math.round(n);
               saveLlmRuntimeConfig(conf);
-              config = conf;
             }
             break;
           }
@@ -1588,7 +1646,6 @@ export async function handleMessage(
             if (!Number.isNaN(n) && Number.isFinite(n) && n >= 0 && n <= 1) {
               conf.voice.vad.speechThreshold = n;
               saveLlmRuntimeConfig(conf);
-              config = conf;
             }
             break;
           }
@@ -1599,47 +1656,49 @@ export async function handleMessage(
             if (!Number.isNaN(n) && Number.isFinite(n) && n >= 10) {
               conf.voice.vad.minSpeechMs = Math.round(n);
               saveLlmRuntimeConfig(conf);
-              config = conf;
             }
             break;
           }
           case "provider.delete": {
             handled = true;
-            config = deleteProvider(String(msg.value));
+            deleteProvider(String(msg.value));
             break;
           }
         }
 
         if (!handled) {
+          const configWithRuntime = await buildRuntimeConfigReportConfig();
           gateway.safeSend(ws, {
             type: "runtime.config.ack",
             ok: false,
             key,
             message: `Unsupported runtime config key: ${key}`,
-            config,
+            config: configWithRuntime,
           } as ServerMessage);
           break;
         }
 
+        const configWithRuntime = await buildRuntimeConfigReportConfig();
         gateway.safeSend(ws, {
           type: "runtime.config.ack",
           ok: true,
           key,
           message: `Updated ${key}`,
-          config,
+          config: configWithRuntime,
         } as ServerMessage);
 
         gateway.safeSend(ws, {
           type: "runtime.config.report",
-          config,
+          config: configWithRuntime,
         } as ServerMessage);
       } catch (err) {
+        const configWithRuntime = await buildRuntimeConfigReportConfig();
         gateway.safeSend(ws, {
           type: "runtime.config.ack",
           ok: false,
           key,
           message: err instanceof Error ? err.message : String(err),
-          config,
+          config: configWithRuntime,
         } as ServerMessage);
       }
       break;
@@ -1656,7 +1715,7 @@ export async function handleMessage(
           ok: false,
           key: "provider",
           message: "Provider id/model/baseURL are required",
-          config: loadLlmRuntimeConfig(),
+          config: await buildRuntimeConfigReportConfig(),
         } as ServerMessage);
         break;
       }
@@ -1670,7 +1729,7 @@ export async function handleMessage(
             .map((x) => x.trim())
             .filter(Boolean);
 
-      let config = upsertProvider({
+      upsertProvider({
         id: providerId,
         kind,
         baseURL: providerBaseURL,
@@ -1681,40 +1740,42 @@ export async function handleMessage(
       });
 
       if (msg.addToFallback) {
-        config = addFallbackProvider(providerId);
+        addFallbackProvider(providerId);
       }
       if (msg.activate) {
-        config = setActiveProvider(providerId);
+        setActiveProvider(providerId);
       }
 
+      const configWithRuntime = await buildRuntimeConfigReportConfig();
       gateway.safeSend(ws, {
         type: "runtime.config.ack",
         ok: true,
         key: "provider",
         message: `Upserted provider ${providerId}`,
-        config,
+        config: configWithRuntime,
       } as ServerMessage);
 
       gateway.safeSend(ws, {
         type: "runtime.config.report",
-        config,
+        config: configWithRuntime,
       } as ServerMessage);
       break;
     }
 
     case "runtime.config.deleteProvider": {
       const msg_ = msg as RuntimeConfigDeleteProviderMessage;
-      const conf = deleteProvider(msg_.providerId);
+      deleteProvider(msg_.providerId);
+      const configWithRuntime = await buildRuntimeConfigReportConfig();
       gateway.safeSend(ws, {
         type: "runtime.config.ack",
         ok: true,
         key: "provider",
         message: `Deleted provider ${msg_.providerId}`,
-        config: conf,
+        config: configWithRuntime,
       } as ServerMessage);
       gateway.safeSend(ws, {
         type: "runtime.config.report",
-        config: conf,
+        config: configWithRuntime,
       } as ServerMessage);
       break;
     }

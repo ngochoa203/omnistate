@@ -7,6 +7,7 @@
  *   omnistate run "<NL command>" [--inline]
  *   omnistate config [subcommand]
  *   omnistate model [name]
+ *   omnistate voice [show|local <status|install|use-default>]
  *   omnistate session [subcommand]
  *   omnistate clear | reset | new [name]
  *   omnistate whoami | commands
@@ -652,6 +653,115 @@ async function cmdSession(args: string[]): Promise<void> {
     process.exit(1);
   }
   await cmdRunDaemon(goal);
+}
+
+async function cmdVoiceLocal(args: string[]): Promise<void> {
+  const sub = (args[0] ?? "status").trim().toLowerCase();
+  let ws: WebSocket;
+  try {
+    ws = await connect();
+  } catch (err) {
+    console.error(red(`✗ ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  const printRuntimeStatus = (msg: Record<string, unknown>): void => {
+    const state = String(msg.state ?? "unknown");
+    const stateColor =
+      state === "ready" ? green :
+      state === "installing" ? cyan :
+      state === "failed" ? red :
+      yellow;
+
+    console.log(`${bold("OmniState Voice:")} ${stateColor(state)}`);
+    if (typeof msg.message === "string" && msg.message) {
+      console.log(`  ${dim("message :")} ${msg.message}`);
+    }
+    console.log(`  ${dim("managed :")} ${msg.managed === false ? "no" : "yes"}`);
+    console.log(`  ${dim("progress:")} ${Math.max(0, Math.min(100, Number(msg.progress ?? 0)))}%`);
+    if (typeof msg.activeProvider === "string" && msg.activeProvider) {
+      console.log(`  ${dim("tts     :")} ${msg.activeProvider}`);
+    }
+    if (typeof msg.pythonPath === "string" && msg.pythonPath) {
+      console.log(`  ${dim("python  :")} ${msg.pythonPath}`);
+    }
+    if (typeof msg.lastError === "string" && msg.lastError) {
+      console.log(`  ${dim("error   :")} ${msg.lastError}`);
+    }
+  };
+
+  if (sub === "use-default") {
+    send(ws, {
+      type: "runtime.config.set",
+      key: "voice.tts.provider",
+      value: "omnistate-voice",
+    } as ClientMessage);
+
+    ws.on("message", (raw) => {
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(raw.toString()) as ServerMessage;
+      } catch {
+        return;
+      }
+      if (msg.type === "runtime.config.ack") {
+        const ok = Boolean((msg as any).ok);
+        if (ok) {
+          console.log(green("✓ OmniState Voice is now the default TTS provider."));
+          ws.close();
+        } else {
+          console.error(red(`✗ ${(msg as any).message ?? "Failed to update TTS provider"}`));
+          process.exit(1);
+        }
+      }
+    });
+    ws.on("close", () => process.exit(0));
+    ws.on("error", (err) => {
+      console.error(red(`✗ ${err.message}`));
+      process.exit(1);
+    });
+    return;
+  }
+
+  if (sub !== "status" && sub !== "install") {
+    console.error(red("✗ Usage: omnistate voice local <status|install|use-default>"));
+    process.exit(1);
+  }
+
+  if (sub === "install") {
+    console.log(`${cyan("[omnistate]")} Preparing local voice runtime…`);
+    send(ws, { type: "voice.runtime.install", setDefault: true } as ClientMessage);
+  } else {
+    send(ws, { type: "voice.runtime.status" } as ClientMessage);
+  }
+
+  ws.on("message", (raw) => {
+    let msg: ServerMessage;
+    try {
+      msg = JSON.parse(raw.toString()) as ServerMessage;
+    } catch {
+      return;
+    }
+
+    if (msg.type !== "voice.runtime.status") {
+      return;
+    }
+
+    printRuntimeStatus(msg as unknown as Record<string, unknown>);
+    const state = String((msg as any).state ?? "");
+    if (sub === "status" || state === "ready" || state === "failed") {
+      ws.close();
+      if (sub === "install" && state === "failed") {
+        process.exitCode = 1;
+      }
+    }
+  });
+
+  ws.on("close", () => process.exit(process.exitCode ?? 0));
+  ws.on("error", (err) => {
+    console.error(red(`✗ ${err.message}`));
+    process.exit(1);
+  });
 }
 
 async function cmdClear(): Promise<void> {
@@ -1331,7 +1441,7 @@ ${bold("COMMANDS")}
   ${cyan("think")}              Get/set thinking level (low|medium|high)
   ${cyan("fast")}               Toggle fast mode (on|off)
   ${cyan("verbose")}            Toggle verbose mode (on|off)
-  ${cyan("voice")}              Show/update voice config
+  ${cyan("voice")}              Show/update voice config, or manage local voice runtime
   ${cyan("wake")}               Show/update wake-word config
   ${cyan("new")}                Create a new runtime session
   ${cyan("reset")}              Reset current session state
@@ -1351,6 +1461,7 @@ ${bold("EXAMPLES")}
   omnistate session list
   omnistate clear
   omnistate voice show
+  omnistate voice local install
   omnistate wake show
   omnistate health
   omnistate doctor
@@ -1441,7 +1552,11 @@ async function main(): Promise<void> {
       break;
 
     case "voice":
-      await cmdGatewaySlash(["/voice", ...rest].join(" ").trim() || "/voice");
+      if ((rest[0] ?? "").toLowerCase() === "local") {
+        await cmdVoiceLocal(rest.slice(1));
+      } else {
+        await cmdGatewaySlash(["/voice", ...rest].join(" ").trim() || "/voice");
+      }
       break;
 
     case "wake":

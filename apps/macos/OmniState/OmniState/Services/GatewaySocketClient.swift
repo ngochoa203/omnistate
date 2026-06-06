@@ -180,6 +180,13 @@ final class GatewaySocketClient: ObservableObject {
     @Published var voiceSiriShortcutName = ""
     @Published var voiceSiriEndpoint = ""
     @Published var voiceSiriToken = ""
+    @Published var voiceTtsProvider = "omnistate-voice"
+    @Published var voiceRuntimeState = "unknown"
+    @Published var voiceRuntimeMessage = ""
+    @Published var voiceRuntimeProgress = 0
+    @Published var voiceRuntimeManaged = true
+    @Published var voiceRuntimePythonPath = ""
+    @Published var voiceRuntimeLastError = ""
     @Published var powerLowBatteryThreshold = 20
     @Published var powerCriticalBatteryThreshold = 10
     @Published var powerPollIntervalMs = 15_000
@@ -302,11 +309,25 @@ final class GatewaySocketClient: ObservableObject {
         ])
     }
 
+    func queryVoiceRuntimeStatus() {
+        sendRaw([
+            "type": "voice.runtime.status"
+        ])
+    }
+
     func setRuntimeConfig(key: String, value: Any) {
         sendRaw([
             "type": "runtime.config.set",
             "key": key,
             "value": value
+        ])
+    }
+
+    func installVoiceRuntime(setDefault: Bool = true, force: Bool = false) {
+        sendRaw([
+            "type": "voice.runtime.install",
+            "setDefault": setDefault,
+            "force": force
         ])
     }
 
@@ -495,6 +516,7 @@ final class GatewaySocketClient: ObservableObject {
             messages.append(NativeChatMessage(role: "system", text: "Connected to gateway"))
             queryHistory(limit: 30)
             queryRuntimeConfig()
+            queryVoiceRuntimeStatus()
             queryClaudeMem()
             queryHealth()
             querySystemDashboard()
@@ -607,6 +629,9 @@ final class GatewaySocketClient: ObservableObject {
 
         case "runtime.config.report":
             parseRuntimeConfigReport(json)
+
+        case "voice.runtime.status":
+            parseVoiceRuntimeStatus(json)
 
         case "events.stream":
             parseEventBusStream(json)
@@ -898,6 +923,13 @@ final class GatewaySocketClient: ObservableObject {
             voiceAutoExecute = (voice["autoExecuteTranscript"] as? Bool) ?? voiceAutoExecute
             voiceChunkMs = (voice["chunkMs"] as? Int) ?? voiceChunkMs
 
+            if let tts = voice["tts"] as? [String: Any] {
+                voiceTtsProvider = (tts["provider"] as? String) ?? voiceTtsProvider
+                if let runtimeStatus = tts["runtimeStatus"] as? [String: Any] {
+                    parseVoiceRuntimeStatus(runtimeStatus.merging(["type": "voice.runtime.status"]) { current, _ in current })
+                }
+            }
+
             if let wake = voice["wake"] as? [String: Any] {
                 voiceWakeEnabled = (wake["enabled"] as? Bool) ?? voiceWakeEnabled
                 voiceWakePhrase = (wake["phrase"] as? String) ?? voiceWakePhrase
@@ -941,6 +973,18 @@ final class GatewaySocketClient: ObservableObject {
                 }
             }
         }
+    }
+
+    private func parseVoiceRuntimeStatus(_ json: [String: Any]) {
+        voiceRuntimeState = (json["state"] as? String) ?? voiceRuntimeState
+        voiceRuntimeMessage = (json["message"] as? String) ?? voiceRuntimeMessage
+        voiceRuntimeManaged = (json["managed"] as? Bool) ?? voiceRuntimeManaged
+        voiceRuntimeProgress =
+            (json["progress"] as? Int)
+            ?? Int(json["progress"] as? Double ?? Double(voiceRuntimeProgress))
+        voiceRuntimePythonPath = (json["pythonPath"] as? String) ?? voiceRuntimePythonPath
+        voiceRuntimeLastError = (json["lastError"] as? String) ?? ""
+        voiceTtsProvider = (json["activeProvider"] as? String) ?? voiceTtsProvider
     }
 
     private func scheduleReconnect() {
