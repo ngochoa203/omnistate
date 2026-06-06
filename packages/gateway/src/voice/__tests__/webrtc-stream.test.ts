@@ -19,6 +19,13 @@ vi.mock("../../llm/runtime-config.js", () => ({
       primaryProvider: "whisper-local",
       fallbackProviders: [],
       lowLatency: false,
+      vad: {
+        enabled: true,
+        silenceThresholdMs: 400,
+        speechThreshold: 0.5,
+        silenceThreshold: 0.35,
+        minSpeechMs: 250,
+      },
       tts: { provider: "none" },
     },
   }),
@@ -253,5 +260,31 @@ describe("resolveVoiceExecutionPolicy", () => {
       "audio/webm",
     );
     expect(policy.ttsRate).toBe(1);
+  });
+
+  it("raises VAD buffering thresholds in constrained power modes", () => {
+    const normal = resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm");
+    const saver = resolveVoiceExecutionPolicy(runtime, makeProfile("battery_saver"), "audio/webm");
+
+    expect(saver.vadConfig.silenceThresholdMs).toBeGreaterThan(normal.vadConfig.silenceThresholdMs);
+    expect(saver.vadConfig.minSpeechMs).toBeGreaterThan(normal.vadConfig.minSpeechMs);
+    expect(saver.vadConfig.speechThreshold).toBeGreaterThan(normal.vadConfig.speechThreshold);
+  });
+
+  it("adds extra VAD damping for devices without low-latency audio", () => {
+    const policy = resolveVoiceExecutionPolicy(
+      runtime,
+      {
+        ...makeProfile("normal"),
+        capabilities: {
+          ...makeProfile("normal").capabilities,
+          supportsLowLatency: false,
+        },
+      },
+      "audio/webm",
+    );
+
+    expect(policy.vadConfig.silenceThresholdMs).toBeGreaterThan(runtime.voice.vad.silenceThresholdMs);
+    expect(policy.vadConfig.minSpeechMs).toBeGreaterThan(runtime.voice.vad.minSpeechMs);
   });
 });

@@ -49,7 +49,7 @@
  */
 
 import * as HybridAutomation from "../hybrid/automation.js";
-import { loadLlmRuntimeConfig, type LlmRuntimeConfig } from "../llm/runtime-config.js";
+import { loadLlmRuntimeConfig, type LlmRuntimeConfig, type VadConfig } from "../llm/runtime-config.js";
 import { verifySpeaker } from "./verification.js";
 import { synthesize as edgeTtsSynthesize, detectLanguage, pickVoice } from "./edge-tts.js";
 import { whisperLocalClient } from "./whisper-local-client.js";
@@ -212,6 +212,7 @@ export interface ResolvedVoiceExecutionPolicy {
   useStreamingStt: boolean;
   ttsProvider: "edge" | "rtvc" | "none";
   ttsRate: number;
+  vadConfig: VadConfig;
   preferredChunkMs: number;
   powerMode: "normal" | "low_power" | "battery_saver";
 }
@@ -225,6 +226,34 @@ function resolveTtsRate(profile: DeviceProfile): number {
       : 0;
 
   return Math.max(0.7, Math.min(1.3, Number((baseRate + powerAdjustment).toFixed(2))));
+}
+
+function resolveVadConfig(baseVad: VadConfig, profile: DeviceProfile): VadConfig {
+  const powerAdjustments = profile.powerMode === "battery_saver"
+    ? { silenceThresholdMs: 240, speechThreshold: 0.1, minSpeechMs: 150 }
+    : profile.powerMode === "low_power"
+      ? { silenceThresholdMs: 120, speechThreshold: 0.05, minSpeechMs: 80 }
+      : { silenceThresholdMs: 0, speechThreshold: 0, minSpeechMs: 0 };
+
+  const deviceAdjustments = profile.capabilities.supportsLowLatency
+    ? { silenceThresholdMs: 0, speechThreshold: 0, minSpeechMs: 0 }
+    : { silenceThresholdMs: 80, speechThreshold: 0.02, minSpeechMs: 40 };
+
+  return {
+    ...baseVad,
+    silenceThresholdMs: Math.max(
+      baseVad.silenceThresholdMs,
+      baseVad.silenceThresholdMs + powerAdjustments.silenceThresholdMs + deviceAdjustments.silenceThresholdMs,
+    ),
+    speechThreshold: Math.min(
+      0.9,
+      Number((baseVad.speechThreshold + powerAdjustments.speechThreshold + deviceAdjustments.speechThreshold).toFixed(2)),
+    ),
+    minSpeechMs: Math.max(
+      baseVad.minSpeechMs,
+      baseVad.minSpeechMs + powerAdjustments.minSpeechMs + deviceAdjustments.minSpeechMs,
+    ),
+  };
 }
 
 export function resolveVoiceExecutionPolicy(
@@ -264,6 +293,7 @@ export function resolveVoiceExecutionPolicy(
     useStreamingStt: requestedStreamingStt && profile.recommendedSettings.enableContinuousListening,
     ttsProvider,
     ttsRate: resolveTtsRate(profile),
+    vadConfig: resolveVadConfig(runtime.voice.vad, profile),
     preferredChunkMs: Math.max(runtime.voice.chunkMs, profile.audioProfile.recommendedChunkMs),
     powerMode: profile.powerMode,
   };
@@ -422,7 +452,6 @@ export class VoiceStreamManager {
     const mimeType = msg.mimeType ?? "audio/webm";
     const runtime = loadLlmRuntimeConfig();
     const executionPolicy = resolveVoiceExecutionPolicy(runtime, deviceOptimizer.getProfile(), mimeType);
-    const vadConfig = runtime.voice.vad;
 
     const session: StreamSession = {
       sessionId: msg.sessionId,
@@ -472,13 +501,13 @@ export class VoiceStreamManager {
       })();
 
       // Set up AudioIngest for VAD gating
-      if (vadConfig.enabled) {
+      if (executionPolicy.vadConfig.enabled) {
         const ingest = new AudioIngest({
           vadEnabled: true,
-          speechThreshold: vadConfig.speechThreshold,
-          silenceThreshold: vadConfig.silenceThreshold,
-          silenceThresholdMs: vadConfig.silenceThresholdMs,
-          minSpeechMs: vadConfig.minSpeechMs,
+          speechThreshold: executionPolicy.vadConfig.speechThreshold,
+          silenceThreshold: executionPolicy.vadConfig.silenceThreshold,
+          silenceThresholdMs: executionPolicy.vadConfig.silenceThresholdMs,
+          minSpeechMs: executionPolicy.vadConfig.minSpeechMs,
         });
 
         // speech.frame -> forward PCM to whisper
