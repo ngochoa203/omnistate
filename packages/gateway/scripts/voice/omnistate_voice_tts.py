@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Lightweight OmniVoice wrapper for gateway subprocess TTS.
+Lightweight OmniState Voice wrapper built on top of k2-fsa/OmniVoice.
 
 Examples:
-  python3 omnivoice_tts.py \
+  python3 omnistate_voice_tts.py \
     --text "Xin chao" \
     --output out.wav
 
-  python3 omnivoice_tts.py \
+  python3 omnistate_voice_tts.py \
     --text "Hello world" \
     --ref-audio speaker.wav \
     --output out.wav
@@ -20,8 +20,8 @@ import logging
 import sys
 
 
-logging.basicConfig(level=logging.INFO, format="[omnivoice_tts] %(levelname)s %(message)s")
-log = logging.getLogger("omnivoice_tts")
+logging.basicConfig(level=logging.INFO, format="[omnistate_voice_tts] %(levelname)s %(message)s")
+log = logging.getLogger("omnistate_voice_tts")
 
 
 def resolve_device(requested: str | None, torch) -> str:
@@ -45,7 +45,7 @@ def resolve_dtype(device: str, torch):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Synthesize speech via k2-fsa/OmniVoice")
+    parser = argparse.ArgumentParser(description="Synthesize speech via OmniState Voice")
     parser.add_argument("--text", required=True, help="Text to synthesize")
     parser.add_argument("--output", required=True, help="Output wav path")
     parser.add_argument("--model", default="k2-fsa/OmniVoice", help="HF model id")
@@ -63,8 +63,9 @@ def main() -> int:
         from omnivoice import OmniVoice
     except Exception as exc:
         log.error(
-            "Missing OmniVoice runtime dependency: %s. Install with `pip install omnivoice soundfile` "
-            "or `pip install git+https://github.com/k2-fsa/OmniVoice.git`.",
+            "Missing OmniState Voice runtime dependency: %s. "
+            "The managed setup should install this automatically; if it did not, "
+            "run `pip install torch torchaudio soundfile omnivoice`.",
             exc,
         )
         return 2
@@ -93,7 +94,7 @@ def main() -> int:
 
         audio = model.generate(**generate_kwargs)
         if not audio:
-          raise RuntimeError("OmniVoice returned no audio")
+            raise RuntimeError("OmniState Voice returned no audio")
 
         sf.write(args.output, audio[0], 24000)
         log.info("wrote %s", args.output)

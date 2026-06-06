@@ -48,7 +48,7 @@ export interface SpeakerVerificationConfig {
 }
 
 export interface TtsConfig {
-  provider: "edge" | "rtvc" | "omnivoice" | "none";
+  provider: "edge" | "rtvc" | "omnistate-voice" | "none";
   voiceVi?: string;
   voiceEn?: string;
 }
@@ -85,9 +85,10 @@ export interface VoiceRuntimeConfig {
 }
 
 function parseTtsProvider(raw: unknown): TtsConfig["provider"] {
-  return raw === "rtvc" || raw === "edge" || raw === "none" || raw === "omnivoice"
+  if (raw === "omnivoice") return "omnistate-voice";
+  return raw === "rtvc" || raw === "edge" || raw === "none" || raw === "omnistate-voice"
     ? raw
-    : "omnivoice";
+    : "omnistate-voice";
 }
 
 export interface TransientVoiceRuntimeOverride {
@@ -673,7 +674,7 @@ export function setVoiceField(
 
 export function setVoiceTtsProvider(value: string): LlmRuntimeConfig {
   const conf = loadLlmRuntimeConfig();
-  conf.voice.tts = conf.voice.tts ?? { provider: "omnivoice" };
+  conf.voice.tts = conf.voice.tts ?? { provider: "omnistate-voice" };
   conf.voice.tts.provider = parseTtsProvider(value);
   saveLlmRuntimeConfig(conf);
   return conf;

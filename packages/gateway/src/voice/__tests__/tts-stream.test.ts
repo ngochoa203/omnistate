@@ -13,17 +13,17 @@ vi.mock("../../llm/runtime-config.js", () => ({
   loadLlmRuntimeConfig: vi.fn(() => ({
     voice: {
       tts: {
-        provider: "omnivoice",
+        provider: "omnistate-voice",
       },
     },
   })),
 }));
-vi.mock("../omnivoice.js", () => ({
-  synthesizeOmniVoiceSpeech: vi.fn(),
+vi.mock("../omnistate-voice.js", () => ({
+  synthesizeOmniStateVoiceSpeech: vi.fn(),
 }));
 
 import { synthesize as mockSynthesize } from "../edge-tts.js";
-import { synthesizeOmniVoiceSpeech as mockSynthesizeOmniVoice } from "../omnivoice.js";
+import { synthesizeOmniStateVoiceSpeech as mockSynthesizeOmniVoice } from "../omnistate-voice.js";
 const mockSynth = vi.mocked(mockSynthesize);
 const mockOmni = vi.mocked(mockSynthesizeOmniVoice);
 
@@ -39,7 +39,7 @@ function fakeAudio(label: string): Buffer {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockOmni.mockResolvedValue({ audio: fakeAudio("omnivoice"), contentType: "audio/wav" } as any);
+  mockOmni.mockResolvedValue({ audio: fakeAudio("omnistate-voice"), contentType: "audio/wav" } as any);
 });
 
 // ---------------------------------------------------------------------------

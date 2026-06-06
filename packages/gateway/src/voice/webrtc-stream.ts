@@ -210,7 +210,7 @@ export interface ResolvedVoiceExecutionPolicy {
   orderedProviders: Array<"native" | "whisper-local" | "whisper-cloud">;
   useLowLatencyRace: boolean;
   useStreamingStt: boolean;
-  ttsProvider: "edge" | "rtvc" | "omnivoice" | "none";
+  ttsProvider: "edge" | "rtvc" | "omnistate-voice" | "none";
   ttsRate: number;
   vadConfig: VadConfig;
   preferredChunkMs: number;
@@ -282,10 +282,10 @@ export function resolveVoiceExecutionPolicy(
     profile.powerMode === "normal" &&
     profile.capabilities.supportsLowLatency;
 
-  const configuredTtsProvider = runtime.voice.tts?.provider ?? "omnivoice";
+  const configuredTtsProvider = runtime.voice.tts?.provider ?? "omnistate-voice";
   const ttsProvider =
     profile.powerMode !== "normal" &&
-    (configuredTtsProvider === "rtvc" || configuredTtsProvider === "omnivoice")
+    (configuredTtsProvider === "rtvc" || configuredTtsProvider === "omnistate-voice")
       ? profile.recommendedSettings.ttsProvider
       : configuredTtsProvider;
 
@@ -935,10 +935,10 @@ export class VoiceStreamManager {
       return;
     }
 
-    if (provider === "omnivoice") {
+    if (provider === "omnistate-voice") {
       try {
-        const { synthesizeOmniVoiceSpeech } = await import("./omnivoice.js");
-        const result = await synthesizeOmniVoiceSpeech({
+        const { synthesizeOmniStateVoiceSpeech } = await import("./omnistate-voice.js");
+        const result = await synthesizeOmniStateVoiceSpeech({
           text,
           profileId: session.ttsProfileId,
           language: detectLanguage(text),
@@ -953,7 +953,7 @@ export class VoiceStreamManager {
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err) },
-          `[VoiceStream] OmniVoice synthesis failed for session ${session.sessionId}; falling back to Edge TTS`,
+          `[VoiceStream] OmniState Voice synthesis failed for session ${session.sessionId}; falling back to Edge TTS`,
         );
         try {
           const lang = detectLanguage(text);

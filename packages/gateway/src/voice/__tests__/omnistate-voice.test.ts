@@ -4,7 +4,12 @@ vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
 
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(),
+}));
+
 vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn().mockResolvedValue(undefined),
   readFile: vi.fn(),
   readdir: vi.fn(),
   stat: vi.fn(),
@@ -12,10 +17,13 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import { execFile } from "node:child_process";
-import { readFile, readdir, stat, unlink } from "node:fs/promises";
-import { normalizeOmniVoiceRate, synthesizeOmniVoiceSpeech } from "../omnivoice.js";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { normalizeOmniStateVoiceRate, synthesizeOmniStateVoiceSpeech } from "../omnistate-voice.js";
 
 const mockExecFile = vi.mocked(execFile);
+const mockExistsSync = vi.mocked(existsSync);
+const mockMkdir = vi.mocked(mkdir);
 const mockReadFile = vi.mocked(readFile);
 const mockReaddir = vi.mocked(readdir);
 const mockStat = vi.mocked(stat);
@@ -28,19 +36,22 @@ function makeExecFileSuccess() {
   });
 }
 
-describe("normalizeOmniVoiceRate", () => {
+describe("normalizeOmniStateVoiceRate", () => {
   it("clamps the requested rate into the supported range", () => {
-    expect(normalizeOmniVoiceRate()).toBe(1);
-    expect(normalizeOmniVoiceRate(1.1)).toBe(1.1);
-    expect(normalizeOmniVoiceRate(2)).toBe(1.3);
-    expect(normalizeOmniVoiceRate(0.1)).toBe(0.7);
+    expect(normalizeOmniStateVoiceRate()).toBe(1);
+    expect(normalizeOmniStateVoiceRate(1.1)).toBe(1.1);
+    expect(normalizeOmniStateVoiceRate(2)).toBe(1.3);
+    expect(normalizeOmniStateVoiceRate(0.1)).toBe(0.7);
   });
 });
 
-describe("synthesizeOmniVoiceSpeech", () => {
+describe("synthesizeOmniStateVoiceSpeech", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.OMNISTATE_RTC_PROFILE_DIR = "/tmp/omnistate-test-profiles";
+    delete process.env.OMNISTATE_VOICE_PYTHON;
+    mockMkdir.mockResolvedValue(undefined as any);
+    mockExistsSync.mockReturnValue(true);
   });
 
   it("passes a reference speaker clip when a profile sample exists", async () => {
@@ -49,9 +60,9 @@ describe("synthesizeOmniVoiceSpeech", () => {
     mockStat
       .mockResolvedValueOnce({ mtimeMs: 10 } as any)
       .mockResolvedValueOnce({ mtimeMs: 1 } as any);
-    mockReadFile.mockResolvedValue(Buffer.from("omnivoice-audio") as any);
+    mockReadFile.mockResolvedValue(Buffer.from("omnistate-voice-audio") as any);
 
-    const result = await synthesizeOmniVoiceSpeech({
+    const result = await synthesizeOmniStateVoiceSpeech({
       text: "xin chào",
       profileId: "profile-a",
       rate: 1.1,
@@ -68,29 +79,44 @@ describe("synthesizeOmniVoiceSpeech", () => {
     expect(args).toContain("1.1");
   });
 
+  it("bootstraps a managed runtime when no custom python exists", async () => {
+    makeExecFileSuccess();
+    mockExistsSync.mockReturnValue(false);
+    mockReaddir.mockRejectedValue(new Error("missing profile"));
+    mockReadFile.mockResolvedValue(Buffer.from("omnistate-voice-audio") as any);
+
+    await synthesizeOmniStateVoiceSpeech({ text: "hello world" });
+
+    expect(mockMkdir).toHaveBeenCalled();
+    expect(mockExecFile.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(mockExecFile.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(["-m", "venv"]));
+    expect(mockExecFile.mock.calls[1]?.[1]).toEqual(expect.arrayContaining(["-m", "pip", "install", "--upgrade", "pip"]));
+    expect(mockExecFile.mock.calls[2]?.[1]).toEqual(expect.arrayContaining(["-m", "pip", "install", "torch", "torchaudio", "soundfile", "omnivoice"]));
+  });
+
   it("falls back to auto voice when no speaker profile is available", async () => {
     makeExecFileSuccess();
     mockReaddir.mockRejectedValue(new Error("missing profile"));
-    mockReadFile.mockResolvedValue(Buffer.from("omnivoice-audio") as any);
+    mockReadFile.mockResolvedValue(Buffer.from("omnistate-voice-audio") as any);
 
-    await synthesizeOmniVoiceSpeech({
+    await synthesizeOmniStateVoiceSpeech({
       text: "hello world",
       profileId: "missing-profile",
     });
 
-    const [, args] = mockExecFile.mock.calls[0];
+    const [, args] = mockExecFile.mock.calls.at(-1)!;
     expect(args).not.toContain("--ref-audio");
   });
 
   it("cleans up the temp output file after synthesis", async () => {
     makeExecFileSuccess();
     mockReaddir.mockRejectedValue(new Error("missing profile"));
-    mockReadFile.mockResolvedValue(Buffer.from("omnivoice-audio") as any);
+    mockReadFile.mockResolvedValue(Buffer.from("omnistate-voice-audio") as any);
 
-    await synthesizeOmniVoiceSpeech({ text: "hello world" });
+    await synthesizeOmniStateVoiceSpeech({ text: "hello world" });
 
     expect(mockUnlink).toHaveBeenCalledOnce();
     const [unlinkedPath] = mockUnlink.mock.calls[0];
-    expect(unlinkedPath).toMatch(/omnistate-omnivoice-.*\.wav$/);
+    expect(unlinkedPath).toMatch(/omnistate-voice-.*\.wav$/);
   });
 });

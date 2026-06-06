@@ -1,6 +1,6 @@
 import { loadLlmRuntimeConfig } from "../llm/runtime-config.js";
 import { detectLanguage, pickVoice, synthesize } from "./edge-tts.js";
-import { synthesizeOmniVoiceSpeech } from "./omnivoice.js";
+import { synthesizeOmniStateVoiceSpeech } from "./omnistate-voice.js";
 
 /**
  * Regex that matches sentence-ending boundaries for flush decisions.
@@ -49,15 +49,15 @@ export class StreamingTTS {
       const enqueue = (text: string) => {
         const resolvedLang = lang ?? detectLanguage(text);
         const resolvedVoice = voice ?? pickVoice(resolvedLang);
-        const ttsProvider = loadLlmRuntimeConfig().voice.tts?.provider ?? "omnivoice";
+        const ttsProvider = loadLlmRuntimeConfig().voice.tts?.provider ?? "omnistate-voice";
         synthQueue.push(
           (async () => {
             if (ttsProvider === "none") {
               return Buffer.alloc(0);
             }
-            if (ttsProvider === "omnivoice") {
+            if (ttsProvider === "omnistate-voice") {
               try {
-                const result = await synthesizeOmniVoiceSpeech({
+                const result = await synthesizeOmniStateVoiceSpeech({
                   text,
                   language: resolvedLang,
                 });

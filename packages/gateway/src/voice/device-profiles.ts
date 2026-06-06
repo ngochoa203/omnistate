@@ -44,7 +44,7 @@ export interface RecommendedSettings {
   vadSilenceThreshold: number;
   wakeEngine: "porcupine" | "oww" | "personal" | "legacy";
   wakeThreshold: number;
-  ttsProvider: "edge" | "rtvc" | "omnivoice" | "none";
+  ttsProvider: "edge" | "rtvc" | "omnistate-voice" | "none";
   ttsVoiceSpeed: number;
   enableContinuousListening: boolean;
   enableOnDeviceProcessing: boolean;

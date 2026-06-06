@@ -247,16 +247,16 @@ describe("resolveVoiceExecutionPolicy", () => {
     expect(policy.ttsProvider).toBe("edge");
   });
 
-  it("falls back from omnivoice to edge TTS in low-power modes", () => {
-    const omnivoiceRuntime = {
+  it("falls back from omnistate voice to edge TTS in low-power modes", () => {
+    const omniStateVoiceRuntime = {
       ...runtime,
       voice: {
         ...runtime.voice,
-        tts: { provider: "omnivoice" as const },
+        tts: { provider: "omnistate-voice" as const },
       },
     } satisfies LlmRuntimeConfig;
 
-    const policy = resolveVoiceExecutionPolicy(omnivoiceRuntime, makeProfile("low_power"), "audio/webm");
+    const policy = resolveVoiceExecutionPolicy(omniStateVoiceRuntime, makeProfile("low_power"), "audio/webm");
     expect(policy.ttsProvider).toBe("edge");
   });
 

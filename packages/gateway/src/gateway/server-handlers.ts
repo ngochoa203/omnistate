@@ -630,17 +630,17 @@ export async function handleSiriBridgeRequest(
 
     try {
       const runtime = loadLlmRuntimeConfig();
-      const ttsProvider = runtime.voice.tts?.provider ?? "omnivoice";
+      const ttsProvider = runtime.voice.tts?.provider ?? "omnistate-voice";
 
-      if (ttsProvider === "omnivoice") {
+      if (ttsProvider === "omnistate-voice") {
         try {
-          const { synthesizeOmniVoiceSpeech } = await import("../voice/omnivoice.js");
-          const result = await synthesizeOmniVoiceSpeech({ text });
-          json(200, { audio: result.audio.toString("base64"), provider: "omnivoice" });
+          const { synthesizeOmniStateVoiceSpeech } = await import("../voice/omnistate-voice.js");
+          const result = await synthesizeOmniStateVoiceSpeech({ text });
+          json(200, { audio: result.audio.toString("base64"), provider: "omnistate-voice" });
           return;
         } catch {
-          // Fall through to Edge preview so the endpoint stays usable even if OmniVoice
-          // is not installed or the local model cache is unavailable.
+          // Fall through to Edge preview so the endpoint stays usable even if
+          // OmniState Voice is not bootstrapped yet or the local model cache is unavailable.
         }
       }
 

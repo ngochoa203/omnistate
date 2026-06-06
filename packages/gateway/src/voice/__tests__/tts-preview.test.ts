@@ -43,7 +43,7 @@ vi.mock("../../llm/runtime-config.js", async (importOriginal) => {
       fallbackProviders: [],
       chunkMs: 100,
       tts: {
-        provider: "omnivoice" as const,
+        provider: "omnistate-voice" as const,
       },
       siri: {
         enabled: false,
@@ -141,8 +141,8 @@ vi.mock("../edge-tts.js", () => ({
     lang === "vi" ? "vi-VN-HoaiMyNeural" : "en-US-AriaNeural",
   synthesize: (...args: any[]) => mockSynthesize(...args),
 }));
-vi.mock("../omnivoice.js", () => ({
-  synthesizeOmniVoiceSpeech: (...args: any[]) => mockOmniVoice(...args),
+vi.mock("../omnistate-voice.js", () => ({
+  synthesizeOmniStateVoiceSpeech: (...args: any[]) => mockOmniVoice(...args),
 }));
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ describe("POST /api/tts/preview", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       audio: fakeAudio.toString("base64"),
-      provider: "omnivoice",
+      provider: "omnistate-voice",
     });
   });
 
