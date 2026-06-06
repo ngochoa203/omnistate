@@ -42,6 +42,9 @@ vi.mock("../../llm/runtime-config.js", async (importOriginal) => {
       primaryProvider: "native" as const,
       fallbackProviders: [],
       chunkMs: 100,
+      tts: {
+        provider: "omnivoice" as const,
+      },
       siri: {
         enabled: false,
         mode: "handoff" as const,
@@ -128,6 +131,7 @@ vi.mock("../../vision/permission-responder.js", () => ({
 
 // Mock edge-tts so no real Python is spawned
 const mockSynthesize = vi.fn();
+const mockOmniVoice = vi.fn();
 vi.mock("../edge-tts.js", () => ({
   detectLanguage: (text: string) =>
     /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(text)
@@ -136,6 +140,9 @@ vi.mock("../edge-tts.js", () => ({
   pickVoice: (lang: string) =>
     lang === "vi" ? "vi-VN-HoaiMyNeural" : "en-US-AriaNeural",
   synthesize: (...args: any[]) => mockSynthesize(...args),
+}));
+vi.mock("../omnivoice.js", () => ({
+  synthesizeOmniVoiceSpeech: (...args: any[]) => mockOmniVoice(...args),
 }));
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
@@ -212,8 +219,8 @@ describe("POST /api/tts/preview", () => {
   });
 
   it("returns 200 with audio and voice for valid text", async () => {
-    const fakeAudio = Buffer.from("fake-mp3");
-    mockSynthesize.mockResolvedValue(fakeAudio);
+    const fakeAudio = Buffer.from("fake-wav");
+    mockOmniVoice.mockResolvedValue({ audio: fakeAudio, contentType: "audio/wav" });
 
     const res = await agent
       .post("/api/tts/preview")
@@ -223,7 +230,7 @@ describe("POST /api/tts/preview", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       audio: fakeAudio.toString("base64"),
-      voice: expect.any(String),
+      provider: "omnivoice",
     });
   });
 

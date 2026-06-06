@@ -210,7 +210,7 @@ export interface ResolvedVoiceExecutionPolicy {
   orderedProviders: Array<"native" | "whisper-local" | "whisper-cloud">;
   useLowLatencyRace: boolean;
   useStreamingStt: boolean;
-  ttsProvider: "edge" | "rtvc" | "none";
+  ttsProvider: "edge" | "rtvc" | "omnivoice" | "none";
   ttsRate: number;
   vadConfig: VadConfig;
   preferredChunkMs: number;
@@ -282,10 +282,12 @@ export function resolveVoiceExecutionPolicy(
     profile.powerMode === "normal" &&
     profile.capabilities.supportsLowLatency;
 
+  const configuredTtsProvider = runtime.voice.tts?.provider ?? "omnivoice";
   const ttsProvider =
-    profile.powerMode !== "normal" && runtime.voice.tts?.provider === "rtvc"
+    profile.powerMode !== "normal" &&
+    (configuredTtsProvider === "rtvc" || configuredTtsProvider === "omnivoice")
       ? profile.recommendedSettings.ttsProvider
-      : (runtime.voice.tts?.provider ?? "edge");
+      : configuredTtsProvider;
 
   return {
     orderedProviders,
@@ -929,6 +931,52 @@ export class VoiceStreamManager {
           error: `TTS synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
           code: "TTS_FAILED",
         });
+      }
+      return;
+    }
+
+    if (provider === "omnivoice") {
+      try {
+        const { synthesizeOmniVoiceSpeech } = await import("./omnivoice.js");
+        const result = await synthesizeOmniVoiceSpeech({
+          text,
+          profileId: session.ttsProfileId,
+          language: detectLanguage(text),
+          rate: session.executionPolicy.ttsRate,
+        });
+        send({
+          type: "voice.stream.tts",
+          sessionId: session.sessionId,
+          audio: result.audio.toString("base64"),
+          contentType: result.contentType,
+        });
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          `[VoiceStream] OmniVoice synthesis failed for session ${session.sessionId}; falling back to Edge TTS`,
+        );
+        try {
+          const lang = detectLanguage(text);
+          const voice = pickVoice(lang, cfg.voice);
+          const audioBuf = await edgeTtsSynthesize(text, {
+            voice,
+            lang,
+            rate: session.executionPolicy.ttsRate,
+          });
+          send({
+            type: "voice.stream.tts",
+            sessionId: session.sessionId,
+            audio: audioBuf.toString("base64"),
+            contentType: "audio/mpeg",
+          });
+        } catch (fallbackErr) {
+          send({
+            type: "voice.stream.error",
+            sessionId: session.sessionId,
+            error: `TTS synthesis failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+            code: "TTS_FAILED",
+          });
+        }
       }
       return;
     }

@@ -14,7 +14,7 @@ import { runLlmPreflight } from "../llm/preflight.js";
 import { requestLlmTextWithFallback } from "../llm/router.js";
 import { tryHandleGatewayCommand } from "./command-router.js";
 import { incrementSessionUsage, loadLlmRuntimeConfig, saveLlmRuntimeConfig } from "../llm/runtime-config.js";
-import { setActiveModel, setActiveProvider, setPowerField, setSiriField, setVoiceField, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
+import { setActiveModel, setActiveProvider, setPowerField, setSiriField, setVoiceField, setVoiceTtsProvider, setWakeField, updateActiveProviderField } from "../llm/runtime-config.js";
 import { upsertProvider, addFallbackProvider, deleteProvider } from "../llm/runtime-config.js";
 import { synthesizeRtvcSpeech, trainRtvcProfile } from "../voice/rtvc.js";
 import { applySecurityHeaders, applyCorsHeaders, applyPreflightHeaders } from "./security-headers.js";
@@ -629,10 +629,25 @@ export async function handleSiriBridgeRequest(
     }
 
     try {
+      const runtime = loadLlmRuntimeConfig();
+      const ttsProvider = runtime.voice.tts?.provider ?? "omnivoice";
+
+      if (ttsProvider === "omnivoice") {
+        try {
+          const { synthesizeOmniVoiceSpeech } = await import("../voice/omnivoice.js");
+          const result = await synthesizeOmniVoiceSpeech({ text });
+          json(200, { audio: result.audio.toString("base64"), provider: "omnivoice" });
+          return;
+        } catch {
+          // Fall through to Edge preview so the endpoint stays usable even if OmniVoice
+          // is not installed or the local model cache is unavailable.
+        }
+      }
+
       const { synthesize, detectLanguage, pickVoice } = await import("../voice/edge-tts.js");
-      const voiceName = pickVoice(detectLanguage(text));
+      const voiceName = pickVoice(detectLanguage(text), runtime.voice);
       const result = await synthesize(text, { voice: voiceName });
-      json(200, { audio: result.toString("base64"), voice: voiceName });
+      json(200, { audio: result.toString("base64"), voice: voiceName, provider: "edge" });
     } catch (err) {
       json(500, { error: { code: "TTS_FAILED", message: err instanceof Error ? err.message : String(err) } });
     }
@@ -1486,6 +1501,10 @@ export async function handleMessage(
           case "voice.autoExecuteTranscript":
             handled = true;
             config = setVoiceField("autoExecuteTranscript", Boolean(msg.value));
+            break;
+          case "voice.tts.provider":
+            handled = true;
+            config = setVoiceTtsProvider(String(msg.value));
             break;
           case "voice.wake.enabled": {
             handled = true;

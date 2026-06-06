@@ -9,9 +9,23 @@ vi.mock("../edge-tts.js", () => ({
   detectLanguage: vi.fn(() => "en"),
   pickVoice: vi.fn(() => "en-US-AriaNeural"),
 }));
+vi.mock("../../llm/runtime-config.js", () => ({
+  loadLlmRuntimeConfig: vi.fn(() => ({
+    voice: {
+      tts: {
+        provider: "omnivoice",
+      },
+    },
+  })),
+}));
+vi.mock("../omnivoice.js", () => ({
+  synthesizeOmniVoiceSpeech: vi.fn(),
+}));
 
 import { synthesize as mockSynthesize } from "../edge-tts.js";
+import { synthesizeOmniVoiceSpeech as mockSynthesizeOmniVoice } from "../omnivoice.js";
 const mockSynth = vi.mocked(mockSynthesize);
+const mockOmni = vi.mocked(mockSynthesizeOmniVoice);
 
 // Helper: wrap an array of strings into an AsyncIterable
 async function* toAsyncIter(items: string[]): AsyncIterable<string> {
@@ -25,6 +39,7 @@ function fakeAudio(label: string): Buffer {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockOmni.mockResolvedValue({ audio: fakeAudio("omnivoice"), contentType: "audio/wav" } as any);
 });
 
 // ---------------------------------------------------------------------------
@@ -32,10 +47,10 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 describe("StreamingTTS.synthesize — 3 sentences", () => {
   it("emits one chunk per sentence in order, eos only on last", async () => {
-    mockSynth
-      .mockResolvedValueOnce(fakeAudio("s1"))
-      .mockResolvedValueOnce(fakeAudio("s2"))
-      .mockResolvedValueOnce(fakeAudio("s3"));
+    mockOmni
+      .mockResolvedValueOnce({ audio: fakeAudio("s1"), contentType: "audio/wav" } as any)
+      .mockResolvedValueOnce({ audio: fakeAudio("s2"), contentType: "audio/wav" } as any)
+      .mockResolvedValueOnce({ audio: fakeAudio("s3"), contentType: "audio/wav" } as any);
 
     const tts = new StreamingTTS();
     const ac = new AbortController();
@@ -55,11 +70,11 @@ describe("StreamingTTS.synthesize — 3 sentences", () => {
       expect(seqs[i]).toBeGreaterThanOrEqual(seqs[i - 1]);
     }
 
-    // Must have called synthesize at least 3 times
-    expect(mockSynth.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(mockOmni.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
   it("passes the AbortSignal through to synthesize()", async () => {
+    mockOmni.mockRejectedValueOnce(new Error("fallback"));
     mockSynth.mockResolvedValue(fakeAudio("x"));
 
     const ac = new AbortController();
@@ -102,13 +117,14 @@ describe("StreamingTTS.synthesize — abort", () => {
   });
 
   it("stops emitting content chunks after abort, emits eos sentinel", async () => {
-    // First sentence resolves normally; second is never reached because abort fires.
-    let resolveFirst!: (b: Buffer) => void;
-    const firstPromise = new Promise<Buffer>((res) => { resolveFirst = res; });
+    let resolveFirst!: (b: { audio: Buffer; contentType: string }) => void;
+    const firstPromise = new Promise<{ audio: Buffer; contentType: string }>((res) => {
+      resolveFirst = res;
+    });
 
-    mockSynth
-      .mockReturnValueOnce(firstPromise)
-      .mockResolvedValue(fakeAudio("should-not-emit"));
+    mockOmni
+      .mockReturnValueOnce(firstPromise as any)
+      .mockResolvedValue({ audio: fakeAudio("should-not-emit"), contentType: "audio/wav" } as any);
 
     const ac = new AbortController();
     const tts = new StreamingTTS();
@@ -126,14 +142,14 @@ describe("StreamingTTS.synthesize — abort", () => {
 
     // Abort before first synthesis resolves
     ac.abort();
-    resolveFirst(fakeAudio("s1"));
+    resolveFirst({ audio: fakeAudio("s1"), contentType: "audio/wav" });
 
     await streamPromise;
 
     // Final chunk must be eos:true
     expect(chunks[chunks.length - 1].eos).toBe(true);
     // Must not have called synthesize more than once (second sentence not scheduled)
-    expect(mockSynth.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(mockOmni.mock.calls.length).toBeLessThanOrEqual(2);
   });
 });
 
@@ -142,7 +158,7 @@ describe("StreamingTTS.synthesize — abort", () => {
 // ---------------------------------------------------------------------------
 describe("StreamingTTS.synthesize — char threshold flush", () => {
   it("flushes when buffer exceeds 200 chars without a sentence boundary", async () => {
-    mockSynth.mockResolvedValue(fakeAudio("long"));
+    mockOmni.mockResolvedValue({ audio: fakeAudio("long"), contentType: "audio/wav" } as any);
 
     const longDelta = "a".repeat(210); // exceeds FLUSH_CHAR_THRESHOLD
     const tts = new StreamingTTS();
@@ -156,7 +172,7 @@ describe("StreamingTTS.synthesize — char threshold flush", () => {
       chunks.push(chunk);
     }
 
-    expect(mockSynth).toHaveBeenCalled();
+    expect(mockOmni).toHaveBeenCalled();
     expect(chunks[chunks.length - 1].eos).toBe(true);
   });
 });

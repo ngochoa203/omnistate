@@ -48,7 +48,7 @@ export interface SpeakerVerificationConfig {
 }
 
 export interface TtsConfig {
-  provider: "edge" | "rtvc" | "none";
+  provider: "edge" | "rtvc" | "omnivoice" | "none";
   voiceVi?: string;
   voiceEn?: string;
 }
@@ -82,6 +82,12 @@ export interface VoiceRuntimeConfig {
     modelPath?: string;
     threshold: number;
   };
+}
+
+function parseTtsProvider(raw: unknown): TtsConfig["provider"] {
+  return raw === "rtvc" || raw === "edge" || raw === "none" || raw === "omnivoice"
+    ? raw
+    : "omnivoice";
 }
 
 export interface TransientVoiceRuntimeOverride {
@@ -177,7 +183,7 @@ function defaultConfig(): LlmRuntimeConfig {
     },
     voice: {
       tts: {
-        provider: (process.env.OMNISTATE_TTS_PROVIDER === "rtvc" ? "rtvc" : "edge") as "edge" | "rtvc",
+        provider: parseTtsProvider(process.env.OMNISTATE_TTS_PROVIDER),
         voiceVi: process.env.OMNISTATE_TTS_VOICE_VI ?? "vi-VN-HoaiMyNeural",
         voiceEn: process.env.OMNISTATE_TTS_VOICE_EN ?? "en-US-AriaNeural",
       },
@@ -322,7 +328,7 @@ function mergeWithDefaults(raw: Partial<LlmRuntimeConfig>): LlmRuntimeConfig {
     },
     voice: {
       tts: {
-        provider: (raw.voice?.tts?.provider === "rtvc" ? "rtvc" : "edge") as "edge" | "rtvc",
+        provider: parseTtsProvider(raw.voice?.tts?.provider),
         voiceVi: raw.voice?.tts?.voiceVi ?? def.voice.tts!.voiceVi,
         voiceEn: raw.voice?.tts?.voiceEn ?? def.voice.tts!.voiceEn,
       },
@@ -661,6 +667,14 @@ export function setVoiceField(
       conf.voice.chunkMs = Math.round(num);
     }
   }
+  saveLlmRuntimeConfig(conf);
+  return conf;
+}
+
+export function setVoiceTtsProvider(value: string): LlmRuntimeConfig {
+  const conf = loadLlmRuntimeConfig();
+  conf.voice.tts = conf.voice.tts ?? { provider: "omnivoice" };
+  conf.voice.tts.provider = parseTtsProvider(value);
   saveLlmRuntimeConfig(conf);
   return conf;
 }

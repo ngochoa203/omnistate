@@ -211,6 +211,7 @@ export interface RuntimeConfigSetMessage {
     | "apiKey"
     | "voice.lowLatency"
     | "voice.autoExecuteTranscript"
+    | "voice.tts.provider"
     | "voice.wake.enabled"
     | "voice.wake.phrase"
     | "voice.wake.cooldownMs"

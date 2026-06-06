@@ -247,6 +247,19 @@ describe("resolveVoiceExecutionPolicy", () => {
     expect(policy.ttsProvider).toBe("edge");
   });
 
+  it("falls back from omnivoice to edge TTS in low-power modes", () => {
+    const omnivoiceRuntime = {
+      ...runtime,
+      voice: {
+        ...runtime.voice,
+        tts: { provider: "omnivoice" as const },
+      },
+    } satisfies LlmRuntimeConfig;
+
+    const policy = resolveVoiceExecutionPolicy(omnivoiceRuntime, makeProfile("low_power"), "audio/webm");
+    expect(policy.ttsProvider).toBe("edge");
+  });
+
   it("raises TTS cadence in constrained power modes", () => {
     expect(resolveVoiceExecutionPolicy(runtime, makeProfile("normal"), "audio/webm").ttsRate).toBe(1);
     expect(resolveVoiceExecutionPolicy(runtime, makeProfile("low_power"), "audio/webm").ttsRate).toBe(1.05);
